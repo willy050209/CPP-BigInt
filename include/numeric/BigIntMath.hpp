@@ -17,7 +17,7 @@ namespace numeric {
 /// </summary>
 /// <param name="x">輸入整數</param>
 /// <returns>絕對值結果</returns>
-NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 inline bigint abs(const bigint& x) noexcept {
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bigint abs(const bigint& x) noexcept {
     return (x.sign() < 0) ? -x : x;
 }
 
@@ -238,7 +238,7 @@ NUMERIC_NODISCARD inline bigint lcm(const bigint& a, const bigint& b) {
 
 namespace std {
 
-NUMERIC_CONSTEXPR_20 inline numeric::bigint abs(const numeric::bigint& x) noexcept {
+NUMERIC_CONSTEXPR_20 numeric::bigint abs(const numeric::bigint& x) noexcept {
     return numeric::abs(x);
 }
 

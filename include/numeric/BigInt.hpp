@@ -90,38 +90,38 @@ public:
     /// <summary>
     /// 預設建構子：初始化數值為 0。
     /// </summary>
-    bigint() noexcept = default;
+    NUMERIC_CONSTEXPR_20 bigint() noexcept = default;
 
     /// <summary>
     /// 複製建構子。
     /// </summary>
     /// <param name="other">來源 bigint</param>
-    bigint(const bigint& other) = default;
+    NUMERIC_CONSTEXPR_20 bigint(const bigint& other) = default;
 
     /// <summary>
     /// 移動建構子。
     /// </summary>
     /// <param name="other">來源 bigint（右值）</param>
-    bigint(bigint&& other) noexcept = default;
+    NUMERIC_CONSTEXPR_20 bigint(bigint&& other) noexcept = default;
 
     /// <summary>
     /// 複製賦值運算子。
     /// </summary>
     /// <param name="other">來源 bigint</param>
     /// <returns>自身參考</returns>
-    bigint& operator=(const bigint& other) = default;
+    NUMERIC_CONSTEXPR_20 bigint& operator=(const bigint& other) = default;
 
     /// <summary>
     /// 移動賦值運算子。
     /// </summary>
     /// <param name="other">來源 bigint（右值）</param>
     /// <returns>自身參考</returns>
-    bigint& operator=(bigint&& other) noexcept = default;
+    NUMERIC_CONSTEXPR_20 bigint& operator=(bigint&& other) noexcept = default;
 
     /// <summary>
     /// 解構子。
     /// </summary>
-    ~bigint() = default;
+    NUMERIC_CONSTEXPR_20 ~bigint() = default;
 
     /// <summary>
     /// 自內部 BigIntStorage 建立 bigint。
@@ -304,7 +304,7 @@ public:
                     any_bit = true;
                 }
             }
-            m_storage.m_data[w] = val;
+            m_storage.data()[w] = val;
         }
         if (any_bit) {
             m_storage.m_sign = 1;
@@ -381,7 +381,7 @@ public:
                     limb_val |= (static_cast<uint64_t>(1) << b);
                 }
             }
-            res.m_storage.m_data[w] = limb_val;
+            res.m_storage.data()[w] = limb_val;
         }
         res.m_storage.m_sign = sign;
         res.m_storage.normalize();
@@ -409,7 +409,7 @@ public:
     /// </summary>
     /// <returns>若為零回傳 true</returns>
     NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_zero() const noexcept {
-        return m_storage.m_size == 0 || (m_storage.m_size == 1 && m_storage.m_data[0] == 0);
+        return m_storage.m_size == 0 || (m_storage.m_size == 1 && m_storage.data()[0] == 0);
     }
 
     /// <summary>
@@ -433,7 +433,7 @@ public:
     /// </summary>
     /// <returns>唯讀 uint64_t 指標</returns>
     NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t* limbs() const noexcept {
-        return m_storage.m_data;
+        return m_storage.data();
     }
 
     /// <summary>
@@ -474,7 +474,7 @@ public:
     /// <returns>int64_t 數值</returns>
     explicit NUMERIC_CONSTEXPR_20 operator int64_t() const noexcept {
         if (m_storage.m_size == 0) return 0;
-        uint64_t mag = m_storage.m_data[0];
+        uint64_t mag = m_storage.data()[0];
         if (m_storage.m_sign < 0) {
             return -static_cast<int64_t>(mag);
         }
@@ -487,7 +487,7 @@ public:
     /// <returns>uint64_t 數值</returns>
     explicit NUMERIC_CONSTEXPR_20 operator uint64_t() const noexcept {
         if (m_storage.m_size == 0) return 0;
-        return m_storage.m_data[0];
+        return m_storage.data()[0];
     }
 
     /// <summary>
@@ -516,7 +516,7 @@ public:
         double base = 1.0;
         const double two_pow_64 = 18446744073709551616.0;
         for (size_t i = 0; i < m_storage.m_size; ++i) {
-            res += static_cast<double>(m_storage.m_data[i]) * base;
+            res += static_cast<double>(m_storage.data()[i]) * base;
             base *= two_pow_64;
         }
         return (m_storage.m_sign < 0) ? -res : res;
@@ -544,7 +544,7 @@ public:
         size_t limb_cnt = (N + 63) / 64;
         if (m_storage.m_sign >= 0) {
             for (size_t w = 0; w < limb_cnt; ++w) {
-                uint64_t val = (w < m_storage.m_size) ? m_storage.m_data[w] : 0ULL;
+                uint64_t val = (w < m_storage.m_size) ? m_storage.data()[w] : 0ULL;
                 size_t bits_in_limb = (w == limb_cnt - 1) ? (N - w * 64) : 64;
                 for (size_t b = 0; b < bits_in_limb; ++b) {
                     if ((val >> b) & 1ULL) {
@@ -556,7 +556,7 @@ public:
             // 負數二補數計算：~magnitude + 1
             uint64_t carry = 1;
             for (size_t w = 0; w < limb_cnt; ++w) {
-                uint64_t mag_w = (w < m_storage.m_size) ? m_storage.m_data[w] : 0ULL;
+                uint64_t mag_w = (w < m_storage.m_size) ? m_storage.data()[w] : 0ULL;
                 uint64_t inv_w = ~mag_w;
                 uint64_t val = inv_w + carry;
                 carry = (val < inv_w) ? 1 : 0;
@@ -580,7 +580,7 @@ public:
             return "0";
         }
         size_t high_limb_idx = m_storage.m_size - 1;
-        uint64_t high_val = m_storage.m_data[high_limb_idx];
+        uint64_t high_val = m_storage.data()[high_limb_idx];
         int leading_zeros = detail::BigIntCore::clz64(high_val);
         int bits_in_high = 64 - leading_zeros;
         size_t total_bits = high_limb_idx * 64 + static_cast<size_t>(bits_in_high);
@@ -594,7 +594,7 @@ public:
             result.push_back(((high_val >> b) & 1ULL) ? '1' : '0');
         }
         for (size_t i = high_limb_idx; i > 0; --i) {
-            uint64_t val = m_storage.m_data[i - 1];
+            uint64_t val = m_storage.data()[i - 1];
             for (int b = 63; b >= 0; --b) {
                 result.push_back(((val >> b) & 1ULL) ? '1' : '0');
             }
@@ -929,7 +929,7 @@ public:
         if (lhs.m_storage.m_size != rhs.m_storage.m_size) return false;
         if (lhs.m_storage.m_size == 0) return true;
         for (size_t i = 0; i < lhs.m_storage.m_size; ++i) {
-            if (lhs.m_storage.m_data[i] != rhs.m_storage.m_data[i]) return false;
+            if (lhs.m_storage.data()[i] != rhs.m_storage.data()[i]) return false;
         }
         return true;
     }
@@ -955,8 +955,8 @@ public:
         if (lhs.m_storage.m_sign > rhs.m_storage.m_sign) return false;
         if (lhs.m_storage.m_sign == 0) return false;
         int cmp = detail::BigIntCore::compare_unsigned(
-            lhs.m_storage.m_data, lhs.m_storage.m_size,
-            rhs.m_storage.m_data, rhs.m_storage.m_size);
+            lhs.m_storage.data(), lhs.m_storage.m_size,
+            rhs.m_storage.data(), rhs.m_storage.m_size);
         if (lhs.m_storage.m_sign > 0) {
             return cmp < 0;
         } else {

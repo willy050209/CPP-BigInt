@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 // BigIntCore.hpp
 // Core arbitrary-precision integer algorithms and SBO storage layer for CPP-BigInt.
@@ -32,7 +32,7 @@ public:
     static constexpr size_t SBO_CAPACITY = 2;
 
     uint64_t m_sbo[SBO_CAPACITY];
-    uint64_t* m_data;
+    uint64_t* m_heap;
     size_t m_size;
     size_t m_capacity;
     int8_t m_sign;
@@ -61,18 +61,56 @@ public:
     }
 
     /// <summary>
+    /// 檢查當前是否使用 SBO 內建緩衝區儲存。
+    /// </summary>
+    /// <returns>若使用 SBO 則回傳 true，堆積配置則回傳 false</returns>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_sbo() const noexcept {
+        return m_heap == nullptr;
+    }
+
+    /// <summary>
+    /// 取得 limbs 資料指標（可修改）。
+    /// </summary>
+    /// <returns>指向有效 limbs 的指標</returns>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 uint64_t* data() noexcept {
+        return (m_heap != nullptr) ? m_heap : m_sbo;
+    }
+
+    /// <summary>
+    /// 取得 limbs 資料常數指標。
+    /// </summary>
+    /// <returns>指向有效 limbs 的唯讀指標</returns>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t* data() const noexcept {
+        return (m_heap != nullptr) ? m_heap : m_sbo;
+    }
+
+    /// <summary>
+    /// 下標運算子，直接存取指定索引之 limb。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 uint64_t& operator[](size_t idx) noexcept {
+        return data()[idx];
+    }
+
+    /// <summary>
+    /// 下標常數運算子，直接唯讀存取指定索引之 limb。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t& operator[](size_t idx) const noexcept {
+        return data()[idx];
+    }
+
+    /// <summary>
     /// 預設建構子：初始化為零值，使用 SBO 緩衝區。
     /// </summary>
     NUMERIC_CONSTEXPR_20 BigIntStorage() noexcept
-        : m_sbo{0, 0}, m_data(m_sbo), m_size(0), m_capacity(SBO_CAPACITY), m_sign(0) {}
+        : m_sbo{0, 0}, m_heap(nullptr), m_size(0), m_capacity(SBO_CAPACITY), m_sign(0) {}
 
     /// <summary>
     /// 解構子：若已配置堆積記憶體則進行釋放。
     /// </summary>
     NUMERIC_CONSTEXPR_20 ~BigIntStorage() noexcept {
-        if (!is_sbo() && m_data != nullptr) {
-            delete[] m_data;
-            m_data = nullptr;
+        if (m_heap != nullptr) {
+            delete[] m_heap;
+            m_heap = nullptr;
         }
     }
 
@@ -81,16 +119,11 @@ public:
     /// </summary>
     /// <param name="other">來源儲存物件</param>
     NUMERIC_CONSTEXPR_20 BigIntStorage(const BigIntStorage& other)
-        : m_sbo{0, 0}, m_size(other.m_size), m_capacity(SBO_CAPACITY), m_sign(other.m_sign) {
-        if (other.is_sbo()) {
-            m_sbo[0] = other.m_sbo[0];
-            m_sbo[1] = other.m_sbo[1];
-            m_data = m_sbo;
-            m_capacity = SBO_CAPACITY;
-        } else {
+        : m_sbo{other.m_sbo[0], other.m_sbo[1]}, m_heap(nullptr), m_size(other.m_size), m_capacity(SBO_CAPACITY), m_sign(other.m_sign) {
+        if (!other.is_sbo()) {
             m_capacity = other.m_capacity;
-            m_data = new uint64_t[m_capacity];
-            copy_limbs(m_data, other.m_data, m_size);
+            m_heap = new uint64_t[m_capacity];
+            copy_limbs(m_heap, other.m_heap, m_size);
         }
     }
 
@@ -99,20 +132,11 @@ public:
     /// </summary>
     /// <param name="other">來源儲存物件（右值）</param>
     NUMERIC_CONSTEXPR_20 BigIntStorage(BigIntStorage&& other) noexcept
-        : m_sbo{0, 0}, m_size(other.m_size), m_capacity(SBO_CAPACITY), m_sign(other.m_sign) {
-        if (other.is_sbo()) {
-            m_sbo[0] = other.m_sbo[0];
-            m_sbo[1] = other.m_sbo[1];
-            m_data = m_sbo;
-            m_capacity = SBO_CAPACITY;
-        } else {
-            m_data = other.m_data;
-            m_capacity = other.m_capacity;
-            other.m_data = other.m_sbo;
-            other.m_capacity = SBO_CAPACITY;
-            other.m_sbo[0] = 0;
-            other.m_sbo[1] = 0;
-        }
+        : m_sbo{other.m_sbo[0], other.m_sbo[1]}, m_heap(other.m_heap), m_size(other.m_size), m_capacity(other.m_capacity), m_sign(other.m_sign) {
+        other.m_heap = nullptr;
+        other.m_capacity = SBO_CAPACITY;
+        other.m_sbo[0] = 0;
+        other.m_sbo[1] = 0;
         other.m_size = 0;
         other.m_sign = 0;
     }
@@ -125,22 +149,22 @@ public:
     NUMERIC_CONSTEXPR_20 BigIntStorage& operator=(const BigIntStorage& other) {
         if (this != &other) {
             if (other.is_sbo()) {
-                if (!is_sbo()) {
-                    delete[] m_data;
+                if (m_heap != nullptr) {
+                    delete[] m_heap;
+                    m_heap = nullptr;
                 }
                 m_sbo[0] = other.m_sbo[0];
                 m_sbo[1] = other.m_sbo[1];
-                m_data = m_sbo;
                 m_capacity = SBO_CAPACITY;
             } else {
-                if (m_capacity < other.m_size) {
-                    if (!is_sbo()) {
-                        delete[] m_data;
+                if (m_capacity < other.m_size || m_heap == nullptr) {
+                    if (m_heap != nullptr) {
+                        delete[] m_heap;
                     }
                     m_capacity = other.m_capacity;
-                    m_data = new uint64_t[m_capacity];
+                    m_heap = new uint64_t[m_capacity];
                 }
-                copy_limbs(m_data, other.m_data, other.m_size);
+                copy_limbs(m_heap, other.m_heap, other.m_size);
             }
             m_size = other.m_size;
             m_sign = other.m_sign;
@@ -155,36 +179,24 @@ public:
     /// <returns>自身參考</returns>
     NUMERIC_CONSTEXPR_20 BigIntStorage& operator=(BigIntStorage&& other) noexcept {
         if (this != &other) {
-            if (!is_sbo()) {
-                delete[] m_data;
+            if (m_heap != nullptr) {
+                delete[] m_heap;
             }
+            m_sbo[0] = other.m_sbo[0];
+            m_sbo[1] = other.m_sbo[1];
+            m_heap = other.m_heap;
             m_size = other.m_size;
+            m_capacity = other.m_capacity;
             m_sign = other.m_sign;
-            if (other.is_sbo()) {
-                m_sbo[0] = other.m_sbo[0];
-                m_sbo[1] = other.m_sbo[1];
-                m_data = m_sbo;
-                m_capacity = SBO_CAPACITY;
-            } else {
-                m_data = other.m_data;
-                m_capacity = other.m_capacity;
-                other.m_data = other.m_sbo;
-                other.m_capacity = SBO_CAPACITY;
-                other.m_sbo[0] = 0;
-                other.m_sbo[1] = 0;
-            }
+
+            other.m_heap = nullptr;
+            other.m_capacity = SBO_CAPACITY;
+            other.m_sbo[0] = 0;
+            other.m_sbo[1] = 0;
             other.m_size = 0;
             other.m_sign = 0;
         }
         return *this;
-    }
-
-    /// <summary>
-    /// 檢查當前是否使用 SBO 內建緩衝區儲存。
-    /// </summary>
-    /// <returns>若使用 SBO 則回傳 true，堆積配置則回傳 false</returns>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_sbo() const noexcept {
-        return m_data == m_sbo;
     }
 
     /// <summary>
@@ -193,14 +205,14 @@ public:
     /// <param name="new_cap">目標容量大小（limbs）</param>
     NUMERIC_CONSTEXPR_20 void reserve(size_t new_cap) {
         if (new_cap <= m_capacity) return;
-        uint64_t* new_data = new uint64_t[new_cap];
+        uint64_t* new_heap = new uint64_t[new_cap];
         if (m_size > 0) {
-            copy_limbs(new_data, m_data, m_size);
+            copy_limbs(new_heap, data(), m_size);
         }
-        if (!is_sbo()) {
-            delete[] m_data;
+        if (m_heap != nullptr) {
+            delete[] m_heap;
         }
-        m_data = new_data;
+        m_heap = new_heap;
         m_capacity = new_cap;
     }
 
@@ -216,8 +228,9 @@ public:
             reserve(next_cap);
         }
         if (new_size > m_size) {
+            uint64_t* d = data();
             for (size_t i = m_size; i < new_size; ++i) {
-                m_data[i] = init_val;
+                d[i] = init_val;
             }
         }
         m_size = new_size;
@@ -227,7 +240,8 @@ public:
     /// 規範化 limbs 陣列，移除高位無效之 0 limbs 並調整正負符號；若長度落回 SBO 則縮回 SBO。
     /// </summary>
     NUMERIC_CONSTEXPR_20 void normalize() noexcept {
-        while (m_size > 0 && m_data[m_size - 1] == 0) {
+        uint64_t* d = data();
+        while (m_size > 0 && d[m_size - 1] == 0) {
             --m_size;
         }
         if (m_size == 0) {
@@ -240,13 +254,13 @@ public:
     /// 當 limbs 數量小於等於 SBO 容量且當前為堆積配置時，縮回 SBO。
     /// </summary>
     NUMERIC_CONSTEXPR_20 void shrink_to_sbo_if_possible() noexcept {
-        if (!is_sbo() && m_size <= SBO_CAPACITY) {
-            uint64_t* old_data = m_data;
-            m_sbo[0] = (m_size > 0) ? old_data[0] : 0;
-            m_sbo[1] = (m_size > 1) ? old_data[1] : 0;
-            m_data = m_sbo;
+        if (m_heap != nullptr && m_size <= SBO_CAPACITY) {
+            uint64_t* old_heap = m_heap;
+            m_sbo[0] = (m_size > 0) ? old_heap[0] : 0;
+            m_sbo[1] = (m_size > 1) ? old_heap[1] : 0;
+            m_heap = nullptr;
             m_capacity = SBO_CAPACITY;
-            delete[] old_data;
+            delete[] old_heap;
         }
     }
 
@@ -256,9 +270,9 @@ public:
     /// <param name="val">數值</param>
     /// <param name="sign">符號 (-1, 0, 1)</param>
     NUMERIC_CONSTEXPR_20 void set_uint64(uint64_t val, int8_t sign) noexcept {
-        if (!is_sbo()) {
-            delete[] m_data;
-            m_data = m_sbo;
+        if (m_heap != nullptr) {
+            delete[] m_heap;
+            m_heap = nullptr;
             m_capacity = SBO_CAPACITY;
         }
         if (val == 0) {
@@ -440,16 +454,16 @@ public:
         res.resize(max_len + 1, 0);
         uint64_t carry = 0;
         for (size_t i = 0; i < max_len; ++i) {
-            uint64_t av = (i < a.m_size) ? a.m_data[i] : 0;
-            uint64_t bv = (i < b.m_size) ? b.m_data[i] : 0;
+            uint64_t av = (i < a.m_size) ? a.data()[i] : 0;
+            uint64_t bv = (i < b.m_size) ? b.data()[i] : 0;
             uint64_t sum = av + carry;
             uint64_t c1 = (sum < av) ? 1 : 0;
             sum += bv;
             uint64_t c2 = (sum < bv) ? 1 : 0;
             carry = c1 + c2;
-            res.m_data[i] = sum;
+            res.data()[i] = sum;
         }
-        res.m_data[max_len] = carry;
+        res.data()[max_len] = carry;
         res.m_sign = 1;
         res.normalize();
     }
@@ -464,14 +478,14 @@ public:
         res.resize(a.m_size, 0);
         uint64_t borrow = 0;
         for (size_t i = 0; i < a.m_size; ++i) {
-            uint64_t av = a.m_data[i];
-            uint64_t bv = (i < b.m_size) ? b.m_data[i] : 0;
+            uint64_t av = a.data()[i];
+            uint64_t bv = (i < b.m_size) ? b.data()[i] : 0;
             uint64_t diff = av - borrow;
             uint64_t b1 = (av < borrow) ? 1 : 0;
             uint64_t diff2 = diff - bv;
             uint64_t b2 = (diff < bv) ? 1 : 0;
             borrow = b1 + b2;
-            res.m_data[i] = diff2;
+            res.data()[i] = diff2;
         }
         res.m_sign = 1;
         res.normalize();
@@ -496,7 +510,7 @@ public:
             add_unsigned(res, a, b);
             res.m_sign = a.m_sign;
         } else {
-            int cmp = compare_unsigned(a.m_data, a.m_size, b.m_data, b.m_size);
+            int cmp = compare_unsigned(a.data(), a.m_size, b.data(), b.m_size);
             if (cmp == 0) {
                 res.m_size = 0;
                 res.m_sign = 0;
@@ -546,20 +560,20 @@ public:
         BigIntStorage tmp;
         tmp.resize(a.m_size + b.m_size, 0);
         for (size_t i = 0; i < a.m_size; ++i) {
-            if (a.m_data[i] == 0) continue;
+            if (a.data()[i] == 0) continue;
             uint64_t carry = 0;
             for (size_t j = 0; j < b.m_size; ++j) {
                 uint64_t hi = 0;
-                uint64_t lo = mul64_wide(a.m_data[i], b.m_data[j], hi);
-                uint64_t cur = tmp.m_data[i + j];
+                uint64_t lo = mul64_wide(a.data()[i], b.data()[j], hi);
+                uint64_t cur = tmp.data()[i + j];
                 uint64_t sum = cur + lo;
                 uint64_t c1 = (sum < cur) ? 1 : 0;
                 sum += carry;
                 uint64_t c2 = (sum < carry) ? 1 : 0;
-                tmp.m_data[i + j] = sum;
+                tmp.data()[i + j] = sum;
                 carry = hi + c1 + c2;
             }
-            tmp.m_data[i + b.m_size] += carry;
+            tmp.data()[i + b.m_size] += carry;
         }
         tmp.m_sign = 1;
         tmp.normalize();
@@ -585,27 +599,27 @@ public:
         size_t b0_len = (b.m_size < k) ? b.m_size : k;
 
         a0.resize(a0_len);
-        if (a0_len > 0) BigIntStorage::copy_limbs(a0.m_data, a.m_data, a0_len);
+        if (a0_len > 0) BigIntStorage::copy_limbs(a0.data(), a.data(), a0_len);
         a0.m_sign = 1;
         a0.normalize();
 
         if (a.m_size > k) {
             size_t a1_len = a.m_size - k;
             a1.resize(a1_len);
-            BigIntStorage::copy_limbs(a1.m_data, a.m_data + k, a1_len);
+            BigIntStorage::copy_limbs(a1.data(), a.data() + k, a1_len);
             a1.m_sign = 1;
             a1.normalize();
         }
 
         b0.resize(b0_len);
-        if (b0_len > 0) BigIntStorage::copy_limbs(b0.m_data, b.m_data, b0_len);
+        if (b0_len > 0) BigIntStorage::copy_limbs(b0.data(), b.data(), b0_len);
         b0.m_sign = 1;
         b0.normalize();
 
         if (b.m_size > k) {
             size_t b1_len = b.m_size - k;
             b1.resize(b1_len);
-            BigIntStorage::copy_limbs(b1.m_data, b.m_data + k, b1_len);
+            BigIntStorage::copy_limbs(b1.data(), b.data() + k, b1_len);
             b1.m_sign = 1;
             b1.normalize();
         }
@@ -684,7 +698,7 @@ public:
             r.m_size = 0; r.m_sign = 0;
             return;
         }
-        int cmp = compare_unsigned(u.m_data, u.m_size, v.m_data, v.m_size);
+        int cmp = compare_unsigned(u.data(), u.m_size, v.data(), v.m_size);
         if (cmp < 0) {
             q.m_size = 0; q.m_sign = 0;
             r = u;
@@ -699,12 +713,12 @@ public:
 
         // 單 limb 快速除法路徑
         if (v.m_size == 1) {
-            uint64_t divisor = v.m_data[0];
+            uint64_t divisor = v.data()[0];
             q.resize(u.m_size, 0);
             uint64_t rem = 0;
             for (size_t i = u.m_size; i > 0; --i) {
                 uint64_t next_rem = 0;
-                q.m_data[i - 1] = div128_64(rem, u.m_data[i - 1], divisor, next_rem);
+                q.data()[i - 1] = div128_64(rem, u.data()[i - 1], divisor, next_rem);
                 rem = next_rem;
             }
             q.m_sign = 1;
@@ -723,7 +737,7 @@ public:
         size_t m = u.m_size - n;
 
         // D1: 正規化 (shift left by s bits)
-        int s = clz64(v.m_data[n - 1]);
+        int s = clz64(v.data()[n - 1]);
         BigIntStorage vn, un;
         shift_left(vn, v, static_cast<size_t>(s));
         shift_left(un, u, static_cast<size_t>(s));
@@ -733,15 +747,15 @@ public:
 
         q.resize(m + 1, 0);
 
-        uint64_t v_hi = vn.m_data[n - 1];
-        uint64_t v_lo = vn.m_data[n - 2];
+        uint64_t v_hi = vn.data()[n - 1];
+        uint64_t v_lo = vn.data()[n - 2];
 
         // D2~D7: 主迴圈
         for (size_t k = m + 1; k > 0; --k) {
             size_t j = k - 1;
-            uint64_t u_hi = un.m_data[j + n];
-            uint64_t u_mid = un.m_data[j + n - 1];
-            uint64_t u_lo = (j + n >= 2) ? un.m_data[j + n - 2] : 0;
+            uint64_t u_hi = un.data()[j + n];
+            uint64_t u_mid = un.data()[j + n - 1];
+            uint64_t u_lo = (j + n >= 2) ? un.data()[j + n - 2] : 0;
 
             uint64_t q_hat = 0;
             uint64_t r_hat = 0;
@@ -782,41 +796,41 @@ public:
             uint64_t borrow = 0;
             for (size_t i = 0; i < n; ++i) {
                 uint64_t p_hi = 0;
-                uint64_t p_lo = mul64_wide(q_hat, vn.m_data[i], p_hi);
+                uint64_t p_lo = mul64_wide(q_hat, vn.data()[i], p_hi);
                 uint64_t p_full = p_lo + carry;
                 uint64_t c1 = (p_full < p_lo) ? 1 : 0;
                 carry = p_hi + c1;
 
-                uint64_t cur = un.m_data[j + i];
+                uint64_t cur = un.data()[j + i];
                 uint64_t diff = cur - borrow;
                 uint64_t b1 = (cur < borrow) ? 1 : 0;
                 uint64_t diff2 = diff - p_full;
                 uint64_t b2 = (diff < p_full) ? 1 : 0;
                 borrow = b1 + b2;
-                un.m_data[j + i] = diff2;
+                un.data()[j + i] = diff2;
             }
 
-            uint64_t cur = un.m_data[j + n];
+            uint64_t cur = un.data()[j + n];
             uint64_t diff = cur - borrow;
             uint64_t b1 = (cur < borrow) ? 1 : 0;
             uint64_t diff2 = diff - carry;
             uint64_t b2 = (diff < carry) ? 1 : 0;
-            un.m_data[j + n] = diff2;
+            un.data()[j + n] = diff2;
 
             // D5: 判斷是否需要回加
             if (b1 + b2 > 0) {
                 --q_hat;
                 uint64_t add_carry = 0;
                 for (size_t i = 0; i < n; ++i) {
-                    uint64_t val = un.m_data[j + i];
-                    uint64_t sum = val + vn.m_data[i] + add_carry;
+                    uint64_t val = un.data()[j + i];
+                    uint64_t sum = val + vn.data()[i] + add_carry;
                     add_carry = (sum < val || (add_carry && sum == val)) ? 1 : 0;
-                    un.m_data[j + i] = sum;
+                    un.data()[j + i] = sum;
                 }
-                un.m_data[j + n] += add_carry;
+                un.data()[j + n] += add_carry;
             }
 
-            q.m_data[j] = q_hat;
+            q.data()[j] = q_hat;
         }
 
         q.m_sign = 1;
@@ -863,8 +877,8 @@ public:
             return;
         }
         res.resize(a.m_size + limbs, 0);
-        BigIntStorage::copy_limbs(res.m_data + limbs, a.m_data, a.m_size);
-        BigIntStorage::zero_limbs(res.m_data, limbs);
+        BigIntStorage::copy_limbs(res.data() + limbs, a.data(), a.m_size);
+        BigIntStorage::zero_limbs(res.data(), limbs);
         res.m_sign = a.m_sign;
         res.normalize();
     }
@@ -886,21 +900,21 @@ public:
         res.resize(new_size, 0);
 
         if (bit_shift == 0) {
-            BigIntStorage::copy_limbs(res.m_data + limb_shift, a.m_data, a.m_size);
+            BigIntStorage::copy_limbs(res.data() + limb_shift, a.data(), a.m_size);
             if (limb_shift > 0) {
-                BigIntStorage::zero_limbs(res.m_data, limb_shift);
+                BigIntStorage::zero_limbs(res.data(), limb_shift);
             }
         } else {
             if (limb_shift > 0) {
-                BigIntStorage::zero_limbs(res.m_data, limb_shift);
+                BigIntStorage::zero_limbs(res.data(), limb_shift);
             }
             uint64_t carry = 0;
             for (size_t i = 0; i < a.m_size; ++i) {
-                uint64_t cur = a.m_data[i];
-                res.m_data[i + limb_shift] = (cur << bit_shift) | carry;
+                uint64_t cur = a.data()[i];
+                res.data()[i + limb_shift] = (cur << bit_shift) | carry;
                 carry = cur >> (64 - bit_shift);
             }
-            res.m_data[a.m_size + limb_shift] = carry;
+            res.data()[a.m_size + limb_shift] = carry;
         }
         res.m_sign = a.m_sign;
         res.normalize();
@@ -955,12 +969,12 @@ public:
         res.resize(new_size, 0);
 
         if (bit_shift == 0) {
-            BigIntStorage::copy_limbs(res.m_data, a.m_data + limb_shift, new_size);
+            BigIntStorage::copy_limbs(res.data(), a.data() + limb_shift, new_size);
         } else {
             for (size_t i = 0; i < new_size; ++i) {
-                uint64_t cur = a.m_data[i + limb_shift];
-                uint64_t next = (i + limb_shift + 1 < a.m_size) ? a.m_data[i + limb_shift + 1] : 0;
-                res.m_data[i] = (cur >> bit_shift) | (next << (64 - bit_shift));
+                uint64_t cur = a.data()[i + limb_shift];
+                uint64_t next = (i + limb_shift + 1 < a.m_size) ? a.data()[i + limb_shift + 1] : 0;
+                res.data()[i] = (cur >> bit_shift) | (next << (64 - bit_shift));
             }
         }
         res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
@@ -997,7 +1011,7 @@ public:
             size_t min_len = (a.m_size < b.m_size) ? a.m_size : b.m_size;
             res.resize(min_len, 0);
             for (size_t i = 0; i < min_len; ++i) {
-                res.m_data[i] = a.m_data[i] & b.m_data[i];
+                res.data()[i] = a.data()[i] & b.data()[i];
             }
             res.m_sign = 1;
             res.normalize();
@@ -1009,8 +1023,8 @@ public:
             bitwise_not(not_b, b);
             res.resize(a.m_size, 0);
             for (size_t i = 0; i < a.m_size; ++i) {
-                uint64_t nu = (i < not_b.m_size) ? not_b.m_data[i] : 0;
-                res.m_data[i] = a.m_data[i] & (~nu);
+                uint64_t nu = (i < not_b.m_size) ? not_b.data()[i] : 0;
+                res.data()[i] = a.data()[i] & (~nu);
             }
             res.m_sign = 1;
             res.normalize();
@@ -1041,9 +1055,9 @@ public:
             size_t max_len = (a.m_size > b.m_size) ? a.m_size : b.m_size;
             res.resize(max_len, 0);
             for (size_t i = 0; i < max_len; ++i) {
-                uint64_t av = (i < a.m_size) ? a.m_data[i] : 0;
-                uint64_t bv = (i < b.m_size) ? b.m_data[i] : 0;
-                res.m_data[i] = av | bv;
+                uint64_t av = (i < a.m_size) ? a.data()[i] : 0;
+                uint64_t bv = (i < b.m_size) ? b.data()[i] : 0;
+                res.data()[i] = av | bv;
             }
             res.m_sign = 1;
             res.normalize();
@@ -1070,9 +1084,9 @@ public:
             size_t max_len = (a.m_size > b.m_size) ? a.m_size : b.m_size;
             res.resize(max_len, 0);
             for (size_t i = 0; i < max_len; ++i) {
-                uint64_t av = (i < a.m_size) ? a.m_data[i] : 0;
-                uint64_t bv = (i < b.m_size) ? b.m_data[i] : 0;
-                res.m_data[i] = av ^ bv;
+                uint64_t av = (i < a.m_size) ? a.data()[i] : 0;
+                uint64_t bv = (i < b.m_size) ? b.data()[i] : 0;
+                res.data()[i] = av ^ bv;
             }
             res.m_sign = 1;
             res.normalize();
@@ -1179,7 +1193,7 @@ public:
         while (cur.m_sign != 0) {
             BigIntStorage q, r;
             div_mod_core(q, r, cur, radix_st);
-            uint64_t rem = (r.m_size > 0) ? r.m_data[0] : 0;
+            uint64_t rem = (r.m_size > 0) ? r.data()[0] : 0;
             chunks.push_back(rem);
             cur = std::move(q);
         }
