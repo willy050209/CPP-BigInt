@@ -9,3 +9,6 @@ out/
 CMakeSettings.json
 compile_commands.json
 .DS_Store
+
+__pycache__/
+*.pyc
