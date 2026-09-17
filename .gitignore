@@ -1,0 +1,11 @@
+build/
+build_*/
+bin/
+lib/
+out/
+.vs/
+*.user
+*.suo
+CMakeSettings.json
+compile_commands.json
+.DS_Store
