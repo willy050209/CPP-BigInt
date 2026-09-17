@@ -29,14 +29,26 @@
 
 ## 快速開始
 
-### CMake 引入
+### 引入方式
 
-本函式庫為 Header-only，直接將 `include` 目錄加入至專案即可：
-
+#### 1. CMake 目錄引入 (Header-only)
 ```cmake
 add_subdirectory(CPP-BigInt)
 target_link_libraries(your_target PRIVATE bigint)
 ```
+
+#### 2. 單一標頭檔引入 (Single Header)
+直接將 `dist/bigint.hpp` 複製至專案中引入即可：
+```cpp
+#include "dist/bigint.hpp"
+```
+
+#### 3. C++20 模組引入 (C++20 Module)
+```cpp
+import bigint;
+```
+
+---
 
 ### 範例程式碼
 
