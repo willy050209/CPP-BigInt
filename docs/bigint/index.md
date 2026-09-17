@@ -1,0 +1,102 @@
+# numeric::bigint 類別
+
+表示任意精度的有符號整數（Arbitrary-Precision Signed Integer）。
+
+## 命名空間與標頭檔
+- **命名空間 (Namespace)**: `numeric`
+- **標頭檔 (Header)**: `<numeric/BigInt.hpp>`
+- **模組 (Module)**: `import bigint;` (C++20+)
+- **基礎架構**: 繼承自 `detail::BigIntConstants<>`
+
+---
+
+## 語法宣告 (Syntax)
+
+```cpp
+namespace numeric {
+    class bigint : public detail::BigIntConstants<>;
+}
+```
+
+---
+
+## 類別摘要 (Summary)
+
+`numeric::bigint` 提供在理論上僅受可用記憶體限制的任意精度整數運算。類別設計以效能、直覺性與相容性為核心：
+- **128-bit Small Buffer Optimization (SBO)**：於類別內部常駐 2 個 64-bit limbs 緩衝區。數值介於 $[-2^{128}+1, 2^{128}-1]$ 範圍內時，**享有 0 次 Heap 動態記憶體配置**。
+- **無縫整數混算**：支援與所有 C++ 原生整數型態（`int8_t` ~ `int64_t`、`uint8_t` ~ `uint64_t`、`long`、`char` 等）無縫進行混合四則運算、位元運算與比較。
+- **標準二補數語意**：位元運算子（`&`, `|`, `^`, `~`, `<<`, `>>`）模擬標準二補數無限符號延伸（Two's Complement sign extension），其行為與原生有符號整數高度一致。
+- **全編譯期求值 (`constexpr`) 支援**：在 C++20 及以上標準環境下，建構子、四則運算、位元運算與比較皆完整標註為 `constexpr`。
+
+---
+
+## 記憶體配置與內部模型 (Internal Architecture)
+
+```mermaid
+flowchart TD
+    A["numeric::bigint 實例"] --> B{"數值寬度 <= 128 位元？"}
+    B -- 是 --> C["SBO 模式 (Small Buffer Optimization)<br>使用內部 m_sbo[2] 陣列<br>0 Heap 動態配置"]
+    B -- 否 --> D["動態儲存模式 (Heap Allocation)<br>分配 uint64_t* m_dynamic 陣列<br>隨數值規模自動擴展"]
+    D -- 運算後數值縮減 <= 128 位元 --> E["自動退回 SBO<br>釋放 Heap 記憶體"]
+```
+
+### 1. SBO 狀態轉移
+- **晉升 Heap**：當運算（如加法進位或大數相乘）使數值超過 128 位元（需 3 個或更多 limbs）時，底層儲存結構自動於 Heap 分配陣列，並將資料轉移至動態緩衝區。
+- **回縮 SBO**：當運算（如減法借位、除法或位移）使數值回縮至 128 位元以內時，`bigint` 自動將資料搬回內建 SBO 緩衝區，並立刻釋放動態 Heap 記憶體，以維持快取局部性。
+
+### 2. 零與符號規則
+- 數值 `0` 的符號規範為 `0`，`limb_count()` 規範為 `0`。
+- 正數符號規範為 `1`，負數符號規範為 `-1`。
+- 內部正規化保證最高位 limb 恆不為零（除非整個數值為 0）。
+
+---
+
+## 成員分類清單 (Members)
+
+| 成員類別 | 說明文件 | 主要包含項目 |
+| :--- | :--- | :--- |
+| **常數代理** | [靜態解析與常數](parsing.md) | `zero`, `one`, `operator()` |
+| **建構函式** | [建構函式全覽](constructors.md) | 預設建構子、原生型別、泛型整數、字串視圖、`std::bitset` |
+| **狀態檢測** | [屬性與狀態方法](properties.md) | `is_sbo`, `is_small`, `is_zero`, `sign`, `limb_count`, `limbs`, `storage` |
+| **型別轉換** | [轉換與序列化](conversions.md) | `operator bool`, `int64_t`, `double`, `to_string`, `to_binary_string`, `to_bitset` |
+| **運算子重載** | [運算子全集](operators.md) | `+`, `-`, `*`, `/`, `%`, 位元運算、位移、比較、邏輯、串流輸出 |
+| **靜態方法** | [靜態解析與常數](parsing.md) | `from_string`, `from_binary_string` |
+
+---
+
+## 簡易示範 (Example)
+
+```cpp
+#include <numeric/BigInt.hpp>
+#include <iostream>
+
+int main() {
+    // 預設建構 (值為 0)
+    numeric::bigint zero_val;
+    std::cout << "Zero: " << zero_val << ", is_sbo: " << zero_val.is_sbo() << "\n";
+
+    // 透過十進位字串建構超出 64 位元的大整數
+    numeric::bigint large("170141183460469231731687303715884105727"); // 2^127 - 1
+    std::cout << "Large: " << large << ", SBO: " << large.is_sbo() << "\n";
+
+    // 超出 128 位元自動轉移至 Heap
+    numeric::bigint huge = large * 2;
+    std::cout << "Huge: " << huge << ", SBO: " << huge.is_sbo() << "\n";
+
+    // 縮減回 128 位元自動退回 SBO
+    huge /= 2;
+    std::cout << "Shrunk: " << huge << ", SBO: " << huge.is_sbo() << "\n";
+
+    return 0;
+}
+```
+
+---
+
+## 注意事項 (Notes)
+
+> [!TIP]
+> 絕大多數密碼學金鑰、UUID、時間戳記或 128 位元運算皆可完全限制在 SBO 內部完成，具備極高的執行效能與零記憶體碎片優勢。
+
+> [!NOTE]
+> `numeric::bigint` 符合 RAII 原則，完全負責自身內部 Heap 記憶體的配置與釋放，無需使用者手動介入。

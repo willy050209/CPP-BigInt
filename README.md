@@ -87,6 +87,24 @@ int main() {
 
 ---
 
+## API 文件
+
+API 技術參考手冊已收錄於 [docs/](docs/README.md)：
+
+- [API 總覽與目錄導覽 (Table of Contents)](docs/README.md)
+- [numeric::bigint 類別手冊](docs/bigint/index.md)
+  - [建構函式全覽](docs/bigint/constructors.md)
+  - [屬性與狀態檢測](docs/bigint/properties.md)
+  - [型別轉換與字串化](docs/bigint/conversions.md)
+  - [運算子重載](docs/bigint/operators.md)
+  - [靜態解析與常數代理](docs/bigint/parsing.md)
+- [高精度數論與數學函式 (`numeric/BigIntMath.hpp`)](docs/math.md)
+- [std::bitset 泛型互轉 (`numeric/Bitset.hpp`)](docs/bitset.md)
+- [C++ 標準庫擴充特化 (std::hash, std::formatter)](docs/extensions.md)
+- [編譯設定與巨集環境 (`numeric/Config.hpp`)](docs/config.md)
+
+---
+
 ## 授權條款
 
 本專案採用 MIT 授權條款。詳見 [LICENSE](LICENSE)。
