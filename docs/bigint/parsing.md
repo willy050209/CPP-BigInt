@@ -42,6 +42,15 @@ static NUMERIC_CONSTEXPR_20 bigint from_string(numeric::string_view sv);
 - `std::invalid_argument`
   若字串為空、僅包含符號、或包含非十進位數字字符（`'0'`~`'9'`）時拋出。
 
+#### 備註與分治演算法架構
+`from_string` 捨棄了傳統逐位數相加的 $O(N^2)$ 樸素實作，引入分治聚合架構：
+1. **$10^{19}$ 純量區塊化 (Chunking)**：
+   利用 64 位元整數可容納的最大十進位冪次 $10^{19} < 2^{64}-1$，以 19 位元為一組在單次迴圈中直接轉化為 `uint64_t` 原生整數，完全消除暫存 `bigint` 配置。
+2. **二分樹狀折疊聚合 (Divide-and-Conquer Tree Aggregation)**：
+   對於多區塊的龐大字串，採用兩兩二分合併策略：$V_{\text{merged}} = V_{\text{high}} \times 10^{19 \cdot 2^k} + V_{\text{low}}$。結合 Karatsuba 快速乘法，將超大數之解析複雜度大幅降低。
+3. **執行緒安全動態權重快取 (`Pow10Cache`)**：
+   聚合所需的巨大冪次常數（$10^{19 \cdot 2^k}$）由內建的動態快取管理，同一行程或執行緒中重複解析大數時可直接複用快取權重，極大化批次輸入效能。
+
 #### 範例
 ```cpp
 numeric::bigint val = numeric::bigint::from_string("9876543210123456789");

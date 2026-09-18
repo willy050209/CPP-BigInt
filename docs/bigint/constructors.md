@@ -40,7 +40,7 @@ bigint() noexcept = default;
 建立並初始化數值為 `0` 的 `bigint` 實例。
 
 #### 備註
-預設建構之物件位於 128-bit SBO 模式，不觸發任何動態記憶體配置。其 `sign()` 為 `0`，`limb_count()` 為 `0`。
+預設建構之物件位於 256-bit SBO 模式（4 limbs 空間），不觸發任何動態記憶體配置。其 `sign()` 為 `0`，`limb_count()` 為 `0`。
 
 #### 範例
 ```cpp
@@ -70,7 +70,7 @@ NUMERIC_CONSTEXPR_20 bigint(uint64_t v) noexcept;
 
 #### 備註
 - 若數值為負數，內部將正確處理極值情況（例如 `INT64_MIN`，即 `-9223372036854775808LL`），避免未定義之算術溢位。
-- 所有 64 位元純量整數建構皆完全落在 128-bit SBO 內，保證 `noexcept` 且 0 次 Heap 動態配置。
+- 所有 64 位元純量整數建構皆完全落在 256-bit SBO 內，保證 `noexcept` 且 0 次 Heap 動態配置。
 
 #### 範例
 ```cpp

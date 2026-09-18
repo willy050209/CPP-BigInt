@@ -12,7 +12,7 @@
 
 | 方法名稱 | 語法宣告摘要 | 說明 |
 | :--- | :--- | :--- |
-| `is_sbo` | `bool is_sbo() const noexcept;` | 查詢目前是否處於 128-bit SBO 內建緩衝區（0 次 Heap 配置）。 |
+| `is_sbo` | `bool is_sbo() const noexcept;` | 查詢目前是否處於 256-bit SBO 內建緩衝區（4 limbs，0 次 Heap 配置）。 |
 | `is_small` | `bool is_small() const noexcept;` | `is_sbo()` 之別名方法。 |
 | `is_zero` | `bool is_zero() const noexcept;` | 判斷數值是否等於零。 |
 | `sign` | `int8_t sign() const noexcept;` | 取得數值正負符號代碼（`-1`, `0`, `1`）。 |
@@ -26,7 +26,7 @@
 
 ### 1. `is_sbo` / `is_small` 方法
 
-查詢物件當前是否正使用類別內建的 128 位元緩衝區（即無動態記憶體分配狀態）。
+查詢物件當前是否正使用類別內建的 256 位元緩衝區（即無動態記憶體分配狀態）。
 
 #### 語法
 ```cpp
@@ -36,21 +36,21 @@ NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_small() const noexcept;
 
 #### 傳回值
 - `bool`
-  - 若數值在 128 位元以內（有效 limbs 數量 $\le 2$），使用內建靜態緩衝區，回傳 `true`。
-  - 若數值超出 128 位元，內部使用 Heap 動態記憶體分配，回傳 `false`。
+  - 若數值在 256 位元以內（有效 limbs 數量 $\le 4$），使用內建靜態緩衝區，回傳 `true`。
+  - 若數值超出 256 位元，內部使用 Heap 動態記憶體分配，回傳 `false`。
 
 #### 備註
 此方法對於極致效能敏感之系統或即時系統（Real-time systems）極具價值，可用於診斷是否發生非預期的 Heap 配置。
 
 #### 範例
 ```cpp
-numeric::bigint val("340282366920938463463374607431768211455"); // 2^128 - 1
+numeric::bigint val("115792089237316195423570985008687907853269984665640564039457584007913129639935"); // 2^256 - 1
 std::cout << std::boolalpha << val.is_sbo() << "\n"; // 輸出: true
 
-val += 1; // 2^128 (需 3 個 limbs，晉升 Heap)
+val += 1; // 2^256 (需 5 個 limbs，晉升 Heap)
 std::cout << val.is_sbo() << "\n";                   // 輸出: false
 
-val -= 1; // 回縮至 128 位元以內
+val -= 1; // 回縮至 256 位元以內
 std::cout << val.is_sbo() << "\n";                   // 輸出: true
 ```
 

@@ -16,6 +16,8 @@
 | `NUMERIC_NODISCARD` | `[[nodiscard]]` 或屬性 | 函式傳回值未被使用時觸發編譯器警告之屬性包裝。 |
 | `NUMERIC_CONSTEXPR_14` | `constexpr` 或 `inline` | 於 C++14 及以上展開為 `constexpr`，低於 C++14 時回退為 `inline`。 |
 | `NUMERIC_CONSTEXPR_20` | `constexpr` 或 `inline` | 於 C++20 及以上展開為 `constexpr`，低於 C++20 時回退為 `inline`。 |
+| `NUMERIC_CONSTEXPR_20_FORCEINLINE` | `constexpr ...` 或 `...` | 解決 pre-C++20 下 `NUMERIC_CONSTEXPR_20` 回退為 `inline` 導致與強制內聯重複宣告之巨集。 |
+| `NUMERIC_RESTRICT` | `__restrict` 或 `__restrict__` | 指標無別名（No-Alias）限定詞，指示編譯器指標無記憶體重疊以強化指令平行化。 |
 | `NUMERIC_HAS_EXCEPTIONS` | `1` 或 `0` | 偵測編譯器是否啟用 C++ 例外處理機制。 |
 | `NUMERIC_THROW_OR_ABORT(ex)` | 巨集陳述式 | 若啟用例外則執行 `throw (ex)`；若在無例外環境（`-fno-exceptions`）下則直接呼叫 `std::abort()`。 |
 | `NUMERIC_ALWAYS_INLINE` | 編譯器專屬指示字 | 強制內聯指示（MSVC `__forceinline`、GCC/Clang `__attribute__((always_inline))`）。 |
@@ -89,5 +91,38 @@ int main() {
 
 ---
 
+### 4. 內聯與編譯期巨集組合 (`NUMERIC_CONSTEXPR_20_FORCEINLINE`)
+
+在低於 C++20 的環境中，`NUMERIC_CONSTEXPR_20` 會自動回退退化為 `inline`。若函式同時被宣告為 `NUMERIC_CONSTEXPR_20 NUMERIC_ALWAYS_INLINE`，在 GCC/Clang 下會展開為：
+```cpp
+inline __attribute__((always_inline)) inline // 觸發 duplicate 'inline' 語法編譯錯誤
+```
+為了確保在所有 C++ 標準（C++11/14/17/20/23）下皆能無縫編譯並取得最強制的內聯優化，定義了此專用組合巨集：
+```cpp
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+#  define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr NUMERIC_ALWAYS_INLINE
+#else
+#  define NUMERIC_CONSTEXPR_20_FORCEINLINE NUMERIC_ALWAYS_INLINE
+#endif
+```
+
+---
+
+### 5. 指標無別名限定詞 (`NUMERIC_RESTRICT`)
+
+在底層的多精度運算核心（如 `BigIntCore::add`、`BigIntCore::sub`、長除法與字串緩衝寫入）中，明確告知編譯器指標之間互不重疊（No-Alias），可讓編譯器實施激進的暫存器快取與指令管線排程：
+```cpp
+#if defined(_MSC_VER)
+#  define NUMERIC_RESTRICT __restrict
+#elif defined(__GNUC__) || defined(__clang__)
+#  define NUMERIC_RESTRICT __restrict__
+#else
+#  define NUMERIC_RESTRICT
+#endif
+```
+
+---
+
 ## 適用於
 - 所有現代 C++ 編譯器（MSVC 2015+、GCC 4.8+、Clang 3.4+）。
+- 涵蓋 C++11, C++14, C++17, C++20, C++23 等各版本標準。

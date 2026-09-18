@@ -23,7 +23,7 @@ namespace numeric {
 ## 類別摘要 (Summary)
 
 `numeric::bigint` 提供在理論上僅受可用記憶體限制的任意精度整數運算。類別設計以效能、直覺性與相容性為核心：
-- **128-bit Small Buffer Optimization (SBO)**：於類別內部常駐 2 個 64-bit limbs 緩衝區。數值介於 $[-2^{128}+1, 2^{128}-1]$ 範圍內時，**享有 0 次 Heap 動態記憶體配置**。
+- **256-bit Small Buffer Optimization (SBO)**：於類別內部常駐 4 個 64-bit limbs 緩衝區。數值介於 $[-2^{256}+1, 2^{256}-1]$ 範圍內時，**享有 0 次 Heap 動態記憶體配置**。
 - **無縫整數混算**：支援與所有 C++ 原生整數型態（`int8_t` ~ `int64_t`、`uint8_t` ~ `uint64_t`、`long`、`char` 等）無縫進行混合四則運算、位元運算與比較。
 - **標準二補數語意**：位元運算子（`&`, `|`, `^`, `~`, `<<`, `>>`）模擬標準二補數無限符號延伸（Two's Complement sign extension），其行為與原生有符號整數高度一致。
 - **全編譯期求值 (`constexpr`) 支援**：在 C++20 及以上標準環境下，建構子、四則運算、位元運算與比較皆完整標註為 `constexpr`。
@@ -34,15 +34,16 @@ namespace numeric {
 
 ```mermaid
 flowchart TD
-    A["numeric::bigint 實例"] --> B{"數值寬度 <= 128 位元？"}
-    B -- 是 --> C["SBO 模式 (Small Buffer Optimization)<br>使用內部 m_sbo[2] 陣列<br>0 Heap 動態配置"]
-    B -- 否 --> D["動態儲存模式 (Heap Allocation)<br>分配 uint64_t* m_dynamic 陣列<br>隨數值規模自動擴展"]
-    D -- 運算後數值縮減 <= 128 位元 --> E["自動退回 SBO<br>釋放 Heap 記憶體"]
+    A["numeric::bigint 實例"] --> B{"數值寬度 <= 256 位元 (<= 4 limbs)？"}
+    B -- 是 --> C["SBO 模式 (Small Buffer Optimization)<br>使用內部 m_sbo[4] 陣列<br>0 Heap 動態配置"]
+    B -- 否 --> D["動態儲存模式 (Heap Allocation)<br>分配 m_heap 陣列<br>隨數值規模自動擴展"]
+    D -- 運算後數值縮減 <= 256 位元 --> E["自動退回 SBO<br>釋放 Heap 記憶體"]
 ```
 
 ### 1. SBO 狀態轉移
-- **晉升 Heap**：當運算（如加法進位或大數相乘）使數值超過 128 位元（需 3 個或更多 limbs）時，底層儲存結構自動於 Heap 分配陣列，並將資料轉移至動態緩衝區。
-- **回縮 SBO**：當運算（如減法借位、除法或位移）使數值回縮至 128 位元以內時，`bigint` 自動將資料搬回內建 SBO 緩衝區，並立刻釋放動態 Heap 記憶體，以維持快取局部性。
+- **晉升 Heap**：當運算（如加法進位或大數相乘）使數值超過 256 位元（需 5 個或更多 limbs）時，底層儲存結構自動於 Heap 分配陣列，並將資料轉移至動態緩衝區。
+- **回縮 SBO**：當運算（如減法借位、除法或位移）使數值回縮至 256 位元（$\le 4$ limbs）以內時，`bigint` 自動將資料搬回內建 SBO 緩衝區，並立刻釋放動態 Heap 記憶體，以維持快取局部性。
+
 
 ### 2. 零與符號規則
 - 數值 `0` 的符號規範為 `0`，`limb_count()` 規範為 `0`。

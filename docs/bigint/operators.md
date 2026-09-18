@@ -76,8 +76,12 @@ NUMERIC_CONSTEXPR_20 bigint& operator/=(const bigint& rhs);
 NUMERIC_CONSTEXPR_20 bigint& operator%=(const bigint& rhs);
 ```
 
-#### 運算法則與複雜度
-- **加法 / 減法**：基於 64 位元區塊批次進位/借位運算（MSVC `_addcarry_u64`、GCC `__builtin_addcll`），複雜度為 $O(N)$。
+#### 運算法則與硬體加速
+- **加法與減法** ($O(N)$)：
+  - **硬體指令級加速 (Hardware Intrinsics)**：核心採用 `adc64` 與 `sbb64`，於 MSVC 啟用 `_addcarry_u64` / `_subborrow_u64`，於 GCC/Clang 啟用 `__builtin_addcll` / `__builtin_subcll`，利用 CPU Carry Flag 進行單週期連鎖進借位。
+  - **256-bit SBO 4-Limb 展開優化**：針對 SBO 內部 4 個 limbs 實施完全迴圈展開（Unrolled Loop），消除迴圈跳轉開銷並極大化暫存器利用率。
+  - **早期終止機制 (Early-exit Propagation)**：當殘留進位/借位歸零且較短運算元已耗盡時，立即退出運算迴圈並執行批次記憶體拷貝，大幅縮短不對稱位元加減時間。
+  - **自我別名安全 (Self-Aliasing Safety)**：底層演算法（如 `BigIntCore::add`、`BigIntCore::sub`）全面通過別名防護檢測，即使運算元位址重疊（例如 `a += a`），亦能保證計算正確性。
 - **乘法**：小規模採用學校乘法 (Schoolbook $O(N^2)$)，大數自動啟用 **Karatsuba 分治演算法** ($O(N^{\log_2 3}) \approx O(N^{1.585})$)。
 - **除法與取模**：採用 **Knuth Algorithm D** 規格化多精準度長除法演算法。
 
