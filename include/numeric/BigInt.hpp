@@ -674,9 +674,7 @@ public:
     /// <param name="rhs">加數</param>
     /// <returns>自身參考</returns>
     NUMERIC_CONSTEXPR_20 bigint& operator+=(const bigint& rhs) {
-        detail::BigIntStorage tmp;
-        detail::BigIntCore::add_signed(tmp, m_storage, rhs.m_storage);
-        m_storage = std::move(tmp);
+        detail::BigIntCore::add_signed(m_storage, m_storage, rhs.m_storage);
         return *this;
     }
 
@@ -686,9 +684,7 @@ public:
     /// <param name="rhs">減數</param>
     /// <returns>自身參考</returns>
     NUMERIC_CONSTEXPR_20 bigint& operator-=(const bigint& rhs) {
-        detail::BigIntStorage tmp;
-        detail::BigIntCore::sub_signed(tmp, m_storage, rhs.m_storage);
-        m_storage = std::move(tmp);
+        detail::BigIntCore::sub_signed(m_storage, m_storage, rhs.m_storage);
         return *this;
     }
 

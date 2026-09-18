@@ -15,9 +15,12 @@
 #include <iostream>
 #include <type_traits>
 #include <cassert>
+#include <mutex>
+#include <atomic>
 
-#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
+#if defined(_MSC_VER)
 #include <intrin.h>
+#elif (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
 #include <immintrin.h>
 #endif
 
@@ -297,6 +300,158 @@ public:
     static constexpr size_t KARATSUBA_THRESHOLD = 16;
 
     /// <summary>
+    /// 64-bit ADC 原語：out = a + b + carry_in，回傳 carry_out (0 或 1)。
+    /// 消除 C++ 純量條件判斷分支，並支援 C++20 constexpr 常數求值。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 NUMERIC_ALWAYS_INLINE uint8_t adc64(
+        uint8_t carry_in, uint64_t a, uint64_t b, uint64_t* out) noexcept
+    {
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            uint64_t sum = a + carry_in;
+            uint8_t c1 = static_cast<uint8_t>(sum < a);
+            sum += b;
+            uint8_t c2 = static_cast<uint8_t>(sum < b);
+            *out = sum;
+            return c1 | c2;
+        }
+#endif
+
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
+        unsigned __int64 temp = 0;
+        uint8_t c = _addcarry_u64(carry_in, a, b, &temp);
+        *out = static_cast<uint64_t>(temp);
+        return c;
+#elif (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+        unsigned long long temp = 0;
+        uint8_t c = _addcarry_u64(carry_in, a, b, &temp);
+        *out = static_cast<uint64_t>(temp);
+        return c;
+#elif (defined(__GNUC__) || defined(__clang__)) && defined(__SIZEOF_INT128__)
+        unsigned __int128 res = static_cast<unsigned __int128>(a) + b + carry_in;
+        *out = static_cast<uint64_t>(res);
+        return static_cast<uint8_t>(res >> 64);
+#else
+        uint64_t sum = a + carry_in;
+        uint8_t c1 = static_cast<uint8_t>(sum < a);
+        sum += b;
+        uint8_t c2 = static_cast<uint8_t>(sum < b);
+        *out = sum;
+        return c1 | c2;
+#endif
+    }
+
+    /// <summary>
+    /// 64-bit SBB 原語：out = a - b - borrow_in，回傳 borrow_out (0 或 1)。
+    /// 消除 C++ 純量條件判斷分支，並支援 C++20 constexpr 常數求值。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 NUMERIC_ALWAYS_INLINE uint8_t sbb64(
+        uint8_t borrow_in, uint64_t a, uint64_t b, uint64_t* out) noexcept
+    {
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            uint64_t diff = a - borrow_in;
+            uint8_t b1 = static_cast<uint8_t>(a < borrow_in);
+            uint64_t diff2 = diff - b;
+            uint8_t b2 = static_cast<uint8_t>(diff < b);
+            *out = diff2;
+            return b1 | b2;
+        }
+#endif
+
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
+        unsigned __int64 temp = 0;
+        uint8_t b_out = _subborrow_u64(borrow_in, a, b, &temp);
+        *out = static_cast<uint64_t>(temp);
+        return b_out;
+#elif (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
+        unsigned long long temp = 0;
+        uint8_t b_out = _subborrow_u64(borrow_in, a, b, &temp);
+        *out = static_cast<uint64_t>(temp);
+        return b_out;
+#elif (defined(__GNUC__) || defined(__clang__)) && defined(__SIZEOF_INT128__)
+        unsigned __int128 res = static_cast<unsigned __int128>(a) - b - borrow_in;
+        *out = static_cast<uint64_t>(res);
+        return static_cast<uint8_t>((res >> 127) & 1);
+#else
+        uint64_t diff = a - borrow_in;
+        uint8_t b1 = static_cast<uint8_t>(a < borrow_in);
+        uint64_t diff2 = diff - b;
+        uint8_t b2 = static_cast<uint8_t>(diff < b);
+        *out = diff2;
+        return b1 | b2;
+#endif
+    }
+
+    /// <summary>
+    /// 2-Digit 快速十進位查詢表（200 位元組，長駐 L1 Cache）。
+    /// </summary>
+    static constexpr char DIGIT_PAIRS[201] =
+        "00010203040506070809"
+        "10111213141516171819"
+        "20212223242526272829"
+        "30313233343536373839"
+        "40414243444546474849"
+        "50515253545556575859"
+        "60616263646566676869"
+        "70717273747576777879"
+        "80818283848586878889"
+        "90919293949596979899";
+
+    /// <summary>
+    /// 支援完整 64 位元無符號整數（最大 18446744073709551615，共 20 位）之精準十進位位數判定。
+    /// 補齊 10^16 二分階梯，杜絕任何緩衝區溢位。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 NUMERIC_ALWAYS_INLINE size_t digits10_u64(uint64_t v) noexcept {
+        size_t d = 1;
+        if (v >= 10000000000000000ULL) { v /= 10000000000000000ULL; d += 16; } // 10^16
+        if (v >= 100000000ULL)         { v /= 100000000ULL;         d += 8;  } // 10^8
+        if (v >= 10000ULL)             { v /= 10000ULL;             d += 4;  } // 10^4
+        if (v >= 100ULL)               { v /= 100ULL;               d += 2;  } // 10^2
+        if (v >= 10ULL)                { d += 1; }
+        return d;
+    }
+
+    /// <summary>
+    /// 格式化最高位 chunk：直接利用已知的 top_digits 由尾向頭倒序填寫，免除重複除法與二次長度搜尋。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 NUMERIC_ALWAYS_INLINE void format_highest_chunk(
+        char* dst, uint64_t val, size_t digits) noexcept
+    {
+        int pos = static_cast<int>(digits);
+        while (val >= 100) {
+            uint32_t rem = static_cast<uint32_t>(val % 100);
+            val /= 100;
+            pos -= 2;
+            dst[pos]     = DIGIT_PAIRS[rem * 2];
+            dst[pos + 1] = DIGIT_PAIRS[rem * 2 + 1];
+        }
+        if (val < 10) {
+            dst[--pos] = static_cast<char>('0' + val);
+        } else {
+            pos -= 2;
+            dst[pos]     = DIGIT_PAIRS[val * 2];
+            dst[pos + 1] = DIGIT_PAIRS[val * 2 + 1];
+        }
+        assert(pos == 0 && "format_highest_chunk failed to match exact digit count");
+    }
+
+    /// <summary>
+    /// 格式化中間 19 位 fixed-width chunk：倒序逆向填充 9 組 LUT 雙字元加上 1 個最高位單字元。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 NUMERIC_ALWAYS_INLINE void format_chunk_19_digits(
+        char* dst, uint64_t val) noexcept
+    {
+        for (int p = 8; p >= 0; --p) {
+            uint32_t rem = static_cast<uint32_t>(val % 100);
+            val /= 100;
+            dst[1 + p * 2]     = DIGIT_PAIRS[rem * 2];
+            dst[1 + p * 2 + 1] = DIGIT_PAIRS[rem * 2 + 1];
+        }
+        dst[0] = static_cast<char>('0' + val);
+    }
+
+    /// <summary>
     /// 計算 64 位元整數之前導 0 數量 (Count Leading Zeros)。
     /// </summary>
     /// <param name="x">目標 64 位元整數</param>
@@ -470,59 +625,198 @@ public:
     }
 
     /// <summary>
-    /// 無符號 limbs 加法：res = a + b。
+    /// 256-bit SBO 靜態展開快路徑加法 (1 ~ 4 Limbs)。
+    /// 安全零填充提取，純暫存器 ADC 流水線，延遲進位擴容，保證自我別名與全零規格化安全。
     /// </summary>
-    /// <param name="res">輸出結果儲存物件</param>
-    /// <param name="a">加數 a</param>
-    /// <param name="b">加數 b</param>
-    static NUMERIC_CONSTEXPR_20 void add_unsigned(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
-        size_t max_len = (a.m_size > b.m_size) ? a.m_size : b.m_size;
-        res.resize(max_len + 1, 0);
-        uint64_t carry = 0;
-        for (size_t i = 0; i < max_len; ++i) {
-            uint64_t av = (i < a.m_size) ? a.data()[i] : 0;
-            uint64_t bv = (i < b.m_size) ? b.data()[i] : 0;
-            uint64_t sum = av + carry;
-            uint64_t c1 = (sum < av) ? 1 : 0;
-            sum += bv;
-            uint64_t c2 = (sum < bv) ? 1 : 0;
-            carry = c1 + c2;
-            res.data()[i] = sum;
+    static NUMERIC_CONSTEXPR_20 void add_unsigned_sbo4(
+        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    {
+        const uint64_t* a_data = a.data();
+        const uint64_t* b_data = b.data();
+        size_t a_size = a.m_size;
+        size_t b_size = b.m_size;
+
+        const uint64_t a0 = (0 < a_size) ? a_data[0] : 0;
+        const uint64_t a1 = (1 < a_size) ? a_data[1] : 0;
+        const uint64_t a2 = (2 < a_size) ? a_data[2] : 0;
+        const uint64_t a3 = (3 < a_size) ? a_data[3] : 0;
+
+        const uint64_t b0 = (0 < b_size) ? b_data[0] : 0;
+        const uint64_t b1 = (1 < b_size) ? b_data[1] : 0;
+        const uint64_t b2 = (2 < b_size) ? b_data[2] : 0;
+        const uint64_t b3 = (3 < b_size) ? b_data[3] : 0;
+
+        uint64_t r0 = 0, r1 = 0, r2 = 0, r3 = 0;
+        uint8_t c = 0;
+        c = adc64(c, a0, b0, &r0);
+        c = adc64(c, a1, b1, &r1);
+        c = adc64(c, a2, b2, &r2);
+        c = adc64(c, a3, b3, &r3);
+
+        if (c == 0) {
+            res.reset_heap();
+            res.m_sbo[0] = r0;
+            res.m_sbo[1] = r1;
+            res.m_sbo[2] = r2;
+            res.m_sbo[3] = r3;
+            size_t s = 4;
+            while (s > 0 && res.m_sbo[s - 1] == 0) --s;
+            res.m_size = s;
+            if (s == 0) {
+                res.m_sign = 0;
+            }
+        } else {
+            res.resize(5, 0);
+            uint64_t* d = res.data();
+            d[0] = r0; d[1] = r1; d[2] = r2; d[3] = r3;
+            d[4] = 1;
+            res.m_size = 5;
         }
-        res.data()[max_len] = carry;
-        res.m_sign = 1;
-        res.normalize();
     }
 
     /// <summary>
-    /// 無符號 limbs 減法：res = a - b（前置條件：a &gt;= b）。
+    /// 多肢段通用加法，含別名指針備份防護、空間預留與長邊 Early-Exit 進位鏈。
     /// </summary>
-    /// <param name="res">輸出結果儲存物件</param>
-    /// <param name="a">被減數 a</param>
-    /// <param name="b">減數 b</param>
-    static NUMERIC_CONSTEXPR_20 void sub_unsigned(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
-        res.resize(a.m_size, 0);
-        uint64_t borrow = 0;
-        for (size_t i = 0; i < a.m_size; ++i) {
-            uint64_t av = a.data()[i];
-            uint64_t bv = (i < b.m_size) ? b.data()[i] : 0;
-            uint64_t diff = av - borrow;
-            uint64_t b1 = (av < borrow) ? 1 : 0;
-            uint64_t diff2 = diff - bv;
-            uint64_t b2 = (diff < bv) ? 1 : 0;
-            borrow = b1 + b2;
-            res.data()[i] = diff2;
+    static NUMERIC_CONSTEXPR_20 void add_unsigned_general(
+        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    {
+        size_t a_len = a.m_size;
+        size_t b_len = b.m_size;
+        size_t min_len = std::min(a_len, b_len);
+        size_t max_len = std::max(a_len, b_len);
+
+        uint64_t a_stack[128], b_stack[128];
+        const uint64_t* a_ptr = a.data();
+        const uint64_t* b_ptr = b.data();
+        std::vector<uint64_t> a_heap, b_heap;
+
+        if (&res == &a && a_len < b_len) {
+            if (a_len <= 128) {
+                std::copy_n(a.data(), a_len, a_stack);
+                a_ptr = a_stack;
+            } else {
+                a_heap.resize(a_len);
+                std::copy_n(a.data(), a_len, a_heap.data());
+                a_ptr = a_heap.data();
+            }
+        } else if (&res == &b && b_len < a_len) {
+            if (b_len <= 128) {
+                std::copy_n(b.data(), b_len, b_stack);
+                b_ptr = b_stack;
+            } else {
+                b_heap.resize(b_len);
+                std::copy_n(b.data(), b_len, b_heap.data());
+                b_ptr = b_heap.data();
+            }
         }
-        res.m_sign = 1;
-        res.normalize();
+
+        if (&res != &a && &res != &b) {
+            res.resize(max_len + 1, 0);
+        } else if ((&res == &a && a_len < b_len) || (&res == &b && b_len < a_len)) {
+            res.resize(max_len + 1, 0);
+        }
+
+        const uint64_t* longer_ptr = (a_len >= b_len) ? a_ptr : b_ptr;
+
+        uint8_t carry = 0;
+        for (size_t i = 0; i < min_len; ++i) {
+            carry = adc64(carry, a_ptr[i], b_ptr[i], &res.data()[i]);
+        }
+
+        size_t i = min_len;
+        for (; i < max_len && carry != 0; ++i) {
+            carry = adc64(carry, longer_ptr[i], 0, &res.data()[i]);
+        }
+
+        if (carry == 0) {
+            if (res.data() != longer_ptr && i < max_len) {
+                std::copy_n(longer_ptr + i, max_len - i, res.data() + i);
+            }
+            res.m_size = max_len;
+        } else {
+            if (res.m_size < max_len + 1) {
+                res.resize(max_len + 1, 0);
+            }
+            res.data()[max_len] = 1;
+            res.m_size = max_len + 1;
+        }
+    }
+
+    /// <summary>
+    /// 無符號 limbs 加法：res = a + b。純數值 (Magnitude) 運算。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void add_unsigned(
+        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    {
+        if (a.m_size <= BigIntStorage::SBO_CAPACITY && b.m_size <= BigIntStorage::SBO_CAPACITY) {
+            add_unsigned_sbo4(res, a, b);
+        } else {
+            add_unsigned_general(res, a, b);
+        }
+    }
+
+    /// <summary>
+    /// 絕對值減法核心演算法：res = a - b (前置合約：|a| >= |b|)。
+    /// 支援小運算元別名備份 (&res == &b)、前置擴容與由高位向下快速規格化。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void sub_magnitude_core(
+        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    {
+        size_t a_len = a.m_size;
+        size_t b_len = b.m_size;
+
+        uint64_t b_stack[128];
+        const uint64_t* b_data = b.data();
+        std::vector<uint64_t> b_heap;
+        if (&res == &b) {
+            if (b_len <= 128) {
+                std::copy_n(b.data(), b_len, b_stack);
+                b_data = b_stack;
+            } else {
+                b_heap.resize(b_len);
+                std::copy_n(b.data(), b_len, b_heap.data());
+                b_data = b_heap.data();
+            }
+        }
+
+        if (&res != &a) {
+            res.resize(a_len, 0);
+        }
+
+        uint8_t borrow = 0;
+        for (size_t i = 0; i < b_len; ++i) {
+            borrow = sbb64(borrow, a.data()[i], b_data[i], &res.data()[i]);
+        }
+        size_t i = b_len;
+        for (; i < a_len && borrow != 0; ++i) {
+            borrow = sbb64(borrow, a.data()[i], 0, &res.data()[i]);
+        }
+        if (borrow == 0 && &res != &a && i < a_len) {
+            std::copy_n(a.data() + i, a_len - i, res.data() + i);
+        }
+
+        size_t sz = a_len;
+        while (sz > 0 && res.data()[sz - 1] == 0) --sz;
+        res.m_size = sz;
+        if (sz == 0) {
+            res.m_sign = 0;
+        }
+        if (sz <= BigIntStorage::SBO_CAPACITY) {
+            res.shrink_to_sbo_if_possible();
+        }
+    }
+
+    /// <summary>
+    /// 無符號 limbs 減法：res = a - b（前置條件：a >= b）。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void sub_unsigned(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept {
+        sub_magnitude_core(res, a, b);
+        res.m_sign = (res.m_size > 0) ? 1 : 0;
     }
 
     /// <summary>
     /// 帶符號加法：res = a + b。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">運算元 a</param>
-    /// <param name="b">運算元 b</param>
     static NUMERIC_CONSTEXPR_20 void add_signed(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
         if (a.m_sign == 0) {
             res = b;
@@ -534,18 +828,19 @@ public:
         }
         if (a.m_sign == b.m_sign) {
             add_unsigned(res, a, b);
-            res.m_sign = a.m_sign;
+            res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
         } else {
             int cmp = compare_unsigned(a.data(), a.m_size, b.data(), b.m_size);
             if (cmp == 0) {
+                res.reset_heap();
                 res.m_size = 0;
                 res.m_sign = 0;
             } else if (cmp > 0) {
-                sub_unsigned(res, a, b);
-                res.m_sign = a.m_sign;
+                sub_magnitude_core(res, a, b);
+                res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
             } else {
-                sub_unsigned(res, b, a);
-                res.m_sign = b.m_sign;
+                sub_magnitude_core(res, b, a);
+                res.m_sign = (res.m_size > 0) ? b.m_sign : 0;
             }
         }
     }
@@ -553,9 +848,6 @@ public:
     /// <summary>
     /// 帶符號減法：res = a - b。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">被減數 a</param>
-    /// <param name="b">減數 b</param>
     static NUMERIC_CONSTEXPR_20 void sub_signed(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
         if (b.m_sign == 0) {
             res = a;
@@ -566,9 +858,23 @@ public:
             res.m_sign = -res.m_sign;
             return;
         }
-        BigIntStorage neg_b = b;
-        neg_b.m_sign = -neg_b.m_sign;
-        add_signed(res, a, neg_b);
+        if (a.m_sign != b.m_sign) {
+            add_unsigned(res, a, b);
+            res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
+        } else {
+            int cmp = compare_unsigned(a.data(), a.m_size, b.data(), b.m_size);
+            if (cmp == 0) {
+                res.reset_heap();
+                res.m_size = 0;
+                res.m_sign = 0;
+            } else if (cmp > 0) {
+                sub_magnitude_core(res, a, b);
+                res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
+            } else {
+                sub_magnitude_core(res, b, a);
+                res.m_sign = (res.m_size > 0) ? -b.m_sign : 0;
+            }
+        }
     }
 
     /// <summary>
@@ -600,23 +906,13 @@ public:
     /// 原生原地加法：dst += src。回傳溢出進位。
     /// </summary>
     static NUMERIC_CONSTEXPR_20 uint64_t add_to_raw(uint64_t* dst, size_t dst_len, const uint64_t* src, size_t src_len) noexcept {
-        uint64_t carry = 0;
+        uint8_t carry = 0;
         size_t min_len = (dst_len < src_len) ? dst_len : src_len;
         for (size_t i = 0; i < min_len; ++i) {
-            uint64_t d = dst[i];
-            uint64_t s = src[i];
-            uint64_t sum = d + carry;
-            uint64_t c1 = (sum < d) ? 1 : 0;
-            sum += s;
-            uint64_t c2 = (sum < s) ? 1 : 0;
-            dst[i] = sum;
-            carry = c1 + c2;
+            carry = adc64(carry, dst[i], src[i], &dst[i]);
         }
         for (size_t i = min_len; i < dst_len && carry != 0; ++i) {
-            uint64_t d = dst[i];
-            uint64_t sum = d + carry;
-            carry = (sum < d) ? 1 : 0;
-            dst[i] = sum;
+            carry = adc64(carry, dst[i], 0, &dst[i]);
         }
         return carry;
     }
@@ -625,23 +921,13 @@ public:
     /// 原生原地減法：dst -= src。回傳借位。
     /// </summary>
     static NUMERIC_CONSTEXPR_20 uint64_t sub_from_raw(uint64_t* dst, size_t dst_len, const uint64_t* src, size_t src_len) noexcept {
-        uint64_t borrow = 0;
+        uint8_t borrow = 0;
         size_t min_len = (dst_len < src_len) ? dst_len : src_len;
         for (size_t i = 0; i < min_len; ++i) {
-            uint64_t d = dst[i];
-            uint64_t s = src[i];
-            uint64_t diff = d - borrow;
-            uint64_t b1 = (d < borrow) ? 1 : 0;
-            uint64_t diff2 = diff - s;
-            uint64_t b2 = (diff < s) ? 1 : 0;
-            dst[i] = diff2;
-            borrow = b1 + b2;
+            borrow = sbb64(borrow, dst[i], src[i], &dst[i]);
         }
         for (size_t i = min_len; i < dst_len && borrow != 0; ++i) {
-            uint64_t d = dst[i];
-            uint64_t diff = d - borrow;
-            borrow = (d < borrow) ? 1 : 0;
-            dst[i] = diff;
+            borrow = sbb64(borrow, dst[i], 0, &dst[i]);
         }
         return borrow;
     }
@@ -650,16 +936,10 @@ public:
     /// 原生相減差值絕對值：out = a - b (要求 a >= b)。回傳正規化長度。
     /// </summary>
     static NUMERIC_CONSTEXPR_20 size_t sub_limbs_diff_raw(uint64_t* out, const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
-        uint64_t borrow = 0;
+        uint8_t borrow = 0;
         for (size_t i = 0; i < a_len; ++i) {
-            uint64_t av = a[i];
             uint64_t bv = (i < b_len) ? b[i] : 0;
-            uint64_t diff = av - borrow;
-            uint64_t b1 = (av < borrow) ? 1 : 0;
-            uint64_t diff2 = diff - bv;
-            uint64_t b2 = (diff < bv) ? 1 : 0;
-            borrow = b1 + b2;
-            out[i] = diff2;
+            borrow = sbb64(borrow, a[i], bv, &out[i]);
         }
         size_t len = a_len;
         while (len > 0 && out[len - 1] == 0) {
@@ -1383,9 +1663,65 @@ public:
     }
 
     /// <summary>
+    /// 線程安全且帶 [[unlikely]] 冷路徑優化之 10^(19 * 2^k) 冪次快取表。
+    /// 預先計算前 7 階 (k = 0..6，涵蓋至 10^1216)，冷啟動小於 1 微秒。
+    /// </summary>
+    class Pow10Cache {
+    public:
+        static constexpr size_t PRECOMPUTED_LEVELS = 7; // k = 0..6 (涵蓋至 10^1216)
+        static constexpr size_t MAX_LEVELS = 13;        // 支援至 77,824 位
+        BigIntStorage table[MAX_LEVELS];
+        std::atomic<size_t> computed_levels{PRECOMPUTED_LEVELS};
+        std::mutex mtx;
+
+        static Pow10Cache& instance() {
+            static Pow10Cache cache;
+            return cache;
+        }
+
+        const BigIntStorage& get_pow(size_t k) {
+            assert(k < MAX_LEVELS);
+            if (k >= computed_levels.load(std::memory_order_acquire))
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+                [[unlikely]]
+#endif
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                size_t cur = computed_levels.load(std::memory_order_relaxed);
+                for (size_t i = cur; i <= k && i < MAX_LEVELS; ++i) {
+                    BigIntCore::mul_core(table[i], table[i - 1], table[i - 1]);
+                    computed_levels.store(i + 1, std::memory_order_release);
+                }
+            }
+            return table[k];
+        }
+
+    private:
+        Pow10Cache() {
+            table[0].set_uint64(10000000000000000000ULL, 1);
+            for (size_t k = 1; k < PRECOMPUTED_LEVELS; ++k) {
+                BigIntCore::mul_core(table[k], table[k - 1], table[k - 1]);
+            }
+        }
+    };
+
+    /// <summary>
+    /// 當 k >= Pow10Cache::MAX_LEVELS 時的局部動態冪次求值。
+    /// </summary>
+    static BigIntStorage compute_pow10_dynamic(size_t k) {
+        BigIntStorage cur = Pow10Cache::instance().get_pow(Pow10Cache::MAX_LEVELS - 1);
+        for (size_t i = Pow10Cache::MAX_LEVELS - 1; i < k; ++i) {
+            BigIntStorage nxt;
+            mul_core(nxt, cur, cur);
+            cur = std::move(nxt);
+        }
+        return cur;
+    }
+
+    /// <summary>
     /// 分治解析 19-digit chunks 陣列 [start, end)。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 BigIntStorage parse_chunks_dc(const uint64_t* chunks, size_t start, size_t end, const std::vector<BigIntStorage>& pow10_table) {
+    static BigIntStorage parse_chunks_dc(const uint64_t* chunks, size_t start, size_t end) {
         size_t count = end - start;
         if (count == 1) {
             BigIntStorage s;
@@ -1411,11 +1747,20 @@ public:
         }
         size_t split = static_cast<size_t>(1) << k;
 
-        BigIntStorage low = parse_chunks_dc(chunks, start, start + split, pow10_table);
-        BigIntStorage high = parse_chunks_dc(chunks, start + split, end, pow10_table);
+        BigIntStorage low = parse_chunks_dc(chunks, start, start + split);
+        BigIntStorage high = parse_chunks_dc(chunks, start + split, end);
+
+        BigIntStorage dynamic_pow;
+        const BigIntStorage* pow_ptr = nullptr;
+        if (k < Pow10Cache::MAX_LEVELS) {
+            pow_ptr = &Pow10Cache::instance().get_pow(k);
+        } else {
+            dynamic_pow = compute_pow10_dynamic(k);
+            pow_ptr = &dynamic_pow;
+        }
 
         BigIntStorage high_scaled;
-        mul_core(high_scaled, high, pow10_table[k]);
+        mul_core(high_scaled, high, *pow_ptr);
 
         BigIntStorage res;
         add_signed(res, high_scaled, low);
@@ -1423,13 +1768,83 @@ public:
     }
 
     /// <summary>
-    /// 字串解析，將十進位字串轉換為 BigIntStorage。
-    /// 支援前導符號、前導零過濾，並採用分治法 (Divide & Conquer) 搭配反覆平方冪次快取表。
+    /// C++20 constexpr 編譯期常數求值專用字串解析函式。
+    /// 採用無靜態局部變數之 Horner 演算法，保證常數求值完全相容。
     /// </summary>
-    /// <param name="res">輸出儲存物件</param>
-    /// <param name="sv">輸入字串視圖</param>
-    /// <exception cref="std::invalid_argument">當字串為空或包含非數字字元時拋出</exception>
-    static NUMERIC_CONSTEXPR_20 void from_string(BigIntStorage& res, numeric::string_view sv) {
+    static NUMERIC_CONSTEXPR_20 void from_string_constexpr(BigIntStorage& res, numeric::string_view sv) {
+        if (sv.empty()) {
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("empty bigint string"));
+        }
+        size_t idx = 0;
+        int8_t sign = 1;
+        if (sv[0] == '-') {
+            sign = -1;
+            ++idx;
+        } else if (sv[0] == '+') {
+            ++idx;
+        }
+        if (idx == sv.size()) {
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("no digits in bigint string"));
+        }
+        for (size_t i = idx; i < sv.size(); ++i) {
+            if (sv[i] < '0' || sv[i] > '9') {
+                NUMERIC_THROW_OR_ABORT(std::invalid_argument("invalid character in bigint string"));
+            }
+        }
+        while (idx < sv.size() && sv[idx] == '0') {
+            ++idx;
+        }
+        if (idx == sv.size()) {
+            res.reset_heap();
+            res.m_size = 0;
+            res.m_sign = 0;
+            return;
+        }
+
+        size_t total_digits = sv.size() - idx;
+        if (total_digits <= 19) {
+            uint64_t val = 0;
+            for (size_t i = idx; i < sv.size(); ++i) {
+                val = val * 10 + static_cast<uint64_t>(sv[i] - '0');
+            }
+            res.set_uint64(val, sign);
+            return;
+        }
+
+        BigIntStorage cur;
+        cur.reset_heap();
+        cur.m_size = 0;
+        cur.m_sign = 0;
+
+        while (idx < sv.size()) {
+            size_t take = (sv.size() - idx >= 9) ? 9 : (sv.size() - idx);
+            uint64_t chunk_val = 0;
+            uint64_t multiplier = 1;
+            for (size_t i = 0; i < take; ++i) {
+                chunk_val = chunk_val * 10 + static_cast<uint64_t>(sv[idx + i] - '0');
+                multiplier *= 10;
+            }
+            idx += take;
+
+            if (cur.m_size > 0) {
+                BigIntStorage next_cur;
+                mul_single_limb(next_cur, cur, multiplier, 1);
+                BigIntStorage chunk_st;
+                chunk_st.set_uint64(chunk_val, 1);
+                add_signed(cur, next_cur, chunk_st);
+            } else {
+                cur.set_uint64(chunk_val, 1);
+            }
+        }
+        cur.m_sign = sign;
+        cur.normalize();
+        res = std::move(cur);
+    }
+
+    /// <summary>
+    /// 執行期高效十進位字串解析（分治法 + Pow10Cache 冪次表快取）。
+    /// </summary>
+    static void from_string_runtime(BigIntStorage& res, numeric::string_view sv) {
         if (sv.empty()) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("empty bigint string"));
         }
@@ -1445,14 +1860,12 @@ public:
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("no digits in bigint string"));
         }
 
-        // 驗證所有字元皆為十進位數字
         for (size_t i = idx; i < sv.size(); ++i) {
             if (sv[i] < '0' || sv[i] > '9') {
                 NUMERIC_THROW_OR_ABORT(std::invalid_argument("invalid character in bigint string"));
             }
         }
 
-        // 跳過前導 0
         while (idx < sv.size() && sv[idx] == '0') {
             ++idx;
         }
@@ -1464,7 +1877,6 @@ public:
         }
 
         size_t total_digits = sv.size() - idx;
-        // 64-bit 以內直通快路徑（避免配置 vector，保證 C++20 constexpr 相容性）
         if (total_digits <= 19) {
             uint64_t val = 0;
             for (size_t i = idx; i < sv.size(); ++i) {
@@ -1474,8 +1886,6 @@ public:
             return;
         }
 
-        // 自右向左將十進位字串切分成 19 位的 uint64_t chunks
-        // chunks[0] 為最低權重 chunk (10^0)，chunks[num_chunks - 1] 為最高權重 chunk
         std::vector<uint64_t> chunks;
         chunks.reserve((total_digits + 18) / 19);
 
@@ -1507,82 +1917,96 @@ public:
             return;
         }
 
-        // 大規模：預先計算反覆平方冪次快取表 T[k] = 10^(19 * 2^k)
-        size_t num_chunks = chunks.size();
-        size_t max_k = 0;
-        while ((static_cast<size_t>(1) << max_k) < num_chunks) {
-            ++max_k;
-        }
-
-        std::vector<BigIntStorage> pow10_table(max_k + 1);
-        pow10_table[0].set_uint64(10000000000000000000ULL, 1); // 10^19
-        for (size_t k = 1; k <= max_k; ++k) {
-            mul_core(pow10_table[k], pow10_table[k - 1], pow10_table[k - 1]);
-        }
-
-        res = parse_chunks_dc(chunks.data(), 0, num_chunks, pow10_table);
+        res = parse_chunks_dc(chunks.data(), 0, chunks.size());
         res.m_sign = sign;
         res.normalize();
     }
 
     /// <summary>
-    /// 將 BigIntStorage 轉換為 Radix-10 十進位字串。
-    /// 採用單肢段 128/64 硬體直通線性除法與棧上 char buf[24] 格式化，達成真 0 Heap 分配。
+    /// 字串解析統一入口：編譯期常數求值時派發至 from_string_constexpr，執行期派發至 from_string_runtime。
     /// </summary>
-    /// <param name="a">輸入儲存物件</param>
-    /// <returns>十進位字串表示</returns>
+    static NUMERIC_CONSTEXPR_20 void from_string(BigIntStorage& res, numeric::string_view sv) {
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            from_string_constexpr(res, sv);
+            return;
+        }
+#endif
+        from_string_runtime(res, sv);
+    }
+
+    /// <summary>
+    /// 將 BigIntStorage 轉換為 Radix-10 十進位字串。
+    /// 8192-bit 內全棧上工作緩衝區（stack_limbs[128], stack_chunks[136]），達成真 0-Heap 分配。
+    /// 搭配 100% 精準 digits10_u64 預留與 2-Digit LUT 倒序無分支格式化。
+    /// </summary>
     static std::string to_string(const BigIntStorage& a) {
-        if (a.m_sign == 0 || a.m_size == 0) {
+        if (a.m_size == 0 || a.m_sign == 0) {
             return "0";
         }
 
-        BigIntStorage cur = a;
-        cur.m_sign = 1;
+        uint64_t stack_limbs[128]; // 8192 bits
+        std::vector<uint64_t> heap_limbs;
+        uint64_t* work_limbs = stack_limbs;
+        if (a.m_size > 128) {
+            heap_limbs.resize(a.m_size);
+            work_limbs = heap_limbs.data();
+        }
+        std::copy_n(a.data(), a.m_size, work_limbs);
+        size_t work_size = a.m_size;
 
-        // 預估十進位位數：limbs * 64 * log10(2) approx limbs * 19.266
-        const size_t estimated_digits = (cur.m_size * 193) / 10 + 2;
-        std::string result;
-        result.reserve(estimated_digits);
+        // 8192 bits 滿載需 130 chunks，棧大小配置為 136 確保絕對不溢位
+        uint64_t stack_chunks[136];
+        std::vector<uint64_t> heap_chunks;
+        uint64_t* chunks = stack_chunks;
+        if (a.m_size > 128) {
+            size_t max_chunks = (a.m_size * 64) / 63 + 8;
+            heap_chunks.resize(max_chunks);
+            chunks = heap_chunks.data();
+        }
 
-        std::vector<uint64_t> chunks;
-        chunks.reserve((cur.m_size * 64) / 63 + 2);
+        size_t chunk_count = 0;
+        constexpr uint64_t RADIX10_19 = 10000000000000000000ULL;
 
-        constexpr uint64_t RADIX10_19 = 10000000000000000000ULL; // 10^19
-
-        while (cur.m_size > 0) {
+        while (work_size > 0) {
             uint64_t rem = 0;
-            for (size_t i = cur.m_size; i > 0; --i) {
+            for (size_t i = work_size; i > 0; --i) {
                 uint64_t next_rem = 0;
-                cur.data()[i - 1] = div128_64(rem, cur.data()[i - 1], RADIX10_19, next_rem);
+                work_limbs[i - 1] = div128_64(rem, work_limbs[i - 1], RADIX10_19, next_rem);
                 rem = next_rem;
             }
-            while (cur.m_size > 0 && cur.data()[cur.m_size - 1] == 0) {
-                --cur.m_size;
+            while (work_size > 0 && work_limbs[work_size - 1] == 0) {
+                --work_size;
             }
-            chunks.push_back(rem);
+            chunks[chunk_count++] = rem;
         }
 
-        if (chunks.empty()) {
+        if (chunk_count == 0) {
             return "0";
         }
 
-        if (a.m_sign < 0) {
-            result.push_back('-');
+        // 100% 精確字串長度計算
+        bool is_neg = (a.m_sign < 0);
+        size_t top_digits = digits10_u64(chunks[chunk_count - 1]);
+        size_t total_chars = (chunk_count - 1) * 19 + top_digits + (is_neg ? 1 : 0);
+
+        std::string result;
+        result.resize(total_chars);
+        char* out_ptr = result.data();
+        if (is_neg) {
+            *out_ptr++ = '-';
         }
 
-        // 最高位 chunk 不補零
-        char buf[24];
-        size_t len = format_uint64_to_buf(buf, chunks.back());
-        result.append(buf, len);
+        // 格式化最高位 chunk（傳入 top_digits，狀態一致閉合）
+        format_highest_chunk(out_ptr, chunks[chunk_count - 1], top_digits);
+        out_ptr += top_digits;
 
-        // 其餘 chunk 補齊 19 位，棧上無配置格式化
-        for (size_t i = chunks.size() - 1; i > 0; --i) {
-            size_t c_len = format_uint64_to_buf(buf, chunks[i - 1]);
-            if (c_len < 19) {
-                result.append(19 - c_len, '0');
-            }
-            result.append(buf, c_len);
+        // 其餘 chunk 倒序 2-Digit LUT 填入
+        for (size_t i = chunk_count - 1; i > 0; --i) {
+            format_chunk_19_digits(out_ptr, chunks[i - 1]);
+            out_ptr += 19;
         }
+
         return result;
     }
 };

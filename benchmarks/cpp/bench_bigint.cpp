@@ -158,7 +158,9 @@ int main(int argc, char** argv) {
     run_benchmarks_for_tier(reporter, "large", 32768, data_dir + "/large_32768.txt", 2, 1, 1, 1);
     run_benchmarks_for_tier(reporter, "large", 65536, data_dir + "/large_65536.txt", 1, 1, 1, 1);
 
-    fs::create_directories(fs::path(out_json).parent_path());
+    if (auto p = fs::path(out_json).parent_path(); !p.empty()) {
+        fs::create_directories(p);
+    }
     reporter.export_json(out_json);
     std::cout << "[CPP-BigInt Benchmark] Results exported to " << out_json << std::endl;
 

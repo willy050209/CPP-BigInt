@@ -1,5 +1,6 @@
 build/
 build_*/
+build-*/
 bin/
 lib/
 out/
@@ -19,3 +20,4 @@ benchmarks/deps/
 benchmarks/dotnet/bin/
 benchmarks/dotnet/obj/
 benchmarks/results/*.json
+*.exe

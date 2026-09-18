@@ -329,5 +329,92 @@ void run_test_bigint() {
     }
 #endif
 
+    // 15. 加減法別名與進位/借位邊界測試 (Aliasing & Carry/Borrow Pipeline)
+    {
+        // 15.1 自我別名翻倍 (a += a)
+        numeric::bigint a1(42);
+        a1 += a1;
+        TEST_ASSERT(a1 == 84);
+
+        numeric::bigint a2("18446744073709551615"); // 2^64 - 1
+        a2 += a2;
+        TEST_ASSERT(a2 == numeric::bigint("36893488147419103230"));
+
+        // 15.2 非對稱長度加法擴容 (a += b, a < b)
+        numeric::bigint a3(10);
+        numeric::bigint b3("100000000000000000000000000000000000000000000000000"); // 50 digits
+        a3 += b3;
+        TEST_ASSERT(a3 == numeric::bigint("100000000000000000000000000000000000000000000000010"));
+
+        // 15.3 帶符號異號別名 (a += b, a > 0, b < 0, |a| < |b|)
+        numeric::bigint a4(42);
+        numeric::bigint b4("-100000000000000000000000000000000000000000000000000"); // -10^50
+        a4 += b4;
+        std::string exp_str = "-" + std::string(48, '9') + "58";
+        TEST_ASSERT(a4 == numeric::bigint(exp_str));
+        TEST_ASSERT(a4.to_string() == exp_str);
+
+        // 15.4 自我別名清零 (a -= a)
+        numeric::bigint a5("987654321987654321987654321");
+        a5 -= a5;
+        TEST_ASSERT(a5 == 0);
+        TEST_ASSERT(a5.sign() == 0);
+        TEST_ASSERT(a5.is_zero());
+
+        // 15.5 SBO 4-limb 邊界溢位至 5-limb
+        // 256 位元全 1 加上 1：(2^256 - 1) + 1 = 2^256
+        numeric::bigint max256 = (numeric::bigint(1) << 256) - 1;
+        TEST_ASSERT(max256.limb_count() <= 4);
+        TEST_ASSERT(max256.is_sbo());
+        max256 += 1;
+        TEST_ASSERT(max256 == (numeric::bigint(1) << 256));
+        TEST_ASSERT(max256.limb_count() == 5);
+        TEST_ASSERT(!max256.is_sbo());
+        // 再減回去，縮回 SBO
+        max256 -= 1;
+        TEST_ASSERT(max256.limb_count() == 4);
+        TEST_ASSERT(max256.is_sbo());
+
+        // 15.6 長鏈連續進位與借位 Early-Exit 驗證
+        numeric::bigint chain_ones = (numeric::bigint(1) << 160) - 1;
+        numeric::bigint one(1);
+        numeric::bigint chain_res = chain_ones + one;
+        TEST_ASSERT(chain_res == (numeric::bigint(1) << 160));
+        chain_res -= one;
+        TEST_ASSERT(chain_res == chain_ones);
+    }
+
+    // 16. 高階字串轉換與 0-Heap 邊界測試 (Zero-Heap String Conversion)
+    {
+        // 16.1 零值與負數
+        TEST_ASSERT(numeric::bigint(0).to_string() == "0");
+        TEST_ASSERT(numeric::bigint(-0).to_string() == "0");
+        TEST_ASSERT(numeric::bigint(-1).to_string() == "-1");
+        TEST_ASSERT(numeric::bigint(-42).to_string() == "-42");
+
+        // 16.2 19-digit 階梯邊界
+        TEST_ASSERT(numeric::bigint("999999999999999999").to_string() == "999999999999999999");
+        TEST_ASSERT(numeric::bigint("1000000000000000000").to_string() == "1000000000000000000");
+        TEST_ASSERT(numeric::bigint("10000000000000000000").to_string() == "10000000000000000000");
+        TEST_ASSERT(numeric::bigint("10000000000000000001").to_string() == "10000000000000000001");
+
+        // 16.3 多階 chunk (涵蓋中間 chunk 補零驗證)
+        numeric::bigint sparse("100000000000000000000000000000000000001");
+        TEST_ASSERT(sparse.to_string() == "100000000000000000000000000000000000001");
+
+        // 16.4 8192-bit 內超大數 Roundtrip 測試 (約 450 位十進位數字)
+        std::string long_str = "12345678901234567890123456789012345678901234567890";
+        for (int i = 0; i < 10; ++i) {
+            long_str += "9876543210987654321098765432109876543210";
+        }
+        numeric::bigint big_val(long_str);
+        TEST_ASSERT(big_val.to_string() == long_str);
+
+        // 負數 Roundtrip
+        std::string neg_long_str = "-" + long_str;
+        numeric::bigint neg_big_val(neg_long_str);
+        TEST_ASSERT(neg_big_val.to_string() == neg_long_str);
+    }
+
     std::cout << "--- BigInt Tests Completed Successfully ---" << std::endl;
 }

@@ -175,13 +175,25 @@ def main():
     ensure_dataset()
 
     # If results don't exist yet, run them
-    bigint_exe = os.path.join(ROOT_DIR, "build", "benchmarks", "Release", "bench_bigint.exe")
-    if os.path.exists(bigint_exe):
-        run_cmd([bigint_exe, DATA_DIR, os.path.join(RESULTS_DIR, "results_cpp_bigint.json")])
+    bigint_exe_candidates = [
+        os.path.join(BENCH_DIR, "cpp", "bench_bigint.exe"),
+        os.path.join(ROOT_DIR, "build", "benchmarks", "Release", "bench_bigint.exe"),
+        os.path.join(ROOT_DIR, "bench_bigint.exe"),
+    ]
+    for b_exe in bigint_exe_candidates:
+        if os.path.exists(b_exe):
+            run_cmd([b_exe, DATA_DIR, os.path.join(RESULTS_DIR, "results_cpp_bigint.json")])
+            break
 
-    gmp_exe = os.path.join(ROOT_DIR, "build", "benchmarks", "Release", "bench_gmp.exe")
-    if os.path.exists(gmp_exe):
-        run_cmd([gmp_exe, DATA_DIR, os.path.join(RESULTS_DIR, "results_cpp_gmp.json")])
+    gmp_exe_candidates = [
+        os.path.join(BENCH_DIR, "cpp", "bench_gmp.exe"),
+        os.path.join(ROOT_DIR, "build", "benchmarks", "Release", "bench_gmp.exe"),
+        os.path.join(ROOT_DIR, "bench_gmp.exe"),
+    ]
+    for g_exe in gmp_exe_candidates:
+        if os.path.exists(g_exe):
+            run_cmd([g_exe, DATA_DIR, os.path.join(RESULTS_DIR, "results_cpp_gmp.json")])
+            break
 
     boost_exe = os.path.join(ROOT_DIR, "build", "benchmarks", "Release", "bench_boost.exe")
     if os.path.exists(boost_exe):

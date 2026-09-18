@@ -86,9 +86,29 @@ namespace test_ce_bigint {
     static_assert(b_from_str > 0, "parsed bigint > 0");
     static_assert(b_from_str % 10 == 9, "parsed bigint % 10 == 9");
 
+    // 多階 chunk 編譯期解析（> 19 位元）
+    constexpr numeric::bigint b_multi("123456789012345678901234567890");
+    static_assert(b_multi > 0, "multi-chunk parsed bigint > 0");
+    static_assert(b_multi % 10 == 0, "multi-chunk parsed bigint % 10 == 0");
+
     // 7. abs
     constexpr numeric::bigint bi_abs = numeric::abs(numeric::bigint(-42));
     static_assert(bi_abs == 42, "abs(bigint(-42)) == 42");
+
+    // 8. SBO ADC / SBB 與 In-place 運算
+    constexpr numeric::bigint c_a("18446744073709551615");
+    constexpr numeric::bigint c_b("1");
+    constexpr numeric::bigint c_sum = c_a + c_b;
+    static_assert(c_sum == numeric::bigint("18446744073709551616"), "SBO carry addition in constexpr");
+    static_assert(c_sum - c_b == c_a, "SBO borrow subtraction in constexpr");
+
+    constexpr numeric::bigint test_in_place() {
+        numeric::bigint x(100);
+        x += 50;
+        x -= 30;
+        return x;
+    }
+    static_assert(test_in_place() == 120, "in-place arithmetic in constexpr");
 }
 
 #endif // NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20
