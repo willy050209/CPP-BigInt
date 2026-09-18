@@ -53,7 +53,6 @@
 #  define NUMERIC_THROW_OR_ABORT(ex) std::abort()
 #endif
 
-// Inlining and branch prediction hints
 #if defined(_MSC_VER)
 #  define NUMERIC_ALWAYS_INLINE __forceinline
 #elif defined(__GNUC__) || defined(__clang__)
@@ -61,6 +60,26 @@
 #else
 #  define NUMERIC_ALWAYS_INLINE inline
 #endif
+
+// Combined constexpr (C++20+) and forced inline without duplicate 'inline'
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+#  if defined(_MSC_VER)
+#    define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr __forceinline
+#  elif defined(__GNUC__) || defined(__clang__)
+#    define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr __attribute__((always_inline)) inline
+#  else
+#    define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr inline
+#  endif
+#else
+#  if defined(_MSC_VER)
+#    define NUMERIC_CONSTEXPR_20_FORCEINLINE __forceinline
+#  elif defined(__GNUC__) || defined(__clang__)
+#    define NUMERIC_CONSTEXPR_20_FORCEINLINE __attribute__((always_inline)) inline
+#  else
+#    define NUMERIC_CONSTEXPR_20_FORCEINLINE inline
+#  endif
+#endif
+
 
 // Pointer aliasing hint
 #if defined(_MSC_VER)

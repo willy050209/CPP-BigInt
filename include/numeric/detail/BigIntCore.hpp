@@ -303,7 +303,7 @@ public:
     /// 64-bit ADC 原語：out = a + b + carry_in，回傳 carry_out (0 或 1)。
     /// 消除 C++ 純量條件判斷分支，並支援 C++20 constexpr 常數求值。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 NUMERIC_ALWAYS_INLINE uint8_t adc64(
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE uint8_t adc64(
         uint8_t carry_in, uint64_t a, uint64_t b, uint64_t* out) noexcept
     {
 #if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
@@ -345,7 +345,7 @@ public:
     /// 64-bit SBB 原語：out = a - b - borrow_in，回傳 borrow_out (0 或 1)。
     /// 消除 C++ 純量條件判斷分支，並支援 C++20 constexpr 常數求值。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 NUMERIC_ALWAYS_INLINE uint8_t sbb64(
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE uint8_t sbb64(
         uint8_t borrow_in, uint64_t a, uint64_t b, uint64_t* out) noexcept
     {
 #if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
@@ -386,23 +386,25 @@ public:
     /// <summary>
     /// 2-Digit 快速十進位查詢表（200 位元組，長駐 L1 Cache）。
     /// </summary>
-    static constexpr char DIGIT_PAIRS[201] =
-        "00010203040506070809"
-        "10111213141516171819"
-        "20212223242526272829"
-        "30313233343536373839"
-        "40414243444546474849"
-        "50515253545556575859"
-        "60616263646566676869"
-        "70717273747576777879"
-        "80818283848586878889"
-        "90919293949596979899";
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE const char* get_digit_pairs() noexcept {
+        return
+            "00010203040506070809"
+            "10111213141516171819"
+            "20212223242526272829"
+            "30313233343536373839"
+            "40414243444546474849"
+            "50515253545556575859"
+            "60616263646566676869"
+            "70717273747576777879"
+            "80818283848586878889"
+            "90919293949596979899";
+    }
 
     /// <summary>
     /// 支援完整 64 位元無符號整數（最大 18446744073709551615，共 20 位）之精準十進位位數判定。
     /// 補齊 10^16 二分階梯，杜絕任何緩衝區溢位。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 NUMERIC_ALWAYS_INLINE size_t digits10_u64(uint64_t v) noexcept {
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE size_t digits10_u64(uint64_t v) noexcept {
         size_t d = 1;
         if (v >= 10000000000000000ULL) { v /= 10000000000000000ULL; d += 16; } // 10^16
         if (v >= 100000000ULL)         { v /= 100000000ULL;         d += 8;  } // 10^8
@@ -415,23 +417,24 @@ public:
     /// <summary>
     /// 格式化最高位 chunk：直接利用已知的 top_digits 由尾向頭倒序填寫，免除重複除法與二次長度搜尋。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 NUMERIC_ALWAYS_INLINE void format_highest_chunk(
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE void format_highest_chunk(
         char* dst, uint64_t val, size_t digits) noexcept
     {
+        const char* pairs = get_digit_pairs();
         int pos = static_cast<int>(digits);
         while (val >= 100) {
             uint32_t rem = static_cast<uint32_t>(val % 100);
             val /= 100;
             pos -= 2;
-            dst[pos]     = DIGIT_PAIRS[rem * 2];
-            dst[pos + 1] = DIGIT_PAIRS[rem * 2 + 1];
+            dst[pos]     = pairs[rem * 2];
+            dst[pos + 1] = pairs[rem * 2 + 1];
         }
         if (val < 10) {
             dst[--pos] = static_cast<char>('0' + val);
         } else {
             pos -= 2;
-            dst[pos]     = DIGIT_PAIRS[val * 2];
-            dst[pos + 1] = DIGIT_PAIRS[val * 2 + 1];
+            dst[pos]     = pairs[val * 2];
+            dst[pos + 1] = pairs[val * 2 + 1];
         }
         assert(pos == 0 && "format_highest_chunk failed to match exact digit count");
     }
@@ -439,14 +442,15 @@ public:
     /// <summary>
     /// 格式化中間 19 位 fixed-width chunk：倒序逆向填充 9 組 LUT 雙字元加上 1 個最高位單字元。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 NUMERIC_ALWAYS_INLINE void format_chunk_19_digits(
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE void format_chunk_19_digits(
         char* dst, uint64_t val) noexcept
     {
+        const char* pairs = get_digit_pairs();
         for (int p = 8; p >= 0; --p) {
             uint32_t rem = static_cast<uint32_t>(val % 100);
             val /= 100;
-            dst[1 + p * 2]     = DIGIT_PAIRS[rem * 2];
-            dst[1 + p * 2 + 1] = DIGIT_PAIRS[rem * 2 + 1];
+            dst[1 + p * 2]     = pairs[rem * 2];
+            dst[1 + p * 2 + 1] = pairs[rem * 2 + 1];
         }
         dst[0] = static_cast<char>('0' + val);
     }
@@ -1992,7 +1996,7 @@ public:
 
         std::string result;
         result.resize(total_chars);
-        char* out_ptr = result.data();
+        char* out_ptr = &result[0];
         if (is_neg) {
             *out_ptr++ = '-';
         }
