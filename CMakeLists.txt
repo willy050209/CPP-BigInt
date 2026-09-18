@@ -38,3 +38,10 @@ if(TEST_SOURCES)
     target_link_libraries(bigint_test PRIVATE bigint)
     add_test(NAME bigint_unit_tests COMMAND bigint_test)
 endif()
+
+# Benchmarking targets
+option(BIGINT_BUILD_BENCHMARKS "Build benchmark suite" ON)
+if(BIGINT_BUILD_BENCHMARKS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/CMakeLists.txt")
+    add_subdirectory(benchmarks)
+endif()
+

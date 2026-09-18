@@ -12,3 +12,10 @@ compile_commands.json
 
 __pycache__/
 *.pyc
+
+# Benchmark data and temporary dependencies
+benchmarks/data/
+benchmarks/deps/
+benchmarks/dotnet/bin/
+benchmarks/dotnet/obj/
+benchmarks/results/*.json
