@@ -62,6 +62,15 @@
 #  define NUMERIC_ALWAYS_INLINE inline
 #endif
 
+// Pointer aliasing hint
+#if defined(_MSC_VER)
+#  define NUMERIC_RESTRICT __restrict
+#elif defined(__GNUC__) || defined(__clang__)
+#  define NUMERIC_RESTRICT __restrict__
+#else
+#  define NUMERIC_RESTRICT
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 #  define NUMERIC_LIKELY(x)   __builtin_expect(!!(x), 1)
 #  define NUMERIC_UNLIKELY(x) __builtin_expect(!!(x), 0)

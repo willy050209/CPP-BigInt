@@ -40,7 +40,7 @@ if(TEST_SOURCES)
 endif()
 
 # Benchmarking targets
-option(BIGINT_BUILD_BENCHMARKS "Build benchmark suite" ON)
+option(BIGINT_BUILD_BENCHMARKS "Build benchmark suite" OFF)
 if(BIGINT_BUILD_BENCHMARKS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/CMakeLists.txt")
     add_subdirectory(benchmarks)
 endif()

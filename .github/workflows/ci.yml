@@ -33,6 +33,7 @@ jobs:
           cmake -B build
           -DCMAKE_CXX_STANDARD=${{ matrix.std }}
           -DCMAKE_BUILD_TYPE=Release
+          -DBIGINT_BUILD_BENCHMARKS=OFF
 
       - name: Build
         run: cmake --build build --config Release
@@ -45,3 +46,10 @@ jobs:
           python scripts/bundle_header.py -v
           python scripts/export_module.py -v
           python scripts/test_packaging.py
+
+      - name: Verify Benchmark Build (Compile-only Check)
+        if: matrix.std == 23 && matrix.os == 'windows-latest'
+        run: |
+          cmake -B build_bench -DBIGINT_BUILD_BENCHMARKS=ON -DCMAKE_CXX_STANDARD=20 -DCMAKE_BUILD_TYPE=Release
+          cmake --build build_bench --target bench_bigint --config Release
+
