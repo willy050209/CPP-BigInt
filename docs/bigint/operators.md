@@ -64,9 +64,9 @@ std::cout << (!a) << "\n"; // 輸出: 0 (false)
 // 二元算術
 friend NUMERIC_CONSTEXPR_20 bigint operator+(bigint lhs, const bigint& rhs);
 friend NUMERIC_CONSTEXPR_20 bigint operator-(bigint lhs, const bigint& rhs);
-friend NUMERIC_CONSTEXPR_20 bigint operator*(bigint lhs, const bigint& rhs);
-friend NUMERIC_CONSTEXPR_20 bigint operator/(bigint lhs, const bigint& rhs);
-friend NUMERIC_CONSTEXPR_20 bigint operator%(bigint lhs, const bigint& rhs);
+friend NUMERIC_CONSTEXPR_20 bigint operator*(const bigint& lhs, const bigint& rhs);
+friend NUMERIC_CONSTEXPR_20 bigint operator/(const bigint& lhs, const bigint& rhs);
+friend NUMERIC_CONSTEXPR_20 bigint operator%(const bigint& lhs, const bigint& rhs);
 
 // 複合賦值
 NUMERIC_CONSTEXPR_20 bigint& operator+=(const bigint& rhs);
@@ -81,9 +81,13 @@ NUMERIC_CONSTEXPR_20 bigint& operator%=(const bigint& rhs);
   - **硬體指令級加速 (Hardware Intrinsics)**：核心採用 `adc64` 與 `sbb64`，於 MSVC 啟用 `_addcarry_u64` / `_subborrow_u64`，於 GCC/Clang 啟用 `__builtin_addcll` / `__builtin_subcll`，利用 CPU Carry Flag 進行單週期連鎖進借位。
   - **256-bit SBO 4-Limb 展開優化**：針對 SBO 內部 4 個 limbs 實施完全迴圈展開（Unrolled Loop），消除迴圈跳轉開銷並極大化暫存器利用率。
   - **早期終止機制 (Early-exit Propagation)**：當殘留進位/借位歸零且較短運算元已耗盡時，立即退出運算迴圈並執行批次記憶體拷貝，大幅縮短不對稱位元加減時間。
-  - **自我別名安全 (Self-Aliasing Safety)**：底層演算法（如 `BigIntCore::add`、`BigIntCore::sub`）全面通過別名防護檢測，即使運算元位址重疊（例如 `a += a`），亦能保證計算正確性。
-- **乘法**：小規模採用學校乘法 (Schoolbook $O(N^2)$)，大數自動啟用 **Karatsuba 分治演算法** ($O(N^{\log_2 3}) \approx O(N^{1.585})$)。
-- **除法與取模**：採用 **Knuth Algorithm D** 規格化多精準度長除法演算法。
+  - **自我別名安全 (Self-Aliasing Safety)**：底層演算法（如 `BigIntCore::add_signed`、`BigIntCore::sub_signed`）全面通過別名防護檢測，即使運算元位址重疊（例如 `a += a`），亦能保證計算正確性。
+- **乘法**：
+  - **常數參考傳入 (Zero Copy Overhead)**：`operator*` 之左運算元採用 `const bigint& lhs`，消除中大整數相乘前非必要之 pass-by-value 堆積深層複製。
+  - **多層級分派**：小規模採用學校乘法 (Schoolbook $O(N^2)$)，大數自動啟用 **Karatsuba 分治演算法** ($O(N^{\log_2 3}) \approx O(N^{1.585})$)，內建外置刮痕緩衝區（Scratchpad）以避免遞迴分配。
+- **除法與取模**：
+  - **棧上刮痕緩衝區 (16K-bit Stack Scratch Buffer)**：採用改良版 **Knuth Algorithm D** 規格化長除法。對於 16,384 位元以內（256 limbs）的運算元，正規化被除數與除數之工作陣列完全配置於棧上（`stack_scratch[512]`），達成 **0 次 Heap 動態記憶體分配**。
+  - **商餘獨立求值 (Decoupled Quotient/Remainder)**：內部介面解耦為 `div_q_signed`、`div_r_signed` 與 `div_qr_signed`。當執行除法（`a / b` 或 `a /= b`）時，完全不配置亦不處理餘數陣列；當執行取模（`a % b` 或 `a %= b`）時，完全跳過商數陣列之填充與正規化，大幅節省記憶體頻寬。
 
 #### 例外狀況
 - `std::invalid_argument`：當除數或取模右運算元 `rhs == 0`（除以零）時拋出。

@@ -76,15 +76,15 @@ int main() {
     numeric::bigint zero_val;
     std::cout << "Zero: " << zero_val << ", is_sbo: " << zero_val.is_sbo() << "\n";
 
-    // 透過十進位字串建構超出 64 位元的大整數
-    numeric::bigint large("170141183460469231731687303715884105727"); // 2^127 - 1
+    // 透過十進位字串建構 256 位元以內的大整數
+    numeric::bigint large("115792089237316195423570985008687907853269984665640564039457584007913129639935"); // 2^256 - 1
     std::cout << "Large: " << large << ", SBO: " << large.is_sbo() << "\n";
 
-    // 超出 128 位元自動轉移至 Heap
+    // 超出 256 位元自動轉移至 Heap
     numeric::bigint huge = large * 2;
     std::cout << "Huge: " << huge << ", SBO: " << huge.is_sbo() << "\n";
 
-    // 縮減回 128 位元自動退回 SBO
+    // 縮減回 256 位元自動退回 SBO
     huge /= 2;
     std::cout << "Shrunk: " << huge << ", SBO: " << huge.is_sbo() << "\n";
 

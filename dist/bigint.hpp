@@ -2781,7 +2781,7 @@ namespace detail {
 } // namespace detail
 
 /// <summary>
-/// 任意精度整數類別，具備 128-bit Small Buffer Optimization (SBO) 與全套運算子重載。
+/// 任意精度整數類別，具備 256-bit Small Buffer Optimization (SBO) 與全套運算子重載。
 /// </summary>
 class bigint : public detail::BigIntConstants<> {
 private:
@@ -3404,7 +3404,7 @@ public:
     }
 
     /// <summary>
-    /// 除法複合賦值運算子。
+    /// 除法複合賦值運算子（內部僅求商數，0 額外餘數分配開銷）。
     /// </summary>
     /// <param name="rhs">除數</param>
     /// <returns>自身參考</returns>
@@ -3417,7 +3417,7 @@ public:
     }
 
     /// <summary>
-    /// 取模複合賦值運算子。
+    /// 取模複合賦值運算子（內部僅求餘數，0 額外商數分配開銷）。
     /// </summary>
     /// <param name="rhs">除數</param>
     /// <returns>自身參考</returns>
@@ -3524,7 +3524,7 @@ public:
     }
 
     /// <summary>
-    /// 雙目乘法運算子。
+    /// 雙目乘法運算子（左運算元採常數參考傳遞，消除堆積深層複製開銷）。
     /// </summary>
     /// <param name="lhs">乘數</param>
     /// <param name="rhs">乘數</param>
@@ -3536,7 +3536,7 @@ public:
     }
 
     /// <summary>
-    /// 雙目除法運算子。
+    /// 雙目除法運算子（左運算元採常數參考傳遞，內部僅求商數，0 額外餘數分配開銷）。
     /// </summary>
     /// <param name="lhs">被除數</param>
     /// <param name="rhs">除數</param>
@@ -3549,7 +3549,7 @@ public:
     }
 
     /// <summary>
-    /// 雙目取模運算子。
+    /// 雙目取模運算子（左運算元採常數參考傳遞，內部僅求餘數，0 額外商數分配開銷）。
     /// </summary>
     /// <param name="lhs">被除數</param>
     /// <param name="rhs">除數</param>

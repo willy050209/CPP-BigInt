@@ -35,19 +35,19 @@
   - `storage()`：底層儲存結構存取
 - **[型別轉換與字串化 (Conversions)](bigint/conversions.md)**
   - 明確型別轉換運算子：`bool`, `int64_t`, `uint64_t`, `int32_t`, `uint32_t`, `double`
-  - 8192-bit 0-Heap 十進位字串轉換：`to_string()`
+  - 分治十進位字串轉換：`to_string()`（$10^{19}$ 乘法求逆除法 + 分治切分 + 棧上 0-Heap 展開）
   - 二進位字串轉換：`to_binary_string()`
   - 泛型位元集合轉換：`to_bitset<N>()`
 - **[運算子重載 (Operators)](bigint/operators.md)**
   - 單元運算子：`+`, `-`, 前置/後置 `++`, 前置/後置 `--`, `~`, `!`
-  - 算術二元運算子：`+`, `-`, `*`, `/`, `%`（ADC/SBB 硬體原語加速、4-limb 展開、Karatsuba 刮痕緩衝）
-  - 複合賦值運算子：`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`（完整自我別名安全）
+  - 算術二元運算子：`+`, `-`, `*`, `/`, `%`（ADC/SBB 硬體原語加速、4-limb 展開、Karatsuba 刮痕緩衝、常數參考傳遞零深拷貝、16K-bit 棧上 Scratch Buffer 與商餘分離）
+  - 複合賦值運算子：`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`（完整自我別名安全，商餘解耦求值）
   - 位元運算與位移運算子（含泛型位移）：`&`, `|`, `^`, `<<`, `>>`
   - 比較運算子與跨型別混合運算：`==`, `!=`, `<`, `<=`, `>`, `>=`
   - 邏輯運算子：`&&`, `||`
   - 輸出串流運算子：`operator<<`
 - **[靜態解析方法與常數代理 (Parsing & Constants)](bigint/parsing.md)**
-  - 靜態解析：`bigint::from_string()`（分治平衡樹聚合與 `Pow10Cache` 加速）、`bigint::from_binary_string()`
+  - 靜態解析：`bigint::from_string()`（16-chunk 線性原位 Horner 累積 + 分治平衡樹與 `Pow10Cache` 加速）、`bigint::from_binary_string()`
   - 常數代理：`bigint::zero` / `bigint::zero()`, `bigint::one` / `bigint::one()`
 
 ### 2. [數學與數論函式 (Mathematics)](math.md)
