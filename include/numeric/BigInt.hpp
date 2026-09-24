@@ -707,8 +707,8 @@ public:
     /// <returns>自身參考</returns>
     /// <exception cref="std::invalid_argument">除數為 0 時拋出</exception>
     NUMERIC_CONSTEXPR_20 bigint& operator/=(const bigint& rhs) {
-        detail::BigIntStorage q, r;
-        detail::BigIntCore::div_mod_signed(q, r, m_storage, rhs.m_storage);
+        detail::BigIntStorage q;
+        detail::BigIntCore::div_q_signed(q, m_storage, rhs.m_storage);
         m_storage = std::move(q);
         return *this;
     }
@@ -720,8 +720,8 @@ public:
     /// <returns>自身參考</returns>
     /// <exception cref="std::invalid_argument">除數為 0 時拋出</exception>
     NUMERIC_CONSTEXPR_20 bigint& operator%=(const bigint& rhs) {
-        detail::BigIntStorage q, r;
-        detail::BigIntCore::div_mod_signed(q, r, m_storage, rhs.m_storage);
+        detail::BigIntStorage r;
+        detail::BigIntCore::div_r_signed(r, m_storage, rhs.m_storage);
         m_storage = std::move(r);
         return *this;
     }
@@ -826,9 +826,10 @@ public:
     /// <param name="lhs">乘數</param>
     /// <param name="rhs">乘數</param>
     /// <returns>乘法結果</returns>
-    friend NUMERIC_CONSTEXPR_20 bigint operator*(bigint lhs, const bigint& rhs) {
-        lhs *= rhs;
-        return lhs;
+    friend NUMERIC_CONSTEXPR_20 bigint operator*(const bigint& lhs, const bigint& rhs) {
+        bigint result;
+        detail::BigIntCore::mul_signed(result.m_storage, lhs.m_storage, rhs.m_storage);
+        return result;
     }
 
     /// <summary>
@@ -838,9 +839,10 @@ public:
     /// <param name="rhs">除數</param>
     /// <returns>商</returns>
     /// <exception cref="std::invalid_argument">除數為 0 時拋出</exception>
-    friend NUMERIC_CONSTEXPR_20 bigint operator/(bigint lhs, const bigint& rhs) {
-        lhs /= rhs;
-        return lhs;
+    friend NUMERIC_CONSTEXPR_20 bigint operator/(const bigint& lhs, const bigint& rhs) {
+        bigint result;
+        detail::BigIntCore::div_q_signed(result.m_storage, lhs.m_storage, rhs.m_storage);
+        return result;
     }
 
     /// <summary>
@@ -850,9 +852,10 @@ public:
     /// <param name="rhs">除數</param>
     /// <returns>餘數</returns>
     /// <exception cref="std::invalid_argument">除數為 0 時拋出</exception>
-    friend NUMERIC_CONSTEXPR_20 bigint operator%(bigint lhs, const bigint& rhs) {
-        lhs %= rhs;
-        return lhs;
+    friend NUMERIC_CONSTEXPR_20 bigint operator%(const bigint& lhs, const bigint& rhs) {
+        bigint result;
+        detail::BigIntCore::div_r_signed(result.m_storage, lhs.m_storage, rhs.m_storage);
+        return result;
     }
 
     /// <summary>

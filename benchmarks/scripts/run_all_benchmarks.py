@@ -86,17 +86,24 @@ def generate_markdown_report(data):
     report.append(f"- **參與評測庫**: {', '.join(targets)}\n")
     report.append("\n---\n")
 
+    def get_ns(tier, bits, op, target):
+        return hierarchy.get(tier, {}).get(bits, {}).get(op, {}).get(target, {}).get("ns", 0.0)
+
+    cpp_add_64 = get_ns("small", 64, "Add", "CPP-BigInt")
+    cpp_mul_64 = get_ns("small", 64, "Mul", "CPP-BigInt")
+    cpp_mem_64 = get_ns("small", 64, "MemPressure", "CPP-BigInt")
+    cpp_mul_65k = get_ns("large", 65536, "Mul", "CPP-BigInt")
+    cpp_mul_65k_ms = cpp_mul_65k / 1e6
+
     # Executive Summary
     report.append("## 核心結論摘要 (Executive Summary)\n")
-    report.append("1. **128-bit Small Buffer Optimization (SBO) 優勢顯著**：\n")
-    report.append("   - 在 **64-bit 與 128-bit** 區間內，`CPP-BigInt` 達成 **0 Heap Allocation**，加法延遲僅 **~28.5 ns/op**，乘法僅 **~14.8 ns/op**。\n")
-    report.append("   - 相較於 C++ GMP（每次運算皆經由 `malloc` 配置），`CPP-BigInt` 在小位數四則運算上展現高達 **4x ~ 8x 的加速比**。\n")
-    report.append("   - 相較於 .NET 10 `BigInteger`，`CPP-BigInt` 在小位數乘法上快達 **28x**，加法快 **9.4x**。\n")
+    report.append("1. **256-bit Small Buffer Optimization (SBO) 優勢顯著**：\n")
+    report.append(f"   - 在 **64-bit 至 256-bit** 區間內，`CPP-BigInt` 達成 **0 Heap Allocation**，64-bit 加法延遲僅 **~{cpp_add_64:.1f} ns/op**，乘法僅 **~{cpp_mul_64:.1f} ns/op**。\n")
+    report.append("   - 相較於 C++ GMP/MPIR（每次運算皆經由 `malloc` 配置），`CPP-BigInt` 在小位數四則運算上展現卓越的零配置延遲優勢。\n")
     report.append("2. **記憶體配置壓力測試 (Allocation Pressure)**：\n")
-    report.append("   - 緊密迴圈高頻產生右值臨時變數時，`CPP-BigInt` 憑藉 SBO 在 64-bit 延遲僅 **69.7 ns/op**；對比 .NET GC (450 ns) 與 Python (215 ns) 具備極強延遲優勢。\n")
-    report.append("3. **中大位數與 Karatsuba 乘法表現**：\n")
-    report.append("   - 在 512-bit ~ 1024-bit 區間，`CPP-BigInt` 的 Karatsuba 乘法與長除法達到工業級水準，與 GNU MP 互有勝負。\n")
-    report.append("   - 當位數擴展至 10,000 ~ 65,536 bits 時，GNU MP 啟動 Toom-Cook 3/4 與 FFT (Schönhage–Strassen) 展現亞二次方頂級效能；而 `CPP-BigInt` 依然在 65,536 bits 乘法跑出 1.7 ms 的穩定表現。\n")
+    report.append(f"   - 緊密迴圈高頻產生右值臨時變數時，`CPP-BigInt` 憑藉 256-bit SBO 在 64-bit 延遲僅 **~{cpp_mem_64:.1f} ns/op**；對比受 GC 或直譯開銷影響之環境具備極強延遲優勢。\n")
+    report.append("3. **中大位數乘除法與進位轉換表現**：\n")
+    report.append("   - 在中位數區間，`CPP-BigInt` 具備工業級算術效能；在 65,536-bit 超大規模乘法下跑出 " + (f"**~{cpp_mul_65k_ms:.3f} ms**" if cpp_mul_65k_ms > 0 else "穩定") + " 表現。\n")
     report.append("\n---\n")
 
     # Detailed Tables by Tier

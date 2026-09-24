@@ -18,7 +18,13 @@
 namespace bench {
 
 namespace detail {
+#if defined(_MSC_VER)
+#pragma optimize("", off)
     inline void use_char_ptr(char const volatile*) {}
+#pragma optimize("", on)
+#else
+    inline void use_char_ptr(char const volatile*) {}
+#endif
 }
 
 /// Prevents the compiler from optimizing away the result of a benchmarked expression.
@@ -26,7 +32,6 @@ template <typename T>
 inline void do_not_optimize(const T& value) {
 #if defined(_MSC_VER)
     detail::use_char_ptr(reinterpret_cast<char const volatile*>(&value));
-    _ReadWriteBarrier();
 #elif defined(__GNUC__) || defined(__clang__)
     asm volatile("" : : "g"(value) : "memory");
 #else
@@ -37,7 +42,8 @@ inline void do_not_optimize(const T& value) {
 
 inline void clobber_memory() {
 #if defined(_MSC_VER)
-    _ReadWriteBarrier();
+    int dummy = 0;
+    detail::use_char_ptr(reinterpret_cast<char const volatile*>(&dummy));
 #elif defined(__GNUC__) || defined(__clang__)
     asm volatile("" : : : "memory");
 #endif
@@ -131,23 +137,28 @@ public:
 };
 
 template <typename Func>
-inline double measure_time_ns(Func&& f, size_t iterations, size_t warmup = 5) {
+inline double measure_time_ns(Func&& f, size_t iterations, size_t warmup = 3, size_t samples = 7) {
     // Warmup
     for (size_t i = 0; i < warmup; ++i) {
         f();
     }
     clobber_memory();
 
-    auto start = std::chrono::high_resolution_clock::now();
-    for (size_t i = 0; i < iterations; ++i) {
-        f();
+    std::vector<double> sample_ns;
+    sample_ns.reserve(samples);
+    for (size_t s = 0; s < samples; ++s) {
+        auto start = std::chrono::high_resolution_clock::now();
+        for (size_t i = 0; i < iterations; ++i) {
+            f();
+        }
+        clobber_memory();
+        auto end = std::chrono::high_resolution_clock::now();
+        sample_ns.push_back(static_cast<double>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count()
+        ));
     }
-    clobber_memory();
-    auto end = std::chrono::high_resolution_clock::now();
-
-    return static_cast<double>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count()
-    );
+    std::sort(sample_ns.begin(), sample_ns.end());
+    return sample_ns[samples / 2]; // Return median sample
 }
 
 } // namespace bench

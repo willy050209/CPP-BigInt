@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
     bench::BenchmarkReporter reporter("CPP-BigInt");
 
     // Tier 1: Small (64, 128, 256 bits)
-    // SBO limit is 128 bits. High iteration count to measure nanosecond latencies.
+    // SBO limit is 256 bits (4x64 limbs). High iteration count to measure nanosecond latencies.
     run_benchmarks_for_tier(reporter, "small", 64,  data_dir + "/small_64.txt",  50, 50, 20, 50);
     run_benchmarks_for_tier(reporter, "small", 128, data_dir + "/small_128.txt", 50, 50, 20, 50);
     run_benchmarks_for_tier(reporter, "small", 256, data_dir + "/small_256.txt", 50, 50, 20, 50);
