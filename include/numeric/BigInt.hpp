@@ -799,25 +799,52 @@ public:
     }
 
     /// <summary>
-    /// 雙目加法運算子。
+    /// 雙目加法運算子（常數參考傳遞，消除堆積深層複製開銷）。
     /// </summary>
     /// <param name="lhs">左運算元</param>
     /// <param name="rhs">右運算元</param>
     /// <returns>加法結果</returns>
-    friend NUMERIC_CONSTEXPR_20 bigint operator+(bigint lhs, const bigint& rhs) {
+    friend NUMERIC_CONSTEXPR_20 bigint operator+(const bigint& lhs, const bigint& rhs) {
+        bigint result;
+        detail::BigIntCore::add_signed(result.m_storage, lhs.m_storage, rhs.m_storage);
+        return result;
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator+(bigint&& lhs, const bigint& rhs) {
         lhs += rhs;
-        return lhs;
+        return std::move(lhs);
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator+(const bigint& lhs, bigint&& rhs) {
+        rhs += lhs;
+        return std::move(rhs);
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator+(bigint&& lhs, bigint&& rhs) {
+        lhs += rhs;
+        return std::move(lhs);
     }
 
     /// <summary>
-    /// 雙目減法運算子。
+    /// 雙目減法運算子（常數參考傳遞，消除堆積深層複製開銷）。
     /// </summary>
     /// <param name="lhs">被減數</param>
     /// <param name="rhs">減數</param>
     /// <returns>減法結果</returns>
-    friend NUMERIC_CONSTEXPR_20 bigint operator-(bigint lhs, const bigint& rhs) {
+    friend NUMERIC_CONSTEXPR_20 bigint operator-(const bigint& lhs, const bigint& rhs) {
+        bigint result;
+        detail::BigIntCore::sub_signed(result.m_storage, lhs.m_storage, rhs.m_storage);
+        return result;
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator-(bigint&& lhs, const bigint& rhs) {
         lhs -= rhs;
-        return lhs;
+        return std::move(lhs);
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator-(bigint&& lhs, bigint&& rhs) {
+        lhs -= rhs;
+        return std::move(lhs);
     }
 
     /// <summary>
@@ -864,9 +891,25 @@ public:
     /// <param name="lhs">左運算元</param>
     /// <param name="rhs">右運算元</param>
     /// <returns>運算結果</returns>
-    friend NUMERIC_CONSTEXPR_20 bigint operator&(bigint lhs, const bigint& rhs) {
+    friend NUMERIC_CONSTEXPR_20 bigint operator&(const bigint& lhs, const bigint& rhs) {
+        bigint result;
+        detail::BigIntCore::bitwise_and(result.m_storage, lhs.m_storage, rhs.m_storage);
+        return result;
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator&(bigint&& lhs, const bigint& rhs) {
         lhs &= rhs;
-        return lhs;
+        return std::move(lhs);
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator&(const bigint& lhs, bigint&& rhs) {
+        rhs &= lhs;
+        return std::move(rhs);
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator&(bigint&& lhs, bigint&& rhs) {
+        lhs &= rhs;
+        return std::move(lhs);
     }
 
     /// <summary>
@@ -875,9 +918,25 @@ public:
     /// <param name="lhs">左運算元</param>
     /// <param name="rhs">右運算元</param>
     /// <returns>運算結果</returns>
-    friend NUMERIC_CONSTEXPR_20 bigint operator|(bigint lhs, const bigint& rhs) {
+    friend NUMERIC_CONSTEXPR_20 bigint operator|(const bigint& lhs, const bigint& rhs) {
+        bigint result;
+        detail::BigIntCore::bitwise_or(result.m_storage, lhs.m_storage, rhs.m_storage);
+        return result;
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator|(bigint&& lhs, const bigint& rhs) {
         lhs |= rhs;
-        return lhs;
+        return std::move(lhs);
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator|(const bigint& lhs, bigint&& rhs) {
+        rhs |= lhs;
+        return std::move(rhs);
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator|(bigint&& lhs, bigint&& rhs) {
+        lhs |= rhs;
+        return std::move(lhs);
     }
 
     /// <summary>
@@ -886,9 +945,25 @@ public:
     /// <param name="lhs">左運算元</param>
     /// <param name="rhs">右運算元</param>
     /// <returns>運算結果</returns>
-    friend NUMERIC_CONSTEXPR_20 bigint operator^(bigint lhs, const bigint& rhs) {
+    friend NUMERIC_CONSTEXPR_20 bigint operator^(const bigint& lhs, const bigint& rhs) {
+        bigint result;
+        detail::BigIntCore::bitwise_xor(result.m_storage, lhs.m_storage, rhs.m_storage);
+        return result;
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator^(bigint&& lhs, const bigint& rhs) {
         lhs ^= rhs;
-        return lhs;
+        return std::move(lhs);
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator^(const bigint& lhs, bigint&& rhs) {
+        rhs ^= lhs;
+        return std::move(rhs);
+    }
+
+    friend NUMERIC_CONSTEXPR_20 bigint operator^(bigint&& lhs, bigint&& rhs) {
+        lhs ^= rhs;
+        return std::move(lhs);
     }
 
     /// <summary>
@@ -899,9 +974,19 @@ public:
     /// <param name="shift">位移位元數</param>
     /// <returns>位移結果</returns>
     template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bigint operator<<(bigint lhs, T shift) {
+    friend NUMERIC_CONSTEXPR_20 bigint operator<<(const bigint& lhs, T shift) {
+        if (shift < 0) {
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
+        }
+        bigint result;
+        detail::BigIntCore::shift_left(result.m_storage, lhs.m_storage, static_cast<size_t>(shift));
+        return result;
+    }
+
+    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
+    friend NUMERIC_CONSTEXPR_20 bigint operator<<(bigint&& lhs, T shift) {
         lhs <<= shift;
-        return lhs;
+        return std::move(lhs);
     }
 
     /// <summary>
@@ -912,9 +997,19 @@ public:
     /// <param name="shift">位移位元數</param>
     /// <returns>位移結果</returns>
     template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bigint operator>>(bigint lhs, T shift) {
+    friend NUMERIC_CONSTEXPR_20 bigint operator>>(const bigint& lhs, T shift) {
+        if (shift < 0) {
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
+        }
+        bigint result;
+        detail::BigIntCore::shift_right(result.m_storage, lhs.m_storage, static_cast<size_t>(shift));
+        return result;
+    }
+
+    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
+    friend NUMERIC_CONSTEXPR_20 bigint operator>>(bigint&& lhs, T shift) {
         lhs >>= shift;
-        return lhs;
+        return std::move(lhs);
     }
 
     /// <summary>

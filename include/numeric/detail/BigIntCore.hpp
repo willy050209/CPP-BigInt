@@ -298,6 +298,7 @@ static_assert(sizeof(BigIntStorage) == 64, "BigIntStorage must be exactly 64 byt
 class BigIntCore {
 public:
     static constexpr size_t KARATSUBA_THRESHOLD = 16;
+    static constexpr size_t FROM_STRING_DC_THRESHOLD = 10;
 
     /// <summary>
     /// 64-bit ADC 原語：out = a + b + carry_in，回傳 carry_out (0 或 1)。
@@ -990,6 +991,57 @@ public:
     }
 
     /// <summary>
+    /// 線程局部暫存記憶體池（Bump Allocator Scratch Arena）。
+    /// 提供 Karatsuba 乘法與長整數運算無鎖、0 堆積重配置之 scratch 空間。
+    /// 支援 RAII Scope 機制，遞迴或巢狀調用時自動安全回滾偏移指標。
+    /// </summary>
+    class ScratchArena {
+    public:
+        static ScratchArena& instance() noexcept {
+            static thread_local ScratchArena arena;
+            return arena;
+        }
+
+        class Scope {
+        public:
+            explicit Scope(ScratchArena& arena, bool active = true) noexcept
+                : m_arena(active ? &arena : nullptr),
+                  m_saved_offset(active ? arena.m_offset : 0) {}
+
+            ~Scope() noexcept {
+                if (m_arena) {
+                    m_arena->m_offset = m_saved_offset;
+                }
+            }
+
+            Scope(const Scope&) = delete;
+            Scope& operator=(const Scope&) = delete;
+            Scope(Scope&&) = delete;
+            Scope& operator=(Scope&&) = delete;
+
+        private:
+            ScratchArena* m_arena;
+            size_t m_saved_offset;
+        };
+
+        uint64_t* allocate(size_t count) {
+            if (m_offset + count > m_buffer.size()) {
+                size_t new_cap = (std::max)(m_buffer.size() * 2, m_offset + count);
+                new_cap = (std::max)(new_cap, static_cast<size_t>(4096));
+                m_buffer.resize(new_cap);
+            }
+            uint64_t* ptr = m_buffer.data() + m_offset;
+            m_offset += count;
+            return ptr;
+        }
+
+    private:
+        ScratchArena() = default;
+        std::vector<uint64_t> m_buffer;
+        size_t m_offset = 0;
+    };
+
+    /// <summary>
     /// 減法變體 Scratchpad Karatsuba 核心演算法：out = a * b。
     /// </summary>
     static NUMERIC_CONSTEXPR_20 void mul_karatsuba_raw(uint64_t* NUMERIC_RESTRICT out,
@@ -1198,12 +1250,28 @@ public:
 
         // Scratchpad 預估大小：8 * n + 128 limbs
         size_t scratch_size = 8 * n + 128;
-        if (scratch_size <= 576) {
-            uint64_t stack_scratch[576];
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            if (scratch_size <= 1024) {
+                uint64_t stack_scratch[1024];
+                mul_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, stack_scratch);
+            } else {
+                std::vector<uint64_t> heap_scratch(scratch_size);
+                mul_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, heap_scratch.data());
+            }
+            res.m_sign = 1;
+            res.normalize();
+            return;
+        }
+#endif
+        if (scratch_size <= 1024) {
+            uint64_t stack_scratch[1024];
             mul_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, stack_scratch);
         } else {
-            std::vector<uint64_t> heap_scratch(scratch_size);
-            mul_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, heap_scratch.data());
+            auto& arena = ScratchArena::instance();
+            ScratchArena::Scope scope(arena);
+            uint64_t* scratch = arena.allocate(scratch_size);
+            mul_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, scratch);
         }
 
         res.m_sign = 1;
@@ -1273,7 +1341,7 @@ public:
         res.m_sign = res_sign;
     }
 
-    static constexpr size_t BZ_THRESHOLD = 64; // 4096-bit threshold for Burnikel-Ziegler
+    static constexpr size_t BZ_THRESHOLD = 128; // Tuned threshold for Burnikel-Ziegler division
 
     /// <summary>
     /// Knuth Algorithm D 原地長除法（採用 Scratch Buffer 達成 16,384 位元內零 Heap 配置）。
@@ -1283,6 +1351,26 @@ public:
         BigIntStorage* q_out, BigIntStorage* r_out,
         const BigIntStorage& u, const BigIntStorage& v)
     {
+        if (v.m_size == 0) {
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("division by zero"));
+        }
+        if (u.m_size == 0 || u.m_size < v.m_size) {
+            if (q_out) { q_out->m_size = 0; q_out->m_sign = 0; }
+            if (r_out) { *r_out = u; r_out->m_sign = (u.m_size > 0 ? 1 : 0); }
+            return;
+        }
+        int cmp = compare_unsigned(u.data(), u.m_size, v.data(), v.m_size);
+        if (cmp < 0) {
+            if (q_out) { q_out->m_size = 0; q_out->m_sign = 0; }
+            if (r_out) { *r_out = u; r_out->m_sign = 1; }
+            return;
+        }
+        if (cmp == 0) {
+            if (q_out) { q_out->set_uint64(1, 1); }
+            if (r_out) { r_out->m_size = 0; r_out->m_sign = 0; }
+            return;
+        }
+
         size_t n = v.m_size;
         size_t m = u.m_size - n;
 
@@ -1439,114 +1527,13 @@ public:
     }
 
     /// <summary>
-    /// Burnikel–Ziegler div3by2: 以 2k-limb 除數 [b1, b0] 除 3k-limb 被除數 a。
-    /// 產出 k-limb 商 q 與 2k-limb 餘數 r。
+    /// Burnikel–Ziegler div3by2: 以 2k-limb 除數 b 除 3k-limb 被除數 a。
+    /// 產出 k-limb 商 q 與 2k-limb 餘數 r。要求 a < b * beta^k。
     /// </summary>
     static NUMERIC_CONSTEXPR_20 void bz_div3by2(
         BigIntStorage* q, BigIntStorage* r,
-        const BigIntStorage& a, const BigIntStorage& b1, const BigIntStorage& b0, size_t k)
+        const BigIntStorage& a, const BigIntStorage& b, size_t k)
     {
-        BigIntStorage a_hi, a_lo;
-        if (a.m_size > k) {
-            size_t hi_len = a.m_size - k;
-            a_hi.resize(hi_len, 0);
-            BigIntStorage::copy_limbs(a_hi.data(), a.data() + k, hi_len);
-            a_hi.m_sign = 1;
-            a_hi.normalize();
-
-            a_lo.resize(k, 0);
-            BigIntStorage::copy_limbs(a_lo.data(), a.data(), k);
-            a_lo.m_sign = 1;
-            a_lo.normalize();
-        } else {
-            a_lo = a;
-        }
-
-        BigIntStorage q_hat, r_hat;
-        if (a_hi.m_size >= k + b1.m_size && compare_unsigned(a_hi.data() + k, a_hi.m_size - k, b1.data(), b1.m_size) >= 0) {
-            q_hat.resize(k, 0xFFFFFFFFFFFFFFFFULL);
-            q_hat.m_sign = 1;
-
-            BigIntStorage b1_shifted;
-            shift_left(b1_shifted, b1, k * 64);
-            BigIntStorage diff;
-            sub_magnitude_core(diff, a_hi, b1_shifted);
-            add_unsigned(r_hat, diff, b1);
-            r_hat.m_sign = 1;
-        } else {
-            bz_div2by1(&q_hat, &r_hat, a_hi, b1);
-        }
-
-        BigIntStorage d;
-        mul_core(d, q_hat, b0);
-
-        BigIntStorage r_prime;
-        shift_left(r_prime, r_hat, k * 64);
-        if (a_lo.m_size > 0) {
-            BigIntStorage tmp;
-            add_unsigned(tmp, r_prime, a_lo);
-            tmp.m_sign = 1;
-            r_prime = std::move(tmp);
-        }
-
-        BigIntStorage b;
-        shift_left(b, b1, k * 64);
-        if (b0.m_size > 0) {
-            BigIntStorage tmp;
-            add_unsigned(tmp, b, b0);
-            tmp.m_sign = 1;
-            b = std::move(tmp);
-        }
-
-        while (compare_unsigned(r_prime.data(), r_prime.m_size, d.data(), d.m_size) < 0) {
-            BigIntStorage one; one.set_uint64(1, 1);
-            BigIntStorage q_next;
-            sub_magnitude_core(q_next, q_hat, one);
-            q_next.m_sign = 1;
-            q_hat = std::move(q_next);
-
-            BigIntStorage r_next;
-            add_unsigned(r_next, r_prime, b);
-            r_next.m_sign = 1;
-            r_prime = std::move(r_next);
-        }
-
-        BigIntStorage r_final;
-        sub_magnitude_core(r_final, r_prime, d);
-        r_final.m_sign = 1;
-
-        while (compare_unsigned(r_final.data(), r_final.m_size, b.data(), b.m_size) >= 0) {
-            BigIntStorage one; one.set_uint64(1, 1);
-            BigIntStorage q_next;
-            add_unsigned(q_next, q_hat, one);
-            q_next.m_sign = 1;
-            q_hat = std::move(q_next);
-
-            BigIntStorage r_next;
-            sub_magnitude_core(r_next, r_final, b);
-            r_next.m_sign = 1;
-            r_final = std::move(r_next);
-        }
-
-        if (q) *q = std::move(q_hat);
-        if (r) *r = std::move(r_final);
-    }
-
-    /// <summary>
-    /// Burnikel–Ziegler div2by1: 以 n-limb 除數 b 除 2n-limb 被除數 a。
-    /// 遞迴調用 div3by2，以 Karatsuba 乘法降低計算複雜度至 O(M(N) log N)。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20 void bz_div2by1(
-        BigIntStorage* q, BigIntStorage* r,
-        const BigIntStorage& a, const BigIntStorage& b)
-    {
-        size_t n = b.m_size;
-        if (n < BZ_THRESHOLD || (n % 2 != 0)) {
-            div_mod_core_knuth(q, r, a, b);
-            return;
-        }
-
-        size_t k = n / 2;
         BigIntStorage b1, b0;
         b1.resize(k, 0);
         BigIntStorage::copy_limbs(b1.data(), b.data() + k, k);
@@ -1574,11 +1561,105 @@ public:
             a_lo = a;
         }
 
+        BigIntStorage q_hat, r_hat;
+        if (a_hi.m_size == 0) {
+            q_hat.m_size = 0;
+            q_hat.m_sign = 0;
+            r_hat.m_size = 0;
+            r_hat.m_sign = 0;
+        } else {
+            bool a_hi_ge_b1_beta_k = false;
+            if (a_hi.m_size > k + b1.m_size) {
+                a_hi_ge_b1_beta_k = true;
+            } else if (a_hi.m_size == k + b1.m_size) {
+                a_hi_ge_b1_beta_k = (compare_unsigned(a_hi.data() + k, b1.m_size, b1.data(), b1.m_size) >= 0);
+            }
+
+            if (a_hi_ge_b1_beta_k) {
+                q_hat.resize(k, 0xFFFFFFFFFFFFFFFFULL);
+                q_hat.m_sign = 1;
+
+                BigIntStorage b1_shifted;
+                shift_left_limbs(b1_shifted, b1, k);
+                BigIntStorage diff;
+                sub_magnitude_core(diff, a_hi, b1_shifted);
+                add_unsigned(r_hat, diff, b1);
+                r_hat.m_sign = 1;
+            } else {
+                bz_div2by1(&q_hat, &r_hat, a_hi, b1);
+            }
+        }
+
+        BigIntStorage d;
+        mul_core(d, q_hat, b0);
+
+        BigIntStorage r_prime;
+        shift_left_limbs(r_prime, r_hat, k);
+        if (a_lo.m_size > 0) {
+            BigIntStorage tmp;
+            add_unsigned(tmp, r_prime, a_lo);
+            tmp.m_sign = 1;
+            r_prime = std::move(tmp);
+        }
+
+        while (compare_unsigned(r_prime.data(), r_prime.m_size, d.data(), d.m_size) < 0) {
+            BigIntStorage one; one.set_uint64(1, 1);
+            BigIntStorage q_next;
+            sub_magnitude_core(q_next, q_hat, one);
+            q_next.m_sign = (q_next.m_size > 0) ? 1 : 0;
+            q_hat = std::move(q_next);
+
+            BigIntStorage r_next;
+            add_unsigned(r_next, r_prime, b);
+            r_next.m_sign = 1;
+            r_prime = std::move(r_next);
+        }
+
+        BigIntStorage r_final;
+        sub_magnitude_core(r_final, r_prime, d);
+        r_final.m_sign = (r_final.m_size > 0) ? 1 : 0;
+
+        if (q) *q = std::move(q_hat);
+        if (r) *r = std::move(r_final);
+    }
+
+    /// <summary>
+    /// Burnikel–Ziegler div2by1: 以 n-limb 除數 b 除 2n-limb 被除數 a。
+    /// 要求 a < b * beta^n，n 為偶數。
+    /// 遞迴調用 div3by2，以 Karatsuba 乘法降低計算複雜度至 O(M(N) log N)。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void bz_div2by1(
+        BigIntStorage* q, BigIntStorage* r,
+        const BigIntStorage& a, const BigIntStorage& b)
+    {
+        size_t n = b.m_size;
+        if (n < BZ_THRESHOLD || (n % 2 != 0)) {
+            div_mod_core_knuth(q, r, a, b);
+            return;
+        }
+
+        size_t k = n / 2;
+        BigIntStorage a_hi, a_lo;
+        if (a.m_size > k) {
+            size_t hi_len = a.m_size - k;
+            a_hi.resize(hi_len, 0);
+            BigIntStorage::copy_limbs(a_hi.data(), a.data() + k, hi_len);
+            a_hi.m_sign = 1;
+            a_hi.normalize();
+
+            a_lo.resize(k, 0);
+            BigIntStorage::copy_limbs(a_lo.data(), a.data(), k);
+            a_lo.m_sign = 1;
+            a_lo.normalize();
+        } else {
+            a_lo = a;
+        }
+
         BigIntStorage q1, r1;
-        bz_div3by2(&q1, &r1, a_hi, b1, b0, k);
+        bz_div3by2(&q1, &r1, a_hi, b, k);
 
         BigIntStorage a_step2;
-        shift_left(a_step2, r1, k * 64);
+        shift_left_limbs(a_step2, r1, k);
         if (a_lo.m_size > 0) {
             BigIntStorage tmp;
             add_unsigned(tmp, a_step2, a_lo);
@@ -1587,10 +1668,10 @@ public:
         }
 
         BigIntStorage q0, r0;
-        bz_div3by2(&q0, &r0, a_step2, b1, b0, k);
+        bz_div3by2(&q0, &r0, a_step2, b, k);
 
         if (q) {
-            shift_left(*q, q1, k * 64);
+            shift_left_limbs(*q, q1, k);
             if (q0.m_size > 0) {
                 BigIntStorage tmp;
                 add_unsigned(tmp, *q, q0);
@@ -1657,77 +1738,81 @@ public:
             return;
         }
 
-        // 高效 Knuth Algorithm D 長除法（內含 16384-bit 棧上 Scratch Buffer 與商餘分離）
-        div_mod_core_knuth(q_out, r_out, u, v);
-        return;
-
-        // Burnikel–Ziegler 大數分治除法路徑
-        size_t n = v.m_size;
-        int s = clz64(v.data()[n - 1]);
-        BigIntStorage v_norm, u_norm;
-        if (s > 0) {
-            shift_left(v_norm, v, static_cast<size_t>(s));
-            shift_left(u_norm, u, static_cast<size_t>(s));
-        } else {
-            v_norm = v;
-            u_norm = u;
-        }
-
-        size_t m = u_norm.m_size;
-        if (m < 2 * n) {
-            BigIntStorage q_res, r_res;
-            bz_div2by1(q_out ? &q_res : nullptr, &r_res, u_norm, v_norm);
-            if (q_out) *q_out = std::move(q_res);
-            if (r_out) {
-                if (s > 0) {
-                    shift_right(*r_out, r_res, static_cast<size_t>(s));
-                } else {
-                    *r_out = std::move(r_res);
-                }
-                r_out->m_sign = (r_out->m_size > 0) ? 1 : 0;
-            }
+        // 小於 BZ_THRESHOLD (64 limbs, 4096-bit) 採 Knuth Algorithm D 長除法
+        if (v.m_size < BZ_THRESHOLD) {
+            div_mod_core_knuth(q_out, r_out, u, v);
             return;
         }
 
-        // 分塊長除法：以 n limbs 為單位由高向低迭代
-        size_t blocks = (m + n - 1) / n;
-        BigIntStorage r_cur;
-        size_t hi_start = (blocks - 1) * n;
-        size_t hi_len = (m > hi_start) ? (m - hi_start) : 0;
-        r_cur.resize(hi_len, 0);
-        if (hi_len > 0) {
-            BigIntStorage::copy_limbs(r_cur.data(), u_norm.data() + hi_start, hi_len);
+        // Burnikel–Ziegler 大數分治除法路徑
+        size_t s = v.m_size;
+        size_t m_pow2 = 2;
+        while (m_pow2 * BZ_THRESHOLD <= s) {
+            m_pow2 <<= 1;
         }
-        r_cur.m_sign = 1;
-        r_cur.normalize();
+        size_t j = (s + m_pow2 - 1) / m_pow2;
+        size_t n = j * m_pow2; // n is always even and >= s
+
+        size_t n_bits = n * 64;
+        size_t v_bits = (v.m_size - 1) * 64 + (64 - clz64(v.data()[v.m_size - 1]));
+        size_t sigma = (n_bits >= v_bits) ? (n_bits - v_bits) : 0;
+
+        BigIntStorage v_shifted, u_shifted;
+        if (sigma > 0) {
+            shift_left(v_shifted, v, sigma);
+            shift_left(u_shifted, u, sigma);
+        } else {
+            v_shifted = v;
+            u_shifted = u;
+        }
+
+        size_t u_bits = (u_shifted.m_size > 0) 
+            ? ((u_shifted.m_size - 1) * 64 + (64 - clz64(u_shifted.data()[u_shifted.m_size - 1])))
+            : 0;
+        size_t t = (u_bits + n_bits) / n_bits;
+        if (t < 2) t = 2;
+
+        auto get_block = [&](BigIntStorage& out, size_t block_idx) {
+            size_t start = block_idx * n;
+            if (start >= u_shifted.m_size) {
+                out.m_size = 0;
+                out.m_sign = 0;
+                return;
+            }
+            size_t len = std::min(n, u_shifted.m_size - start);
+            out.resize(len, 0);
+            BigIntStorage::copy_limbs(out.data(), u_shifted.data() + start, len);
+            out.m_sign = 1;
+            out.normalize();
+        };
+
+        BigIntStorage r_cur;
+        get_block(r_cur, t - 1);
 
         BigIntStorage q_total;
-        for (size_t b_idx = blocks - 1; b_idx > 0; --b_idx) {
-            size_t low_idx = (b_idx - 1) * n;
+        for (size_t i = t - 1; i > 0; --i) {
+            size_t block_idx = i - 1;
             BigIntStorage a_block;
-            shift_left(a_block, r_cur, n * 64);
-            size_t copy_cnt = std::min(n, u_norm.m_size > low_idx ? (u_norm.m_size - low_idx) : 0);
-            if (copy_cnt > 0) {
-                BigIntStorage u_chunk;
-                u_chunk.resize(copy_cnt, 0);
-                BigIntStorage::copy_limbs(u_chunk.data(), u_norm.data() + low_idx, copy_cnt);
-                u_chunk.m_sign = 1;
-                u_chunk.normalize();
+            get_block(a_block, block_idx);
+
+            BigIntStorage z;
+            shift_left_limbs(z, r_cur, n);
+            if (a_block.m_size > 0) {
                 BigIntStorage tmp;
-                add_unsigned(tmp, a_block, u_chunk);
+                add_unsigned(tmp, z, a_block);
                 tmp.m_sign = 1;
-                a_block = std::move(tmp);
+                z = std::move(tmp);
             }
 
-            BigIntStorage q_block, r_next;
-            bz_div2by1(q_out ? &q_block : nullptr, &r_next, a_block, v_norm);
-            r_cur = std::move(r_next);
+            BigIntStorage q_step, r_step;
+            bz_div2by1(&q_step, &r_step, z, v_shifted);
+            r_cur = std::move(r_step);
 
             if (q_out) {
-                shift_left(q_total, q_total, n * 64);
-                if (q_block.m_size > 0) {
+                shift_left_limbs(q_total, q_total, n);
+                if (q_step.m_size > 0) {
                     BigIntStorage tmp;
-                    add_unsigned(tmp, q_total, q_block);
+                    add_unsigned(tmp, q_total, q_step);
                     tmp.m_sign = 1;
                     q_total = std::move(tmp);
                 }
@@ -1735,17 +1820,18 @@ public:
         }
 
         if (q_out) {
-            q_total.m_sign = 1;
-            q_total.normalize();
             *q_out = std::move(q_total);
+            q_out->m_sign = (q_out->m_size > 0) ? 1 : 0;
+            q_out->normalize();
         }
         if (r_out) {
-            if (s > 0) {
-                shift_right(*r_out, r_cur, static_cast<size_t>(s));
+            if (sigma > 0) {
+                shift_right(*r_out, r_cur, sigma);
             } else {
                 *r_out = std::move(r_cur);
             }
             r_out->m_sign = (r_out->m_size > 0) ? 1 : 0;
+            r_out->normalize();
         }
     }
 
@@ -1829,6 +1915,12 @@ public:
             res.m_sign = 0;
             return;
         }
+        if (&res == &a) {
+            BigIntStorage tmp;
+            shift_left_limbs(tmp, a, limbs);
+            res = std::move(tmp);
+            return;
+        }
         res.resize(a.m_size + limbs, 0);
         BigIntStorage::copy_limbs(res.data() + limbs, a.data(), a.m_size);
         BigIntStorage::zero_limbs(res.data(), limbs);
@@ -1845,6 +1937,12 @@ public:
     static NUMERIC_CONSTEXPR_20 void shift_left(BigIntStorage& res, const BigIntStorage& a, size_t shift) {
         if (shift == 0 || a.m_size == 0) {
             res = a;
+            return;
+        }
+        if (&res == &a) {
+            BigIntStorage tmp;
+            shift_left(tmp, a, shift);
+            res = std::move(tmp);
             return;
         }
         size_t limb_shift = shift / 64;
@@ -1911,6 +2009,12 @@ public:
     /// <param name="a">運算元</param>
     /// <param name="shift">位移位元數</param>
     static NUMERIC_CONSTEXPR_20 void shift_right_positive(BigIntStorage& res, const BigIntStorage& a, size_t shift) {
+        if (&res == &a) {
+            BigIntStorage tmp;
+            shift_right_positive(tmp, a, shift);
+            res = std::move(tmp);
+            return;
+        }
         size_t limb_shift = shift / 64;
         size_t bit_shift = shift % 64;
         if (limb_shift >= a.m_size) {
@@ -2156,7 +2260,7 @@ public:
     /// </summary>
     static BigIntStorage parse_chunks_dc(const uint64_t* chunks, size_t start, size_t end) {
         size_t count = end - start;
-        if (count <= 16) {
+        if (count <= FROM_STRING_DC_THRESHOLD) {
             return parse_chunks_linear(chunks + start, count);
         }
 
@@ -2320,7 +2424,7 @@ public:
             curr_end = chunk_start;
         }
 
-        if (chunks.size() <= 16) {
+        if (chunks.size() <= FROM_STRING_DC_THRESHOLD) {
             res = parse_chunks_linear(chunks.data(), chunks.size());
             res.m_sign = sign;
             res.normalize();
@@ -2521,8 +2625,32 @@ public:
             return "0";
         }
 
-        // 分配足夠容量緩衝區
-        // 估計總十進位長度：每個 limb 最大提供 ceil(64 * log10(2)) ≈ 20 個十進位 digits
+        // 單 limb 快速超短格式化路徑
+        if (a.m_size == 1) {
+            uint64_t val = a.data()[0];
+            if (val == 0) return "0";
+            size_t digits = digits10_u64(val);
+            char stack_buf[32];
+            char* ptr = stack_buf;
+            if (a.m_sign < 0) *ptr++ = '-';
+            format_highest_chunk(ptr, val, digits);
+            size_t total_len = (a.m_sign < 0 ? 1 : 0) + digits;
+            return std::string(stack_buf, total_len);
+        }
+
+        // 小中型大數 (<= 16 limbs, 約 1024 bits)：棧上緩衝區零初步堆積配置
+        if (a.m_size <= 16) {
+            char stack_buf[512];
+            char* out_ptr = stack_buf;
+            if (a.m_sign < 0) {
+                *out_ptr++ = '-';
+            }
+            size_t digits_written = format_unpadded_dc(out_ptr, a);
+            size_t total_len = (a.m_sign < 0 ? 1 : 0) + digits_written;
+            return std::string(stack_buf, total_len);
+        }
+
+        // 大型大數 (> 16 limbs)：預估容量並以分治法格式化
         size_t max_digits = a.m_size * 20 + 24;
         std::string result;
         result.resize(max_digits);

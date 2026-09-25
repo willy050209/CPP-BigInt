@@ -4,6 +4,7 @@
 void run_test_bigint();
 void run_test_bitset();
 void run_test_constexpr();
+void run_test_bz_division();
 
 int main() {
     std::cout << "========================================" << std::endl;
@@ -13,6 +14,7 @@ int main() {
     run_test_bigint();
     run_test_bitset();
     run_test_constexpr();
+    run_test_bz_division();
 
     TestStats& stats = GetGlobalTestStats();
     std::cout << "========================================" << std::endl;
