@@ -1,10 +1,14 @@
+#include "test_helpers.hpp"
 #include <numeric/BigInt.hpp>
 #include <iostream>
 #include <vector>
 #include <random>
 #include <cassert>
+#include <cstring>
 
 using namespace numeric::detail;
+
+namespace {
 
 // Helper: exact division of BigIntStorage by 3
 static void div_exact_3(BigIntStorage& a) {
@@ -169,9 +173,11 @@ void mul_toom3_test(BigIntStorage& res, const BigIntStorage& a, const BigIntStor
     BigIntCore::add_signed(res, acc3, c4_shl);
 }
 
-int main() {
+} // namespace
+
+void run_test_toom3() {
+    std::cout << "--- Running Toom-3 Multiplication Verification Tests ---" << std::endl;
     std::mt19937_64 rng(12345);
-    std::cout << "Testing Toom-3 implementation against Karatsuba...\n";
 
     std::vector<size_t> test_sizes = {32, 48, 64, 96, 128, 160, 200, 256, 384, 512};
     for (size_t size : test_sizes) {
@@ -190,16 +196,13 @@ int main() {
             BigIntCore::mul_karatsuba(expected, a, b);
             mul_toom3_test(actual, a, b);
 
-            if (expected.m_size != actual.m_size ||
-                std::memcmp(expected.data(), actual.data(), expected.m_size * sizeof(uint64_t)) != 0) {
+            bool match = (expected.m_size == actual.m_size &&
+                std::memcmp(expected.data(), actual.data(), expected.m_size * sizeof(uint64_t)) == 0);
+            if (!match) {
                 std::cerr << "FAIL at size " << size << " trial " << trial << "!\n";
                 std::cerr << "expected size: " << expected.m_size << ", actual: " << actual.m_size << "\n";
-                return 1;
             }
+            TEST_ASSERT(match);
         }
-        std::cout << "  Size " << size << " limbs PASSED (10/10)\n";
     }
-
-    std::cout << "All Toom-3 verification tests PASSED!\n";
-    return 0;
 }

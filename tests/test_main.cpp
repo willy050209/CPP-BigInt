@@ -5,6 +5,7 @@ void run_test_bigint();
 void run_test_bitset();
 void run_test_constexpr();
 void run_test_bz_division();
+void run_test_toom3();
 
 int main() {
     std::cout << "========================================" << std::endl;
@@ -15,6 +16,7 @@ int main() {
     run_test_bitset();
     run_test_constexpr();
     run_test_bz_division();
+    run_test_toom3();
 
     TestStats& stats = GetGlobalTestStats();
     std::cout << "========================================" << std::endl;
