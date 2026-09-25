@@ -1004,11 +1004,11 @@ public:
 
         class Scope {
         public:
-            explicit Scope(ScratchArena& arena, bool active = true) noexcept
+            explicit NUMERIC_CONSTEXPR_20 Scope(ScratchArena& arena, bool active = true) noexcept
                 : m_arena(active ? &arena : nullptr),
                   m_saved_offset(active ? arena.m_offset : 0) {}
 
-            ~Scope() noexcept {
+            NUMERIC_CONSTEXPR_20 ~Scope() noexcept {
                 if (m_arena) {
                     m_arena->m_offset = m_saved_offset;
                 }
