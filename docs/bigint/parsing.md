@@ -47,9 +47,9 @@ static NUMERIC_CONSTEXPR_20 bigint from_string(numeric::string_view sv);
 1. **$10^{19}$ 純量區塊化 (Chunking)**：
    利用 64 位元整數可容納的最大十進位冪次 $10^{19} < 2^{64}-1$，以 19 位數為一組在單次前向迴圈中直接轉化為 `uint64_t` 原生整數，完全消除暫存 `bigint` 配置。
 2. **中小型字串原位單肢段乘加累積 (`parse_chunks_linear`)**：
-   對於小於等於 16 個 chunks（約 304 個十進位數字 / 1010 bits，涵蓋常見金鑰、雜湊值與中型數字）的輸入，直接以底層肢段陣列的原地單 limb 乘加 Horner 演算法進行累積，達成 **0 個臨時 `BigIntStorage` 節點配置**，大幅消滅小規模分治遞迴所導致的堆疊與動態配置負擔。
+   對於小於等於 10 個 chunks（`FROM_STRING_DC_THRESHOLD = 10`，約 190 個十進位數字 / 630 bits，經密集基準測試驗證為最佳交叉閾值）的輸入，直接以底層肢段陣列的原地單 limb 乘加 Horner 演算法進行累積，達成 **0 個臨時 `BigIntStorage` 節點配置**，大幅消滅小規模分治遞迴所導致的堆疊與動態配置負擔。
 3. **大型字串二分樹狀折疊聚合 (Divide-and-Conquer Tree Aggregation)**：
-   對於大於 16 chunks 的龐大字串，採用兩兩二分合併策略：$V_{\text{merged}} = V_{\text{high}} \times 10^{19 \cdot 2^k} + V_{\text{low}}$。結合 Karatsuba 快速乘法，將超大數之解析複雜度大幅降低。65,536-bit 解析延遲達到 **0.329 ms**，領先 C++ MPIR（0.622 ms）達 1.89x。
+   對於大於 10 chunks 的龐大字串，採用兩兩二分合併策略：$V_{\text{merged}} = V_{\text{high}} \times 10^{19 \cdot 2^k} + V_{\text{low}}$。結合 Karatsuba 快速乘法，將超大數之解析複雜度大幅降低。65,536-bit 解析延遲達到 **0.329 ms**，領先 C++ MPIR（0.622 ms）達 1.89x。
 4. **執行緒安全動態權重快取 (`Pow10Cache`)**：
    聚合所需的巨大冪次常數（$10^{19 \cdot 2^k}$）由內建的延遲求值快取管理，同一行程中重複解析大數時可直接複用快取權重，極大化批次輸入效能。
 

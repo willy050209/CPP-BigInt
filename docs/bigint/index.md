@@ -24,6 +24,11 @@ namespace numeric {
 
 `numeric::bigint` 提供在理論上僅受可用記憶體限制的任意精度整數運算。類別設計以效能、直覺性與相容性為核心：
 - **256-bit Small Buffer Optimization (SBO)**：於類別內部常駐 4 個 64-bit limbs 緩衝區。數值介於 $[-2^{256}+1, 2^{256}-1]$ 範圍內時，**享有 0 次 Heap 動態記憶體配置**。
+- **高階演算法與無鎖暫存池 (`ScratchArena`)**：
+  - **乘法**：支援學校乘法與 **Karatsuba 分治乘法** ($O(N^{1.585})$)。
+  - **雙階除法派發**：中小型整數（$< 128$ limbs）採用 **Knuth Algorithm D**；大型整數（$\ge 128$ limbs / 8,192 bits）自動分派至 **Burnikel-Ziegler $D_{2n,n} / D_{3n,2n}$** 分治演算法 ($O(M(N)\log N)$)。
+  - **Thread-Local ScratchArena**：大數運算遞迴深度內達成 **0 次 Heap 動態配置**。
+- **Direct-Result 與 Move-Reuse 零拷貝運算子**：二元運算子提供 4-overload 矩陣，常數參考直接建構結果，右值運算元就地重用緩衝區。
 - **無縫整數混算**：支援與所有 C++ 原生整數型態（`int8_t` ~ `int64_t`、`uint8_t` ~ `uint64_t`、`long`、`char` 等）無縫進行混合四則運算、位元運算與比較。
 - **標準二補數語意**：位元運算子（`&`, `|`, `^`, `~`, `<<`, `>>`）模擬標準二補數無限符號延伸（Two's Complement sign extension），其行為與原生有符號整數高度一致。
 - **全編譯期求值 (`constexpr`) 支援**：在 C++20 及以上標準環境下，建構子、四則運算、位元運算與比較皆完整標註為 `constexpr`。

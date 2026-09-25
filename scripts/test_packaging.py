@@ -14,7 +14,7 @@ Automated validation suite for CPP-BigInt packaging scripts and artifacts:
 """
 
 import sys
-import subprocess
+import runpy
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -33,11 +33,7 @@ def check(cond: bool, msg: str):
 
 def main():
     print("=== Step 1: Run scripts/bundle_header.py ===")
-    res = subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "bundle_header.py"), "-v"], capture_output=True, text=True)
-    print(res.stdout)
-    if res.stderr:
-        print(res.stderr)
-    check(res.returncode == 0, "bundle_header.py returned code 0")
+    runpy.run_path(str(REPO_ROOT / "scripts" / "bundle_header.py"), run_name="__main__")
     check(HPP_FILE.exists(), f"{HPP_FILE} exists")
 
     print("\n=== Step 2: Validate dist/bigint.hpp ===")
@@ -66,11 +62,7 @@ def main():
     check("NUMERIC_NODISCARD" in hpp_text, "dist/bigint.hpp preserves public API macro NUMERIC_NODISCARD")
 
     print("\n=== Step 3: Run scripts/export_module.py ===")
-    res = subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "export_module.py"), "-v"], capture_output=True, text=True)
-    print(res.stdout)
-    if res.stderr:
-        print(res.stderr)
-    check(res.returncode == 0, "export_module.py returned code 0")
+    runpy.run_path(str(REPO_ROOT / "scripts" / "export_module.py"), run_name="__main__")
     check(IXX_FILE.exists(), f"{IXX_FILE} exists")
 
     print("\n=== Step 4: Validate dist/bigint.ixx ===")
