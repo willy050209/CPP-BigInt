@@ -34,6 +34,9 @@ void run_benchmarks_for_tier(
         b_nums.emplace_back(p.b_dec);
     }
 
+    auto a_work = a_nums;
+    auto setup = [&]() { a_work = a_nums; };
+
     // 1. Addition (c = a + b) - Fresh Return
     {
         double elapsed = bench::measure_time_ns([&]() {
@@ -47,11 +50,10 @@ void run_benchmarks_for_tier(
 
     // 1b. Addition In-Place (a += b) - Capacity Reuse
     {
-        auto a_copy = a_nums;
-        double elapsed = bench::measure_time_ns([&]() {
+        double elapsed = bench::measure_inplace_time_ns(setup, [&]() {
             for (size_t i = 0; i < N; ++i) {
-                a_copy[i] += b_nums[i];
-                bench::do_not_optimize(a_copy[i]);
+                a_work[i] += b_nums[i];
+                bench::do_not_optimize(a_work[i]);
             }
         }, arithmetic_iters);
         reporter.add_metric(tier, bits, "Add_InPlace", arithmetic_iters * N, elapsed);
@@ -68,6 +70,17 @@ void run_benchmarks_for_tier(
         reporter.add_metric(tier, bits, "Sub", arithmetic_iters * N, elapsed);
     }
 
+    // 2b. Subtraction In-Place (a -= b)
+    {
+        double elapsed = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+                a_work[i] -= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Sub_InPlace", arithmetic_iters * N, elapsed);
+    }
+
     // 3. Multiplication (c = a * b)
     {
         double elapsed = bench::measure_time_ns([&]() {
@@ -77,6 +90,17 @@ void run_benchmarks_for_tier(
             }
         }, mul_div_iters);
         reporter.add_metric(tier, bits, "Mul", mul_div_iters * N, elapsed);
+    }
+
+    // 3b. Multiplication In-Place (a *= b)
+    {
+        double elapsed = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+                a_work[i] *= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+            }
+        }, mul_div_iters);
+        reporter.add_metric(tier, bits, "Mul_InPlace", mul_div_iters * N, elapsed);
     }
 
     // 4. Division (c = a / b)
@@ -90,6 +114,17 @@ void run_benchmarks_for_tier(
         reporter.add_metric(tier, bits, "Div", mul_div_iters * N, elapsed);
     }
 
+    // 4b. Division In-Place (a /= b)
+    {
+        double elapsed = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+                a_work[i] /= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+            }
+        }, mul_div_iters);
+        reporter.add_metric(tier, bits, "Div_InPlace", mul_div_iters * N, elapsed);
+    }
+
     // 5. Modulo (c = a % b)
     {
         double elapsed = bench::measure_time_ns([&]() {
@@ -99,6 +134,142 @@ void run_benchmarks_for_tier(
             }
         }, mul_div_iters);
         reporter.add_metric(tier, bits, "Mod", mul_div_iters * N, elapsed);
+    }
+
+    // 5b. Modulo In-Place (a %= b)
+    {
+        double elapsed = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+                a_work[i] %= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+            }
+        }, mul_div_iters);
+        reporter.add_metric(tier, bits, "Mod_InPlace", mul_div_iters * N, elapsed);
+    }
+
+    // 5c. Bitwise AND (c = a & b) & In-Place (a &= b)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+                numeric::bigint c = a_nums[i] & b_nums[i];
+                bench::do_not_optimize(c);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "And", arithmetic_iters * N, elapsed);
+
+        double elapsed_ip = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+                a_work[i] &= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "And_InPlace", arithmetic_iters * N, elapsed_ip);
+    }
+
+    // 5d. Bitwise OR (c = a | b) & In-Place (a |= b)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+                numeric::bigint c = a_nums[i] | b_nums[i];
+                bench::do_not_optimize(c);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Or", arithmetic_iters * N, elapsed);
+
+        double elapsed_ip = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+                a_work[i] |= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Or_InPlace", arithmetic_iters * N, elapsed_ip);
+    }
+
+    // 5e. Bitwise XOR (c = a ^ b) & In-Place (a ^= b)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+                numeric::bigint c = a_nums[i] ^ b_nums[i];
+                bench::do_not_optimize(c);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Xor", arithmetic_iters * N, elapsed);
+
+        double elapsed_ip = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+                a_work[i] ^= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Xor_InPlace", arithmetic_iters * N, elapsed_ip);
+    }
+
+    // 5f. Shift Left (c = a << 17) & In-Place (a <<= 17)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+                numeric::bigint c = a_nums[i] << 17;
+                bench::do_not_optimize(c);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Shl", arithmetic_iters * N, elapsed);
+
+        double elapsed_ip = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+                a_work[i] <<= 17;
+                bench::do_not_optimize(a_work[i]);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Shl_InPlace", arithmetic_iters * N, elapsed_ip);
+    }
+
+    // 5g. Shift Right (c = a >> 17) & In-Place (a >>= 17)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+                numeric::bigint c = a_nums[i] >> 17;
+                bench::do_not_optimize(c);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Shr", arithmetic_iters * N, elapsed);
+
+        double elapsed_ip = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+                a_work[i] >>= 17;
+                bench::do_not_optimize(a_work[i]);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Shr_InPlace", arithmetic_iters * N, elapsed_ip);
+    }
+
+    // 5h. Unary Negation (-a) & Bitwise NOT (~a)
+    {
+        double elapsed_neg = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+                numeric::bigint c = -a_nums[i];
+                bench::do_not_optimize(c);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Neg", arithmetic_iters * N, elapsed_neg);
+
+        double elapsed_not = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+                numeric::bigint c = ~a_nums[i];
+                bench::do_not_optimize(c);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Not", arithmetic_iters * N, elapsed_not);
+    }
+
+    // 5i. Comparison (a < b)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+                bool c = (a_nums[i] < b_nums[i]);
+                bench::do_not_optimize(c);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Cmp", arithmetic_iters * N, elapsed);
     }
 
     // 6. ToString(10)

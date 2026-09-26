@@ -79,6 +79,9 @@ void run_benchmarks_for_tier(
 #endif
     }
 
+    auto a_work = a_nums;
+    auto setup = [&]() { a_work = a_nums; };
+
     // 1. Addition
     {
         double elapsed = bench::measure_time_ns([&]() {
@@ -98,20 +101,18 @@ void run_benchmarks_for_tier(
 
     // 1b. Addition In-Place (Capacity Reuse)
     {
-        mpz_t c;
-        mpz_init(c);
-        double elapsed = bench::measure_time_ns([&]() {
+        double elapsed = bench::measure_inplace_time_ns(setup, [&]() {
             for (size_t i = 0; i < N; ++i) {
 #if USE_GMPXX
-                mpz_add(c, a_nums[i].get_mpz_t(), b_nums[i].get_mpz_t());
+                a_work[i] += b_nums[i];
+                bench::do_not_optimize(a_work[i]);
 #else
-                mpz_add(c, a_nums[i].val, b_nums[i].val);
+                mpz_add(a_work[i].val, a_work[i].val, b_nums[i].val);
+                bench::do_not_optimize(a_work[i].val);
 #endif
-                bench::do_not_optimize(c);
             }
         }, arithmetic_iters);
         reporter.add_metric(tier, bits, "Add_InPlace", arithmetic_iters * N, elapsed);
-        mpz_clear(c);
     }
 
     // 2. Subtraction
@@ -131,6 +132,22 @@ void run_benchmarks_for_tier(
         reporter.add_metric(tier, bits, "Sub", arithmetic_iters * N, elapsed);
     }
 
+    // 2b. Subtraction In-Place
+    {
+        double elapsed = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                a_work[i] -= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+#else
+                mpz_sub(a_work[i].val, a_work[i].val, b_nums[i].val);
+                bench::do_not_optimize(a_work[i].val);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Sub_InPlace", arithmetic_iters * N, elapsed);
+    }
+
     // 3. Multiplication
     {
         double elapsed = bench::measure_time_ns([&]() {
@@ -146,6 +163,22 @@ void run_benchmarks_for_tier(
             }
         }, mul_div_iters);
         reporter.add_metric(tier, bits, "Mul", mul_div_iters * N, elapsed);
+    }
+
+    // 3b. Multiplication In-Place
+    {
+        double elapsed = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                a_work[i] *= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+#else
+                mpz_mul(a_work[i].val, a_work[i].val, b_nums[i].val);
+                bench::do_not_optimize(a_work[i].val);
+#endif
+            }
+        }, mul_div_iters);
+        reporter.add_metric(tier, bits, "Mul_InPlace", mul_div_iters * N, elapsed);
     }
 
     // 4. Division
@@ -165,6 +198,22 @@ void run_benchmarks_for_tier(
         reporter.add_metric(tier, bits, "Div", mul_div_iters * N, elapsed);
     }
 
+    // 4b. Division In-Place
+    {
+        double elapsed = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                a_work[i] /= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+#else
+                mpz_tdiv_q(a_work[i].val, a_work[i].val, b_nums[i].val);
+                bench::do_not_optimize(a_work[i].val);
+#endif
+            }
+        }, mul_div_iters);
+        reporter.add_metric(tier, bits, "Div_InPlace", mul_div_iters * N, elapsed);
+    }
+
     // 5. Modulo
     {
         double elapsed = bench::measure_time_ns([&]() {
@@ -180,6 +229,219 @@ void run_benchmarks_for_tier(
             }
         }, mul_div_iters);
         reporter.add_metric(tier, bits, "Mod", mul_div_iters * N, elapsed);
+    }
+
+    // 5b. Modulo In-Place
+    {
+        double elapsed = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                a_work[i] %= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+#else
+                mpz_tdiv_r(a_work[i].val, a_work[i].val, b_nums[i].val);
+                bench::do_not_optimize(a_work[i].val);
+#endif
+            }
+        }, mul_div_iters);
+        reporter.add_metric(tier, bits, "Mod_InPlace", mul_div_iters * N, elapsed);
+    }
+
+    // 5c. Bitwise AND (c = a & b) & In-Place (a &= b)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                mpz_class c = a_nums[i] & b_nums[i];
+                bench::do_not_optimize(c);
+#else
+                GmpInt c;
+                mpz_and(c.val, a_nums[i].val, b_nums[i].val);
+                bench::do_not_optimize(c.val);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "And", arithmetic_iters * N, elapsed);
+
+        double elapsed_ip = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                a_work[i] &= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+#else
+                mpz_and(a_work[i].val, a_work[i].val, b_nums[i].val);
+                bench::do_not_optimize(a_work[i].val);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "And_InPlace", arithmetic_iters * N, elapsed_ip);
+    }
+
+    // 5d. Bitwise OR (c = a | b) & In-Place (a |= b)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                mpz_class c = a_nums[i] | b_nums[i];
+                bench::do_not_optimize(c);
+#else
+                GmpInt c;
+                mpz_ior(c.val, a_nums[i].val, b_nums[i].val);
+                bench::do_not_optimize(c.val);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Or", arithmetic_iters * N, elapsed);
+
+        double elapsed_ip = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                a_work[i] |= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+#else
+                mpz_ior(a_work[i].val, a_work[i].val, b_nums[i].val);
+                bench::do_not_optimize(a_work[i].val);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Or_InPlace", arithmetic_iters * N, elapsed_ip);
+    }
+
+    // 5e. Bitwise XOR (c = a ^ b) & In-Place (a ^= b)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                mpz_class c = a_nums[i] ^ b_nums[i];
+                bench::do_not_optimize(c);
+#else
+                GmpInt c;
+                mpz_xor(c.val, a_nums[i].val, b_nums[i].val);
+                bench::do_not_optimize(c.val);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Xor", arithmetic_iters * N, elapsed);
+
+        double elapsed_ip = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                a_work[i] ^= b_nums[i];
+                bench::do_not_optimize(a_work[i]);
+#else
+                mpz_xor(a_work[i].val, a_work[i].val, b_nums[i].val);
+                bench::do_not_optimize(a_work[i].val);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Xor_InPlace", arithmetic_iters * N, elapsed_ip);
+    }
+
+    // 5f. Shift Left (c = a << 17) & In-Place (a <<= 17)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                mpz_class c = a_nums[i] << 17;
+                bench::do_not_optimize(c);
+#else
+                GmpInt c;
+                mpz_mul_2exp(c.val, a_nums[i].val, 17);
+                bench::do_not_optimize(c.val);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Shl", arithmetic_iters * N, elapsed);
+
+        double elapsed_ip = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                a_work[i] <<= 17;
+                bench::do_not_optimize(a_work[i]);
+#else
+                mpz_mul_2exp(a_work[i].val, a_work[i].val, 17);
+                bench::do_not_optimize(a_work[i].val);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Shl_InPlace", arithmetic_iters * N, elapsed_ip);
+    }
+
+    // 5g. Shift Right (c = a >> 17) & In-Place (a >>= 17)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                mpz_class c = a_nums[i] >> 17;
+                bench::do_not_optimize(c);
+#else
+                GmpInt c;
+                mpz_tdiv_q_2exp(c.val, a_nums[i].val, 17);
+                bench::do_not_optimize(c.val);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Shr", arithmetic_iters * N, elapsed);
+
+        double elapsed_ip = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                a_work[i] >>= 17;
+                bench::do_not_optimize(a_work[i]);
+#else
+                mpz_tdiv_q_2exp(a_work[i].val, a_work[i].val, 17);
+                bench::do_not_optimize(a_work[i].val);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Shr_InPlace", arithmetic_iters * N, elapsed_ip);
+    }
+
+    // 5h. Unary Negation (-a) & Bitwise NOT (~a)
+    {
+        double elapsed_neg = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                mpz_class c = -a_nums[i];
+                bench::do_not_optimize(c);
+#else
+                GmpInt c;
+                mpz_neg(c.val, a_nums[i].val);
+                bench::do_not_optimize(c.val);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Neg", arithmetic_iters * N, elapsed_neg);
+
+        double elapsed_not = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                mpz_class c = ~a_nums[i];
+                bench::do_not_optimize(c);
+#else
+                GmpInt c;
+                mpz_com(c.val, a_nums[i].val);
+                bench::do_not_optimize(c.val);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Not", arithmetic_iters * N, elapsed_not);
+    }
+
+    // 5i. Comparison (a < b)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                bool c = (a_nums[i] < b_nums[i]);
+                bench::do_not_optimize(c);
+#else
+                bool c = (mpz_cmp(a_nums[i].val, b_nums[i].val) < 0);
+                bench::do_not_optimize(c);
+#endif
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Cmp", arithmetic_iters * N, elapsed);
     }
 
     // 6. ToString(10)

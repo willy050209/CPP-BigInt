@@ -121,7 +121,7 @@ NUMERIC_NODISCARD std::string to_string() const;
 3. **$10^{19}$ 乘法求逆除法 (Reciprocal Multiplication Division)**：
    對於 Radix-10 轉換最頻繁的 64 位元除數 $10^{19}$（最大可容納十進位冪次），預先計算 128 位元定點逆元常數 $v = \lfloor (2^{128} - 1) / 10^{19} \rfloor - 2^{64} = \text{0xd83c94fb6d2ac34a}$。以乘法高位與進位加法完全取代 x86-64 硬體 `_udiv128` 指令，將單 limb 除法延遲由 ~40 週期劇降至 ~6 週期。
 4. **分治進位轉換 (Divide-and-Conquer Radix Conversion)**：
-   當數值大於 16 個 chunks（約 304 位數 / 1010 bits）時，自動切換至二分切分演算法。利用 [`Pow10Cache`](../parsing.md) 快取的二分冪次 $10^{19 \cdot 2^k}$，將大數遞迴切半：$Q, R = \text{div\_qr}(A, 10^{19 \cdot 2^k})$。遞迴深度降為 $O(\log N)$，並結合 **Burnikel-Ziegler 快速分治除法**，使 64K-bit `ToString` 耗時進一步由 `710.23 µs` 降低至 **`433.02 µs`**（**1.64x 加速**），大幅超越 C++ MPIR（`1.08 ms`）。
+   當數值大於 16 個 chunks（約 304 位數 / 1010 bits）時，自動切換至二分切分演算法。利用 [`Pow10Cache`](../parsing.md) 快取的二分冪次 $10^{19 \cdot 2^k}$，將大數遞迴切半：$Q, R = \operatorname{div\_qr}(A, 10^{19 \cdot 2^k})$。遞迴深度降為 $O(\log N)$，並結合 **Burnikel-Ziegler 快速分治除法**，使 64K-bit `ToString` 耗時進一步由 `710.23 µs` 降低至 **`433.02 µs`**（**1.64x 加速**），大幅超越 C++ MPIR（`1.08 ms`）。
 5. **2-Digit LUT 雙位元查表加速**：
    透過靜態內聯的百位查找表（`char_table2`），將數字轉換為兩兩一組的 ASCII 字元（如 `"00"`, `"01"`, ..., `"99"`），將除法與取模指令次數直接減半，並利用 16-bit 記憶體存取就地填入。
 6. **精確長度配置 (Exact Digit Allocation)**：

@@ -38,6 +38,19 @@ def measure_ns(func, iterations, warmup=5):
     end = time.perf_counter_ns()
     return end - start
 
+def measure_inplace_ns(setup_func, op_func, iterations, warmup=5):
+    for _ in range(warmup):
+        setup_func()
+        op_func()
+    total_ns = 0
+    for _ in range(iterations):
+        setup_func()
+        start = time.perf_counter_ns()
+        op_func()
+        end = time.perf_counter_ns()
+        total_ns += (end - start)
+    return total_ns
+
 def run_suite(target_name, use_gmpy, data_dir, out_json):
     print("========================================================================")
     print(f"        Benchmark Target: {target_name}                                 ")
@@ -58,6 +71,11 @@ def run_suite(target_name, use_gmpy, data_dir, out_json):
         else:
             a_nums = [int(p[0]) for p in pairs]
             b_nums = [int(p[1]) for p in pairs]
+
+        a_work = list(a_nums)
+        def setup():
+            nonlocal a_work
+            a_work = list(a_nums)
 
         def record(op, iters, total_ns):
             total_ops = iters * N
@@ -85,11 +103,10 @@ def run_suite(target_name, use_gmpy, data_dir, out_json):
         # 1b. Add In-Place
         def test_add_inplace():
             sink = 0
-            a_copy = list(a_nums)
             for i in range(N):
-                a_copy[i] += b_nums[i]
-                sink += (a_copy[i] > 0)
-        record("Add_InPlace", arith_iters, measure_ns(test_add_inplace, arith_iters))
+                a_work[i] += b_nums[i]
+                sink += (a_work[i] > 0)
+        record("Add_InPlace", arith_iters, measure_inplace_ns(setup, test_add_inplace, arith_iters))
 
         # 2. Sub
         def test_sub():
@@ -99,6 +116,14 @@ def run_suite(target_name, use_gmpy, data_dir, out_json):
                 sink += (c > 0)
         record("Sub", arith_iters, measure_ns(test_sub, arith_iters))
 
+        # 2b. Sub In-Place
+        def test_sub_inplace():
+            sink = 0
+            for i in range(N):
+                a_work[i] -= b_nums[i]
+                sink += (a_work[i] > 0)
+        record("Sub_InPlace", arith_iters, measure_inplace_ns(setup, test_sub_inplace, arith_iters))
+
         # 3. Mul
         def test_mul():
             sink = 0
@@ -106,6 +131,14 @@ def run_suite(target_name, use_gmpy, data_dir, out_json):
                 c = a_nums[i] * b_nums[i]
                 sink += (c > 0)
         record("Mul", mul_div_iters, measure_ns(test_mul, mul_div_iters))
+
+        # 3b. Mul In-Place
+        def test_mul_inplace():
+            sink = 0
+            for i in range(N):
+                a_work[i] *= b_nums[i]
+                sink += (a_work[i] > 0)
+        record("Mul_InPlace", mul_div_iters, measure_inplace_ns(setup, test_mul_inplace, mul_div_iters))
 
         # 4. Div
         def test_div():
@@ -115,6 +148,14 @@ def run_suite(target_name, use_gmpy, data_dir, out_json):
                 sink += (c > 0)
         record("Div", mul_div_iters, measure_ns(test_div, mul_div_iters))
 
+        # 4b. Div In-Place
+        def test_div_inplace():
+            sink = 0
+            for i in range(N):
+                a_work[i] //= b_nums[i]
+                sink += (a_work[i] > 0)
+        record("Div_InPlace", mul_div_iters, measure_inplace_ns(setup, test_div_inplace, mul_div_iters))
+
         # 5. Mod
         def test_mod():
             sink = 0
@@ -122,6 +163,112 @@ def run_suite(target_name, use_gmpy, data_dir, out_json):
                 c = a_nums[i] % b_nums[i]
                 sink += (c > 0)
         record("Mod", mul_div_iters, measure_ns(test_mod, mul_div_iters))
+
+        # 5b. Mod In-Place
+        def test_mod_inplace():
+            sink = 0
+            for i in range(N):
+                a_work[i] %= b_nums[i]
+                sink += (a_work[i] > 0)
+        record("Mod_InPlace", mul_div_iters, measure_inplace_ns(setup, test_mod_inplace, mul_div_iters))
+
+        # 5c. Bitwise AND & In-Place
+        def test_and():
+            sink = 0
+            for i in range(N):
+                c = a_nums[i] & b_nums[i]
+                sink += (c > 0)
+        record("And", arith_iters, measure_ns(test_and, arith_iters))
+
+        def test_and_inplace():
+            sink = 0
+            for i in range(N):
+                a_work[i] &= b_nums[i]
+                sink += (a_work[i] > 0)
+        record("And_InPlace", arith_iters, measure_inplace_ns(setup, test_and_inplace, arith_iters))
+
+        # 5d. Bitwise OR & In-Place
+        def test_or():
+            sink = 0
+            for i in range(N):
+                c = a_nums[i] | b_nums[i]
+                sink += (c > 0)
+        record("Or", arith_iters, measure_ns(test_or, arith_iters))
+
+        def test_or_inplace():
+            sink = 0
+            for i in range(N):
+                a_work[i] |= b_nums[i]
+                sink += (a_work[i] > 0)
+        record("Or_InPlace", arith_iters, measure_inplace_ns(setup, test_or_inplace, arith_iters))
+
+        # 5e. Bitwise XOR & In-Place
+        def test_xor():
+            sink = 0
+            for i in range(N):
+                c = a_nums[i] ^ b_nums[i]
+                sink += (c > 0)
+        record("Xor", arith_iters, measure_ns(test_xor, arith_iters))
+
+        def test_xor_inplace():
+            sink = 0
+            for i in range(N):
+                a_work[i] ^= b_nums[i]
+                sink += (a_work[i] > 0)
+        record("Xor_InPlace", arith_iters, measure_inplace_ns(setup, test_xor_inplace, arith_iters))
+
+        # 5f. Shift Left (17) & In-Place
+        def test_shl():
+            sink = 0
+            for i in range(N):
+                c = a_nums[i] << 17
+                sink += (c > 0)
+        record("Shl", arith_iters, measure_ns(test_shl, arith_iters))
+
+        def test_shl_inplace():
+            sink = 0
+            for i in range(N):
+                a_work[i] <<= 17
+                sink += (a_work[i] > 0)
+        record("Shl_InPlace", arith_iters, measure_inplace_ns(setup, test_shl_inplace, arith_iters))
+
+        # 5g. Shift Right (17) & In-Place
+        def test_shr():
+            sink = 0
+            for i in range(N):
+                c = a_nums[i] >> 17
+                sink += (c > 0)
+        record("Shr", arith_iters, measure_ns(test_shr, arith_iters))
+
+        def test_shr_inplace():
+            sink = 0
+            for i in range(N):
+                a_work[i] >>= 17
+                sink += (a_work[i] > 0)
+        record("Shr_InPlace", arith_iters, measure_inplace_ns(setup, test_shr_inplace, arith_iters))
+
+        # 5h. Neg & Not
+        def test_neg():
+            sink = 0
+            for i in range(N):
+                c = -a_nums[i]
+                sink += (c > 0)
+        record("Neg", arith_iters, measure_ns(test_neg, arith_iters))
+
+        def test_not():
+            sink = 0
+            for i in range(N):
+                c = ~a_nums[i]
+                sink += (c > 0)
+        record("Not", arith_iters, measure_ns(test_not, arith_iters))
+
+        # 5i. Cmp
+        def test_cmp():
+            sink = 0
+            for i in range(N):
+                c = (a_nums[i] < b_nums[i])
+                sink += (1 if c else 0)
+        record("Cmp", arith_iters, measure_ns(test_cmp, arith_iters))
 
         # 6. ToString_10
         def test_to_str():

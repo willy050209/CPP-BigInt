@@ -164,6 +164,34 @@ inline double measure_time_ns(Func&& f, size_t iterations, size_t warmup = 3, si
     return sample_ns[samples / 2]; // Return median sample
 }
 
+template <typename SetupFunc, typename OpFunc>
+inline double measure_inplace_time_ns(SetupFunc&& setup, OpFunc&& op, size_t iterations, size_t warmup = 3, size_t samples = 7) {
+    for (size_t i = 0; i < warmup; ++i) {
+        setup();
+        op();
+    }
+    clobber_memory();
+
+    std::vector<double> sample_ns;
+    sample_ns.reserve(samples);
+    for (size_t s = 0; s < samples; ++s) {
+        double total_ns = 0.0;
+        for (size_t i = 0; i < iterations; ++i) {
+            setup();
+            clobber_memory();
+            auto start = std::chrono::high_resolution_clock::now();
+            op();
+            auto end = std::chrono::high_resolution_clock::now();
+            total_ns += static_cast<double>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count()
+            );
+        }
+        sample_ns.push_back(total_ns);
+    }
+    std::sort(sample_ns.begin(), sample_ns.end());
+    return sample_ns[samples / 2]; // Return median sample
+}
+
 inline double measure_malloc_free_ns(size_t bytes, size_t iters) {
     return measure_time_ns([bytes]() {
         void* p = std::malloc(bytes);

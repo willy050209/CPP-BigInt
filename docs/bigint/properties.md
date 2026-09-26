@@ -36,7 +36,7 @@ NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_small() const noexcept;
 
 #### 傳回值
 - `bool`
-  - 若數值在 SBO 容量以內（有效 limbs 數量 $\le \text{NUMERIC\_BIGINT\_SBO\_LIMBS}$，預設 4 limbs / 256 位元），使用內建靜態緩衝區，回傳 `true`。
+  - 若數值在 SBO 容量以內（有效 limbs 數量 $\le$ `NUMERIC_BIGINT_SBO_LIMBS`，預設 4 limbs / 256 位元），使用內建靜態緩衝區，回傳 `true`。
   - 若數值超出 SBO 容量，內部使用 Heap 動態記憶體分配，回傳 `false`。
 
 #### 備註

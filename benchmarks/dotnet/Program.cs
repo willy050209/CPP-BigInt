@@ -91,6 +91,26 @@ class Program
         return elapsedSeconds * 1e9;
     }
 
+    static double MeasureInPlaceNs(Action setup, Action action, int iterations, int warmup = 5)
+    {
+        for (int i = 0; i < warmup; ++i)
+        {
+            setup();
+            action();
+        }
+        long totalTicks = 0;
+        for (int i = 0; i < iterations; ++i)
+        {
+            setup();
+            long start = Stopwatch.GetTimestamp();
+            action();
+            long end = Stopwatch.GetTimestamp();
+            totalTicks += (end - start);
+        }
+        double elapsedSeconds = (double)totalTicks / Stopwatch.Frequency;
+        return elapsedSeconds * 1e9;
+    }
+
     static void RunTier(
         BenchmarkResult report,
         string dataDir,
@@ -114,6 +134,9 @@ class Program
             aNums[i] = BigInteger.Parse(pairs[i].ADec, CultureInfo.InvariantCulture);
             bNums[i] = BigInteger.Parse(pairs[i].BDec, CultureInfo.InvariantCulture);
         }
+
+        var aWork = (BigInteger[])aNums.Clone();
+        Action setup = () => Array.Copy(aNums, aWork, N);
 
         void AddMetric(string op, int iters, double totalNs, string layer = "layer2_user")
         {
@@ -149,16 +172,15 @@ class Program
             AddMetric("Add", arithIters, ns);
         }
 
-        // 1b. Add In-Place (a += b) - Illustrating immutable struct allocation
+        // 1b. Add In-Place (a += b)
         {
-            var aCopy = (BigInteger[])aNums.Clone();
             int sink = 0;
-            double ns = MeasureNs(() =>
+            double ns = MeasureInPlaceNs(setup, () =>
             {
                 for (int i = 0; i < N; i++)
                 {
-                    aCopy[i] += bNums[i];
-                    sink += aCopy[i].Sign;
+                    aWork[i] += bNums[i];
+                    sink += aWork[i].Sign;
                 }
             }, arithIters);
             s_sink = sink;
@@ -180,6 +202,21 @@ class Program
             AddMetric("Sub", arithIters, ns);
         }
 
+        // 2b. Sub In-Place (a -= b)
+        {
+            int sink = 0;
+            double ns = MeasureInPlaceNs(setup, () =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    aWork[i] -= bNums[i];
+                    sink += aWork[i].Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("Sub_InPlace", arithIters, ns);
+        }
+
         // 3. Mul (c = a * b)
         {
             int sink = 0;
@@ -193,6 +230,21 @@ class Program
             }, mulDivIters);
             s_sink = sink;
             AddMetric("Mul", mulDivIters, ns);
+        }
+
+        // 3b. Mul In-Place (a *= b)
+        {
+            int sink = 0;
+            double ns = MeasureInPlaceNs(setup, () =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    aWork[i] *= bNums[i];
+                    sink += aWork[i].Sign;
+                }
+            }, mulDivIters);
+            s_sink = sink;
+            AddMetric("Mul_InPlace", mulDivIters, ns);
         }
 
         // 4. Div (c = a / b)
@@ -210,6 +262,21 @@ class Program
             AddMetric("Div", mulDivIters, ns);
         }
 
+        // 4b. Div In-Place (a /= b)
+        {
+            int sink = 0;
+            double ns = MeasureInPlaceNs(setup, () =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    aWork[i] /= bNums[i];
+                    sink += aWork[i].Sign;
+                }
+            }, mulDivIters);
+            s_sink = sink;
+            AddMetric("Div_InPlace", mulDivIters, ns);
+        }
+
         // 5. Mod (c = a % b)
         {
             int sink = 0;
@@ -223,6 +290,192 @@ class Program
             }, mulDivIters);
             s_sink = sink;
             AddMetric("Mod", mulDivIters, ns);
+        }
+
+        // 5b. Mod In-Place (a %= b)
+        {
+            int sink = 0;
+            double ns = MeasureInPlaceNs(setup, () =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    aWork[i] %= bNums[i];
+                    sink += aWork[i].Sign;
+                }
+            }, mulDivIters);
+            s_sink = sink;
+            AddMetric("Mod_InPlace", mulDivIters, ns);
+        }
+
+        // 5c. Bitwise AND (c = a & b) & In-Place (a &= b)
+        {
+            int sink = 0;
+            double ns = MeasureNs(() =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    BigInteger c = aNums[i] & bNums[i];
+                    sink += c.Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("And", arithIters, ns);
+
+            double nsIp = MeasureInPlaceNs(setup, () =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    aWork[i] &= bNums[i];
+                    sink += aWork[i].Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("And_InPlace", arithIters, nsIp);
+        }
+
+        // 5d. Bitwise OR (c = a | b) & In-Place (a |= b)
+        {
+            int sink = 0;
+            double ns = MeasureNs(() =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    BigInteger c = aNums[i] | bNums[i];
+                    sink += c.Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("Or", arithIters, ns);
+
+            double nsIp = MeasureInPlaceNs(setup, () =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    aWork[i] |= bNums[i];
+                    sink += aWork[i].Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("Or_InPlace", arithIters, nsIp);
+        }
+
+        // 5e. Bitwise XOR (c = a ^ b) & In-Place (a ^= b)
+        {
+            int sink = 0;
+            double ns = MeasureNs(() =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    BigInteger c = aNums[i] ^ bNums[i];
+                    sink += c.Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("Xor", arithIters, ns);
+
+            double nsIp = MeasureInPlaceNs(setup, () =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    aWork[i] ^= bNums[i];
+                    sink += aWork[i].Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("Xor_InPlace", arithIters, nsIp);
+        }
+
+        // 5f. Shift Left (c = a << 17) & In-Place (a <<= 17)
+        {
+            int sink = 0;
+            double ns = MeasureNs(() =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    BigInteger c = aNums[i] << 17;
+                    sink += c.Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("Shl", arithIters, ns);
+
+            double nsIp = MeasureInPlaceNs(setup, () =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    aWork[i] <<= 17;
+                    sink += aWork[i].Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("Shl_InPlace", arithIters, nsIp);
+        }
+
+        // 5g. Shift Right (c = a >> 17) & In-Place (a >>= 17)
+        {
+            int sink = 0;
+            double ns = MeasureNs(() =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    BigInteger c = aNums[i] >> 17;
+                    sink += c.Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("Shr", arithIters, ns);
+
+            double nsIp = MeasureInPlaceNs(setup, () =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    aWork[i] >>= 17;
+                    sink += aWork[i].Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("Shr_InPlace", arithIters, nsIp);
+        }
+
+        // 5h. Unary Negation (-a) & Bitwise NOT (~a)
+        {
+            int sink = 0;
+            double nsNeg = MeasureNs(() =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    BigInteger c = -aNums[i];
+                    sink += c.Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("Neg", arithIters, nsNeg);
+
+            double nsNot = MeasureNs(() =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    BigInteger c = ~aNums[i];
+                    sink += c.Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("Not", arithIters, nsNot);
+        }
+
+        // 5i. Comparison (a < b)
+        {
+            int sink = 0;
+            double ns = MeasureNs(() =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    bool c = (aNums[i] < bNums[i]);
+                    sink += c ? 1 : 0;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("Cmp", arithIters, ns);
         }
 
         // 6. ToString_10

@@ -92,14 +92,14 @@ NUMERIC_CONSTEXPR_20 bigint& operator%=(const bigint& rhs);
   - **早期終止機制 (Early-exit Propagation)**：當殘留進位/借位歸零且較短運算元已耗盡時，立即退出運算迴圈並執行批次記憶體拷貝，大幅縮短不對稱位元加減時間。
   - **自我別名安全 (Self-Aliasing Safety)**：底層演算法（如 `BigIntCore::add_signed`、`BigIntCore::sub_signed`）全面通過別名防護檢測，即使運算元位址重疊（例如 `a += a`），亦能保證計算正確性。
 - **乘法 (三層階梯式演算法架構)**：
-  - **第 1 階：Schoolbook 乘法 ($N \le 16$ limbs / 1024 bits, $O(N^2)$)**：小規模乘法採用高度內聯與向量化之學校乘法。當運算元長度總和 $\le \text{SBO}$ 容量時（例如 128-bit $\times$ 128-bit），直接在棧上 SBO 緩衝區就地計算，**達成 0 次 Heap 分配與 ~12 ns 延遲**。
+  - **第 1 階：Schoolbook 乘法 ($N \le 16$ limbs / 1024 bits, $O(N^2)$)**：小規模乘法採用高度內聯與向量化之學校乘法。當運算元長度總和 $\le$ SBO 容量時（例如 128 位元 $\times$ 128 位元），直接在棧上 SBO 緩衝區就地計算，**達成 0 次 Heap 分配與 ~12 ns 延遲**。
   - **第 2 階：Karatsuba 分治乘法 ($16 < N \le 64$ limbs / 1024 ~ 4096 bits, $O(N^{\log_2 3}) \approx O(N^{1.585})$)**：中型整數自動啟用 Karatsuba 乘法，透過 $(A_1 + A_0)(B_1 + B_0)$ 將 4 次子乘法縮減為 3 次。
   - **第 3 階：Toom-Cook 3 (Toom-3) 分治乘法 ($N > 64$ limbs / > 4096 bits, $O(N^{\log_3 5}) \approx O(N^{1.465})$)**：針對 4,096 位元以上的大型數值，將運算元分割為 3 項多項式，於 $0, 1, -1, -2, \infty$ 五個點進行插值求值與高精度矩陣逆轉換，運算複雜度由 $N^{1.585}$ 進一步壓低至 $N^{1.465}$。
   - **Thread-Local 刮痕池 (`ScratchArena`)**：Karatsuba 與 Toom-3 的多層遞迴臨時緩衝區由線程局部無鎖的 RAII `ScratchArena` 管理，整個乘法運算生命週期內達成 **0 次 Heap 動態分配與釋放**。
 - **除法與取模**：
   - **雙階派發架構 (Two-Tier Division Architecture)**：
     - **中小型運算元 ($< 128$ limbs / 8,192 bits)**：採用改良版 **Knuth Algorithm D** 規格化長除法。對於 16,384 位元以內的運算元，正規化工作陣列完全配置於棧上（`stack_scratch[512]`），達成 0 次 Heap 動態配置。
-    - **大型運算元 ($\ge 128$ limbs / 8,192 bits)**：自動切換至 **Burnikel-Ziegler $D_{2n, n}$ / $D_{3n, 2n}$ 分治除法**。透過將除數與被除數依據動態區塊長度 $n$ 與補位 $\sigma = n_{bits} - v_{bits}$ 進行高位區塊正規化，並遞迴調用快速長乘法，將長除法複雜度由傳統 $O(N^2)$ 降低至 **$O(M(N) \log N)$**。64K-bit 除法速度達到 **2.59x 加速**（延遲由 306.45 $\mu$s 降低至 **118.22 $\mu$s**）。
+    - **大型運算元 ($\ge 128$ limbs / 8,192 bits)**：自動切換至 **Burnikel-Ziegler $D_{2n, n}$ / $D_{3n, 2n}$ 分治除法**。透過將除數與被除數依據動態區塊長度 $n$ 與補位 $\sigma = n_{\text{bits}} - v_{\text{bits}}$ 進行高位區塊正規化，並遞迴調用快速長乘法，將長除法複雜度由傳統 $O(N^2)$ 降低至 **$O(M(N) \log N)$**。64K-bit 除法速度達到 **2.59x 加速**（延遲由 306.45 µs 降低至 **118.22 µs**）。
   - **商餘獨立求值 (Decoupled Quotient/Remainder)**：內部介面解耦為 `div_q_signed`、`div_r_signed` 與 `div_qr_signed`。當執行除法（`a / b` 或 `a /= b`）時，完全不配置亦不處理餘數陣列；當執行取模（`a % b` 或 `a %= b`）時，完全跳過商數陣列之填充與正規化，大幅節省記憶體頻寬。
 
 #### 例外狀況

@@ -2,6 +2,7 @@
 #include <iostream>
 
 void run_test_bigint();
+void run_test_operators();
 void run_test_bitset();
 void run_test_constexpr();
 void run_test_bz_division();
@@ -13,6 +14,7 @@ int main() {
     std::cout << "========================================" << std::endl;
 
     run_test_bigint();
+    run_test_operators();
     run_test_bitset();
     run_test_constexpr();
     run_test_bz_division();

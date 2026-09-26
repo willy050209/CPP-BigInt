@@ -273,7 +273,21 @@ def generate_layered_markdown_report():
             report.append("| " + " | ".join(header) + " |")
             report.append("| " + " | ".join(["---"] * len(header)) + " |")
 
-            ops = ["Add", "Add_InPlace", "Sub", "Mul", "Div", "Mod", "ToString_10", "FromString_10", "MemPressure", "Chained_Expr"]
+            ops = [
+                "Add", "Add_InPlace",
+                "Sub", "Sub_InPlace",
+                "Mul", "Mul_InPlace",
+                "Div", "Div_InPlace",
+                "Mod", "Mod_InPlace",
+                "And", "And_InPlace",
+                "Or", "Or_InPlace",
+                "Xor", "Xor_InPlace",
+                "Shl", "Shl_InPlace",
+                "Shr", "Shr_InPlace",
+                "Neg", "Not", "Cmp",
+                "ToString_10", "FromString_10",
+                "MemPressure", "Chained_Expr"
+            ]
             for op in ops:
                 cpp_v = None
                 gmp_v = None
@@ -323,8 +337,8 @@ def generate_layered_markdown_report():
     report.append("> 3. **不可變結構體代價 (Immutability Overhead)**：.NET `readonly struct` 無法容量重用所產生的 GC 壓力。\n\n")
 
     report.append("### 3.1 基礎記憶體配置底噪 (Allocator Noise Floor)\n")
-    report.append("| 位元組大小 (Bytes) | 對應 BigInt 位元 | `malloc()` + `free()` (ns/op) | `new uint64_t[]` + `delete[]` (ns/op) | CPP-BigInt SBO (ns/op) |\n")
-    report.append("| :--- | :--- | :--- | :--- | :--- |\n")
+    report.append("| 位元組大小 (Bytes) | 對應 BigInt 位元 | `malloc()` + `free()` (ns/op) | `new uint64_t[]` + `delete[]` (ns/op) | CPP-BigInt SBO (ns/op) |")
+    report.append("| :--- | :--- | :--- | :--- | :--- |")
 
     l3_data = data.get("layer3_overhead", {}).get("overhead", {})
     for bits in sorted(l3_data.keys()):
@@ -338,8 +352,8 @@ def generate_layered_markdown_report():
 
     report.append("### 3.2 SBO 邊界斷崖分析 (The SBO Boundary Cliff: 128 ~ 512 bits)\n")
     report.append("檢驗當數字從 256 位元跨越至 384/512 位元時，因觸發動態堆積配置產生的效能階躍：\n\n")
-    report.append("| 位元寬度 (Bits) | Limbs | 儲存層模式 | `c = a + b` (Fresh) (ns) | `a += b` (InPlace) (ns) | 堆積配置差值 $\\Delta$ (ns) |\n")
-    report.append("| :--- | :--- | :--- | :--- | :--- | :--- |\n")
+    report.append("| 位元寬度 (Bits) | Limbs | 儲存層模式 | `c = a + b` (Fresh) (ns) | `a += b` (InPlace) (ns) | 堆積配置差值 $\\Delta$ (ns) |")
+    report.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
 
     cliff_data = data.get("layer3_overhead", {}).get("cliff", {})
     for bits in sorted(cliff_data.keys()):
@@ -352,19 +366,19 @@ def generate_layered_markdown_report():
 
     report.append("\n### 3.3 Limb 內部表示寬度分析：64-bit vs 32-bit (.NET)\n")
     report.append(".NET `BigInteger` 內部採用 32-bit `uint[] _bits`，而 `CPP-BigInt` 與 GMP 採用 64-bit `uint64_t`。這對高精度演算法產生了結構性影響：\n\n")
-    report.append("| 位元大小 (Bits) | CPP-BigInt 肢數 ($N_{64}$) | .NET 10 肢數 ($N_{32}$) | $O(N^2)$ 乘法肢段乘運算次數比值 ($N_{32}^2 / N_{64}^2$) | 理論算術運算量差距 |\n")
-    report.append("| :--- | :--- | :--- | :--- | :--- |\n")
-    report.append("| **64** | 1 | 2 | $4 / 1 =$ **4.0x** | 4 倍 |\n")
-    report.append("| **128** | 2 | 4 | $16 / 4 =$ **4.0x** | 4 倍 |\n")
-    report.append("| **256** | 4 | 8 | $64 / 16 =$ **4.0x** | 4 倍 |\n")
-    report.append("| **1024** | 16 | 32 | $1024 / 256 =$ **4.0x** | 4 倍 |\n")
-    report.append("| **4096** | 64 | 128 | $16384 / 4096 =$ **4.0x** | 4 倍 |\n")
+    report.append("| 位元大小 (Bits) | CPP-BigInt 肢數 ($N_{64}$) | .NET 10 肢數 ($N_{32}$) | $O(N^2)$ 乘法肢段乘運算次數比值 ($N_{32}^2 / N_{64}^2$) | 理論算術運算量差距 |")
+    report.append("| :--- | :--- | :--- | :--- | :--- |")
+    report.append("| **64** | 1 | 2 | $4 / 1 =$ **4.0x** | 4 倍 |")
+    report.append("| **128** | 2 | 4 | $16 / 4 =$ **4.0x** | 4 倍 |")
+    report.append("| **256** | 4 | 8 | $64 / 16 =$ **4.0x** | 4 倍 |")
+    report.append("| **1024** | 16 | 32 | $1024 / 256 =$ **4.0x** | 4 倍 |")
+    report.append("| **4096** | 64 | 128 | $16384 / 4096 =$ **4.0x** | 4 倍 |")
     report.append("\n> **結論**：即便使用相同的 Schoolbook 乘法演算法，32 位元 Limb 架構天生就需要執行 **4 倍次數** 的肢段乘加運算與進位傳遞；加上 .NET 為 `readonly struct` 不可變設計，任何運算皆必須配置新託管陣列，這是 .NET 延遲落後 C++ 的根本內部表示原因。\n\n")
 
     report.append("### 3.4 .NET JIT vs Native AOT 運行時對比\n")
     report.append("對比 .NET 10 在 RyuJIT (Tiered PGO) 與 Native AOT 原生機器碼下的真實表現：\n\n")
-    report.append("| 測試項目 | 位元大小 | .NET 10 (JIT) (ns/op) | .NET 10 (Native AOT) (ns/op) | AOT vs JIT 加速比 | 觀察結論 |\n")
-    report.append("| :--- | :--- | :--- | :--- | :--- | :--- |\n")
+    report.append("| 測試項目 | 位元大小 | .NET 10 (JIT) (ns/op) | .NET 10 (Native AOT) (ns/op) | AOT vs JIT 加速比 | 觀察結論 |")
+    report.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
 
     for bits in [64, 256, 1024, 4096, 65536]:
         for op in ["Add", "Mul", "ToString_10"]:
@@ -394,8 +408,8 @@ def generate_layered_markdown_report():
 
     report.append("### 4.1 乘法門檻交叉點：Schoolbook vs Karatsuba\n")
     report.append("實測 `CPP-BigInt` 在不同 Limb 規模下強制使用 Schoolbook vs Karatsuba 的延遲：\n\n")
-    report.append("| Limb 數量 | 對應位元 (Bits) | Schoolbook $O(N^2)$ (ns) | Karatsuba $O(N^{1.585})$ (ns) | 領先演算法 | 交叉點判定 |\n")
-    report.append("| :--- | :--- | :--- | :--- | :--- | :--- |\n")
+    report.append("| Limb 數量 | 對應位元 (Bits) | Schoolbook $O(N^2)$ (ns) | Karatsuba $O(N^{1.585})$ (ns) | 領先演算法 | 交叉點判定 |")
+    report.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
 
     cross_data = data.get("layer4_scaling", {}).get("crossover", {})
     for bits in sorted(cross_data.keys()):
@@ -410,8 +424,8 @@ def generate_layered_markdown_report():
 
     report.append("\n### 4.2 除法門檻交叉點：Knuth Algorithm D vs Burnikel-Ziegler\n")
     report.append("實測長除法在不同被除數規模下 Knuth D vs Burnikel-Ziegler 分治除法的延遲：\n\n")
-    report.append("| 除數 Limb 數 | 對應位元 (Bits) | Knuth Algorithm D (ns) | Burnikel-Ziegler (ns) | 領先演算法 | 交叉點判定 |\n")
-    report.append("| :--- | :--- | :--- | :--- | :--- | :--- |\n")
+    report.append("| 除數 Limb 數 | 對應位元 (Bits) | Knuth Algorithm D (ns) | Burnikel-Ziegler (ns) | 領先演算法 | 交叉點判定 |")
+    report.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
 
     for bits in sorted(cross_data.keys()):
         v_limbs = bits // 64
@@ -425,12 +439,12 @@ def generate_layered_markdown_report():
 
     report.append("\n### 4.3 密集位元縮放掃描與經驗漸近斜率擬合 ($T \\sim N^k$)\n")
     report.append("透過 64 至 65,536 位元共 18 個密集階梯點，擬合 $\\log(\\text{Latency}) = k \\log(\\text{Bits}) + c$，測得各庫在各區間的實際經驗複雜度指數 $k$：\n\n")
-    report.append("| 位元區間 (Bit Range) | 理論演算法預期 | CPP-BigInt 經驗斜率 $k$ | 說明與邊界效益 |\n")
-    report.append("| :--- | :--- | :--- | :--- |\n")
-    report.append("| **64 ~ 256 bits** (SBO) | $O(1) \\sim O(N)$ | **$k \\approx 0.45$** | SBO 棧上陣列，延遲被暫存器與呼叫開銷主導，幾乎無規模懲罰 |\n")
-    report.append("| **512 ~ 1024 bits** | $O(N^2)$ (Schoolbook) | **$k \\approx 1.95$** | 二次方乘法占主導地位 |\n")
-    report.append("| **2048 ~ 8192 bits** | $O(N^{1.585})$ (Karatsuba) | **$k \\approx 1.62$** | Karatsuba 遞迴分治生效，斜率明顯平緩 |\n")
-    report.append("| **16384 ~ 65536 bits** | Toom-3 & Burnikel-Ziegler | **$k \\approx 1.48$** | BZ 除法與大數分治使斜率降至 1.5 以下，大幅拉開與二次方實作的差距 |\n")
+    report.append("| 位元區間 (Bit Range) | 理論演算法預期 | CPP-BigInt 經驗斜率 $k$ | 說明與邊界效益 |")
+    report.append("| :--- | :--- | :--- | :--- |")
+    report.append("| **64 ~ 256 bits** (SBO) | $O(1) \\sim O(N)$ | **$k \\approx 0.45$** | SBO 棧上陣列，延遲被暫存器與呼叫開銷主導，幾乎無規模懲罰 |")
+    report.append("| **512 ~ 1024 bits** | $O(N^2)$ (Schoolbook) | **$k \\approx 1.95$** | 二次方乘法占主導地位 |")
+    report.append("| **2048 ~ 8192 bits** | $O(N^{1.585})$ (Karatsuba) | **$k \\approx 1.62$** | Karatsuba 遞迴分治生效，斜率明顯平緩 |")
+    report.append("| **16384 ~ 65536 bits** | Toom-3 & Burnikel-Ziegler | **$k \\approx 1.48$** | BZ 除法與大數分治使斜率降至 1.5 以下，大幅拉開與二次方實作的差距 |")
 
     report.append("\n---\n")
     report.append("## 總結 (Executive Takeaway)\n")

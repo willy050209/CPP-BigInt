@@ -123,7 +123,7 @@ namespace std {
   回傳整數立方根 $r$。
 
 #### 備註
-- `icbrt` 具備**奇函數性質**：對於負數 $x < 0$，滿足 $\text{icbrt}(x) = -\text{icbrt}(-x)$，**不會拋出例外**。
+- `icbrt` 具備**奇函數性質**：對於負數 $x < 0$，滿足 $\operatorname{icbrt}(x) = -\operatorname{icbrt}(-x)$，**不會拋出例外**。
 - 同樣基於牛頓法整數立方根迭代演算。
 
 #### 範例
@@ -163,7 +163,7 @@ namespace std {
   若指數為負數（`exp < 0`），且底數不是 `1` 或 `-1` 時拋出（因為整數運算不支援小數分數結果）。
 
 #### 備註
-採用二進位**快速冪演算法 (Exponentiation by Squaring)**，在 $O(\log(\text{exp}))$ 次乘法內完成計算。
+採用二進位**快速冪演算法 (Exponentiation by Squaring)**，在 $O(\log \text{exp})$ 次乘法內完成計算。
 
 #### 範例
 ```cpp
@@ -203,7 +203,7 @@ namespace std {
 
 #### 演算法備註
 - `gcd` 採用輾轉相除法（Euclidean Algorithm）。
-- `lcm` 採用防溢位運算次序：先除後乘 $\text{lcm}(a, b) = (|a| / \gcd(a, b)) \times |b|$。
+- `lcm` 採用防溢位運算次序：先除後乘 $\operatorname{lcm}(a, b) = (|a| / \gcd(a, b)) \times |b|$。
 
 #### 範例
 ```cpp
