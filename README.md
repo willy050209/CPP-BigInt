@@ -15,15 +15,15 @@
 - **高效數值運算法與硬體原語加速**：
   - **對稱加減法 (~5 ns)**：直接編譯為硬體進位/借位指令（MSVC `_addcarry_u64` / `_subborrow_u64`，GCC/Clang `__builtin_addcll` / `__builtin_subcll`），配合 SBO 4-limb 完全無分支展開快速路徑（`add_unsigned_sbo4` / `sub_unsigned_sbo4`），於暫存器內以單週期管線執行；雙目運算子採 Direct-Result 零深拷貝與 Move-Reuse 機制。
   - **三層階梯式乘法**：
-    1. 小整數（$N \le 16$ limbs / 1024 bits）：高度展開與向量化之 **Schoolbook 乘法**（當長度總和 $\le \text{SBO}$ 容量時，使用純棧上 SBO 緩衝區，0 Heap 配置，~12 ns）。
+    1. 小整數（$N \le 16$ limbs / 1024 bits）：高度展開與向量化之 **Schoolbook 乘法**（當長度總和 $\le$ SBO 容量時，使用純棧上 SBO 緩衝區，0 Heap 配置，~12 ns）。
     2. 中整數（$16 < N \le 64$ limbs / 1024 ~ 4096 bits）：**Karatsuba 分治演算法** ($O(N^{1.585})$)。
     3. 大整數（$N > 64$ limbs / > 4096 bits）：**Toom-Cook 3 (Toom-3) 分治演算法** ($O(N^{1.465})$)。
     - 遞迴運算由線程局部無鎖 RAII `ScratchArena` 管理，深度內達成 0 次 Heap 動態配置。
-  - **除法與取模**：**雙階派發體系**，小於 128 limbs（8,192 位元）採用改良版 Knuth Algorithm D（棧上 512-limb 工作緩衝區，0 Heap 配置）；大於等於 128 limbs 自動啟用 **Burnikel-Ziegler $D_{2n,n} / D_{3n,2n}$ 分治除法** ($O(M(N)\log N)$)，64K 位元除法加速達 **2.59x**。
+  - **除法與取模**：**雙階派發體系**，小於 128 limbs（8,192 位元）採用改良版 Knuth Algorithm D（棧上 512-limb 工作緩衝區，0 Heap 配置）；大於等於 128 limbs 自動啟用 **Burnikel-Ziegler $D_{2n,n} / D_{3n,2n}$ 分治除法** ($O(M(N) \log N)$)，64K 位元除法加速達 **2.59x**。
 - **極致字串序列化與解析 (0-Heap & 分治轉換)**：
   - **十進位格式化**：
     - 單肢極速路徑（$N = 1$）：結合 `digits10_u64` 二分搜尋常數求長度、32 位元倒數除法 chunking 與 2-Digit LUT 雙字元寫入，延遲僅 **~36.1 ns**，超越 .NET 10 Native AOT（~62.4 ns）。
-    - 中小數值（$\le 1024$ 位元）：直接棧上 512-byte 逆向格式化 + 2-Digit LUT，0 初步 Heap 配置。
+    - 中小數值（$\le$ 1024 位元）：直接棧上 512-byte 逆向格式化 + 2-Digit LUT，0 初步 Heap 配置。
     - 超大數值（$> 1024$ 位元）：採用 $10^{19}$ 乘法求逆與分治冪次切分，64K-bit 序列化僅需 **0.42 ms**（領先 MPIR 2.49x、.NET 10 AOT 8.4x）。
   - **十進位解析**：採用 19-digit 區塊 Horner 累積與二分樹狀平衡折疊（`Pow10Cache` 快取），兼顧中小字串零配置與超大數極速解析。
 - **豐富的運算子支援**：

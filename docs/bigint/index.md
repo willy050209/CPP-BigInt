@@ -29,10 +29,10 @@ namespace numeric {
   - 物件大小為精準 64 位元組，完美契合單一 L1 快取行（Cache Line），運算延遲達到暫存器級別（加減法 ~5 ns、乘法 ~12 ns）。
 - **三層乘法架構與無鎖暫存池 (`ScratchArena`)**：
   - **三層分治乘法**：
-    - 小型乘法（$\le 16$ limbs / 1024 位元）：高度向量化與展開之 **Schoolbook 乘法**（且當兩運算元長度總和 $\le \text{SBO}$ 容量時，使用純棧上暫存完成，0 Heap 配置）。
+    - 小型乘法（$\le 16$ limbs / 1024 位元）：高度向量化與展開之 **Schoolbook 乘法**（且當兩運算元長度總和 $\le$ SBO 容量時，使用純棧上暫存完成，0 Heap 配置）。
     - 中型乘法（$16 < N \le 64$ limbs / 1024 ~ 4096 位元）：**Karatsuba 分治演算法** ($O(N^{1.585})$)。
     - 大型乘法（$N > 64$ limbs / > 4096 位元）：**Toom-Cook 3 (Toom-3) 演算法** ($O(N^{1.465})$)。
-  - **雙階除法派發**：中小型整數（$< 128$ limbs）採用 **Knuth Algorithm D**；大型整數（$\ge 128$ limbs / 8,192 bits）自動分派至 **Burnikel-Ziegler $D_{2n,n} / D_{3n,2n}$** 分治演算法 ($O(M(N)\log N)$)。
+  - **雙階除法派發**：中小型整數（$< 128$ limbs）採用 **Knuth Algorithm D**；大型整數（$\ge 128$ limbs / 8,192 bits）自動分派至 **Burnikel-Ziegler $D_{2n,n} / D_{3n,2n}$** 分治演算法 ($O(M(N) \log N)$)。
   - **Thread-Local ScratchArena**：大數運算遞迴深度內達成 **0 次 Heap 動態配置**。
 - **Direct-Result 與 Move-Reuse 零拷貝運算子**：二元運算子提供 4-overload 矩陣，常數參考直接建構結果，右值運算元就地重用緩衝區。
 - **無縫整數混算**：支援與所有 C++ 原生整數型態（`int8_t` ~ `int64_t`、`uint8_t` ~ `uint64_t`、`long`、`char` 等）無縫進行混合四則運算、位元運算與比較。

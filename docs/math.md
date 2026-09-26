@@ -84,7 +84,9 @@ namespace std {
 
 #### 演算法備註
 採用位元長度初值猜測搭配 **Newton-Raphson（牛頓切線法）** 整數迭代：
+
 $$x_{k+1} = \left\lfloor \frac{x_k + \lfloor x / x_k \rfloor}{2} \right\rfloor$$
+
 迭代過程具二次收斂速度（Quadratic Convergence），能迅速在幾次迴圈內求得數百位整數的精準平方根。
 
 #### 範例
@@ -163,7 +165,7 @@ namespace std {
   若指數為負數（`exp < 0`），且底數不是 `1` 或 `-1` 時拋出（因為整數運算不支援小數分數結果）。
 
 #### 備註
-採用二進位**快速冪演算法 (Exponentiation by Squaring)**，在 $O(\log \text{exp})$ 次乘法內完成計算。
+採用二進位**快速冪演算法 (Exponentiation by Squaring)**，在 $O(\log(\text{exp}))$ 次乘法內完成計算。
 
 #### 範例
 ```cpp
