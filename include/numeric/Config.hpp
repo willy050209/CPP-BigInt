@@ -19,6 +19,13 @@
 #define NUMERIC_CXX_20 202002L
 #define NUMERIC_CXX_23 202302L
 
+// Small Buffer Optimization (SBO) Limb Capacity
+// Default: 4 limbs (256-bit), total sizeof(bigint) == 64 bytes (1 L1 cache line).
+// Users can define NUMERIC_BIGINT_SBO_LIMBS=8 (512-bit) for zero-allocation cryptography workloads.
+#ifndef NUMERIC_BIGINT_SBO_LIMBS
+#  define NUMERIC_BIGINT_SBO_LIMBS 4
+#endif
+
 // [[nodiscard]] attribute abstraction
 #if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_17)
 #  define NUMERIC_NODISCARD [[nodiscard]]

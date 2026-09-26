@@ -34,7 +34,7 @@ namespace detail {
 /// </summary>
 class BigIntStorage {
 public:
-    static constexpr size_t SBO_CAPACITY = 4;
+    static constexpr size_t SBO_CAPACITY = NUMERIC_BIGINT_SBO_LIMBS;
 
     uint64_t m_sbo[SBO_CAPACITY];
     uint64_t* m_heap;
@@ -110,7 +110,7 @@ public:
     /// 預設建構子：初始化為零值，使用 SBO 緩衝區。
     /// </summary>
     NUMERIC_CONSTEXPR_20 BigIntStorage() noexcept
-        : m_sbo{0, 0, 0, 0}, m_heap(nullptr), m_size(0), m_capacity(SBO_CAPACITY), m_sign(0) {}
+        : m_sbo{}, m_heap(nullptr), m_size(0), m_capacity(SBO_CAPACITY), m_sign(0) {}
 
     /// <summary>
     /// 解構子：若已配置堆積記憶體則進行釋放。
@@ -123,8 +123,9 @@ public:
     /// 複製建構子：深拷貝另一儲存物件之 limbs。
     /// </summary>
     NUMERIC_CONSTEXPR_20 BigIntStorage(const BigIntStorage& other)
-        : m_sbo{other.m_sbo[0], other.m_sbo[1], other.m_sbo[2], other.m_sbo[3]},
+        : m_sbo{},
           m_heap(nullptr), m_size(other.m_size), m_capacity(SBO_CAPACITY), m_sign(other.m_sign) {
+        copy_limbs(m_sbo, other.m_sbo, SBO_CAPACITY);
         if (!other.is_sbo()) {
             m_capacity = other.m_capacity;
             m_heap = new uint64_t[m_capacity];
@@ -136,16 +137,14 @@ public:
     /// 移動建構子：轉移堆積緩衝區擁有權，或拷貝 SBO 內容，確保來源安全復位。
     /// </summary>
     NUMERIC_CONSTEXPR_20 BigIntStorage(BigIntStorage&& other) noexcept
-        : m_sbo{other.m_sbo[0], other.m_sbo[1], other.m_sbo[2], other.m_sbo[3]},
+        : m_sbo{},
           m_heap(other.m_heap), m_size(other.m_size), m_capacity(other.m_capacity), m_sign(other.m_sign) {
+        copy_limbs(m_sbo, other.m_sbo, SBO_CAPACITY);
         other.m_heap = nullptr;
         other.m_size = 0;
         other.m_capacity = SBO_CAPACITY;
         other.m_sign = 0;
-        other.m_sbo[0] = 0;
-        other.m_sbo[1] = 0;
-        other.m_sbo[2] = 0;
-        other.m_sbo[3] = 0;
+        zero_limbs(other.m_sbo, SBO_CAPACITY);
     }
 
     /// <summary>
@@ -190,10 +189,7 @@ public:
             m_sign = other.m_sign;
             other.m_size = 0;
             other.m_sign = 0;
-            other.m_sbo[0] = 0;
-            other.m_sbo[1] = 0;
-            other.m_sbo[2] = 0;
-            other.m_sbo[3] = 0;
+            zero_limbs(other.m_sbo, SBO_CAPACITY);
         }
         return *this;
     }
@@ -298,6 +294,7 @@ static_assert(sizeof(BigIntStorage) == 64, "BigIntStorage must be exactly 64 byt
 class BigIntCore {
 public:
     static constexpr size_t KARATSUBA_THRESHOLD = 16;
+    static constexpr size_t TOOM3_THRESHOLD = 2048;
     static constexpr size_t FROM_STRING_DC_THRESHOLD = 10;
 
     /// <summary>
@@ -403,39 +400,70 @@ public:
 
     /// <summary>
     /// 支援完整 64 位元無符號整數（最大 18446744073709551615，共 20 位）之精準十進位位數判定。
-    /// 補齊 10^16 二分階梯，杜絕任何緩衝區溢位。
+    /// 採零硬體除法二分判定分支，單一週期等級解析，杜絕任何緩衝區溢位。
     /// </summary>
     static NUMERIC_CONSTEXPR_20_FORCEINLINE size_t digits10_u64(uint64_t v) noexcept {
-        size_t d = 1;
-        if (v >= 10000000000000000ULL) { v /= 10000000000000000ULL; d += 16; } // 10^16
-        if (v >= 100000000ULL)         { v /= 100000000ULL;         d += 8;  } // 10^8
-        if (v >= 10000ULL)             { v /= 10000ULL;             d += 4;  } // 10^4
-        if (v >= 100ULL)               { v /= 100ULL;               d += 2;  } // 10^2
-        if (v >= 10ULL)                { d += 1; }
-        return d;
+        if (v < 100000000ULL) { // < 10^8
+            if (v < 10000ULL) { // < 10^4
+                if (v < 100ULL) return (v < 10ULL) ? 1 : 2;
+                else return (v < 1000ULL) ? 3 : 4;
+            } else {
+                if (v < 1000000ULL) return (v < 100000ULL) ? 5 : 6;
+                else return (v < 10000000ULL) ? 7 : 8;
+            }
+        } else if (v < 10000000000000000ULL) { // < 10^16
+            if (v < 1000000000000ULL) { // < 10^12
+                if (v < 10000000000ULL) return (v < 1000000000ULL) ? 9 : 10;
+                else return (v < 100000000000ULL) ? 11 : 12;
+            } else {
+                if (v < 100000000000000ULL) return (v < 10000000000000ULL) ? 13 : 14;
+                else return (v < 1000000000000000ULL) ? 15 : 16;
+            }
+        } else { // >= 10^16
+            if (v < 100000000000000000ULL) return 17;
+            if (v < 1000000000000000000ULL) return 18;
+            if (v < 10000000000000000000ULL) return 19;
+            return 20;
+        }
     }
 
     /// <summary>
-    /// 格式化最高位 chunk：直接利用已知的 top_digits 由尾向頭倒序填寫，免除重複除法與二次長度搜尋。
+    /// 格式化最高位 chunk：直接利用已知的 top_digits 由尾向頭倒序填寫。
+    /// 採 10^8 區塊分割與純 32 位元倒序倒數乘法，徹底消除 64 位元硬體除法延遲。
     /// </summary>
     static NUMERIC_CONSTEXPR_20_FORCEINLINE void format_highest_chunk(
         char* dst, uint64_t val, size_t digits) noexcept
     {
         const char* pairs = get_digit_pairs();
         int pos = static_cast<int>(digits);
-        while (val >= 100) {
-            uint32_t rem = static_cast<uint32_t>(val % 100);
-            val /= 100;
+        while (val >= 100000000ULL) {
+            uint64_t q = val / 100000000ULL;
+            uint32_t v32 = static_cast<uint32_t>(val - q * 100000000ULL);
+            val = q;
+            for (int k = 0; k < 4; ++k) {
+                uint32_t q32 = v32 / 100;
+                uint32_t rem = v32 - q32 * 100;
+                v32 = q32;
+                pos -= 2;
+                dst[pos]     = pairs[rem * 2];
+                dst[pos + 1] = pairs[rem * 2 + 1];
+            }
+        }
+        uint32_t v32 = static_cast<uint32_t>(val);
+        while (v32 >= 100) {
+            uint32_t q32 = v32 / 100;
+            uint32_t rem = v32 - q32 * 100;
+            v32 = q32;
             pos -= 2;
             dst[pos]     = pairs[rem * 2];
             dst[pos + 1] = pairs[rem * 2 + 1];
         }
-        if (val < 10) {
-            dst[--pos] = static_cast<char>('0' + val);
+        if (v32 < 10) {
+            dst[--pos] = static_cast<char>('0' + v32);
         } else {
             pos -= 2;
-            dst[pos]     = pairs[val * 2];
-            dst[pos + 1] = pairs[val * 2 + 1];
+            dst[pos]     = pairs[v32 * 2];
+            dst[pos + 1] = pairs[v32 * 2 + 1];
         }
         assert(pos == 0 && "format_highest_chunk failed to match exact digit count");
     }
@@ -717,6 +745,50 @@ public:
     }
 
     /// <summary>
+    /// 256-bit SBO 靜態展開快路徑減法 (1 ~ 4 Limbs)。
+    /// 前置條件：|a| >= |b| 且 a.m_size <= 4, b.m_size <= 4。
+    /// 純暫存器 SBB 流水線，直接輸出至 SBO 陣列，保證自我別名與全零規格化安全。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void sub_unsigned_sbo4(
+        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    {
+        const uint64_t* a_data = a.data();
+        const uint64_t* b_data = b.data();
+        size_t a_size = a.m_size;
+        size_t b_size = b.m_size;
+
+        const uint64_t a0 = (0 < a_size) ? a_data[0] : 0;
+        const uint64_t a1 = (1 < a_size) ? a_data[1] : 0;
+        const uint64_t a2 = (2 < a_size) ? a_data[2] : 0;
+        const uint64_t a3 = (3 < a_size) ? a_data[3] : 0;
+
+        const uint64_t b0 = (0 < b_size) ? b_data[0] : 0;
+        const uint64_t b1 = (1 < b_size) ? b_data[1] : 0;
+        const uint64_t b2 = (2 < b_size) ? b_data[2] : 0;
+        const uint64_t b3 = (3 < b_size) ? b_data[3] : 0;
+
+        uint64_t r0 = 0, r1 = 0, r2 = 0, r3 = 0;
+        uint8_t borrow = 0;
+        borrow = sbb64(borrow, a0, b0, &r0);
+        borrow = sbb64(borrow, a1, b1, &r1);
+        borrow = sbb64(borrow, a2, b2, &r2);
+        borrow = sbb64(borrow, a3, b3, &r3);
+
+        res.reset_heap();
+        res.m_sbo[0] = r0;
+        res.m_sbo[1] = r1;
+        res.m_sbo[2] = r2;
+        res.m_sbo[3] = r3;
+
+        size_t s = 4;
+        while (s > 0 && res.m_sbo[s - 1] == 0) --s;
+        res.m_size = s;
+        if (s == 0) {
+            res.m_sign = 0;
+        }
+    }
+
+    /// <summary>
     /// 多肢段通用加法，含別名指針備份防護、空間預留與長邊 Early-Exit 進位鏈。
     /// </summary>
     static NUMERIC_CONSTEXPR_20 void add_unsigned_general(
@@ -807,6 +879,11 @@ public:
         size_t a_len = a.m_size;
         size_t b_len = b.m_size;
 
+        if (a_len <= 4 && b_len <= 4) {
+            sub_unsigned_sbo4(res, a, b);
+            return;
+        }
+
         uint64_t b_stack[128];
         const uint64_t* b_data = b.data();
         std::vector<uint64_t> b_heap;
@@ -852,7 +929,11 @@ public:
     /// 無符號 limbs 減法：res = a - b（前置條件：a >= b）。
     /// </summary>
     static NUMERIC_CONSTEXPR_20 void sub_unsigned(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept {
-        sub_magnitude_core(res, a, b);
+        if (a.m_size <= 4 && b.m_size <= 4) {
+            sub_unsigned_sbo4(res, a, b);
+        } else {
+            sub_magnitude_core(res, a, b);
+        }
         res.m_sign = (res.m_size > 0) ? 1 : 0;
     }
 
@@ -878,10 +959,18 @@ public:
                 res.m_size = 0;
                 res.m_sign = 0;
             } else if (cmp > 0) {
-                sub_magnitude_core(res, a, b);
+                if (a.m_size <= 4 && b.m_size <= 4) {
+                    sub_unsigned_sbo4(res, a, b);
+                } else {
+                    sub_magnitude_core(res, a, b);
+                }
                 res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
             } else {
-                sub_magnitude_core(res, b, a);
+                if (a.m_size <= 4 && b.m_size <= 4) {
+                    sub_unsigned_sbo4(res, b, a);
+                } else {
+                    sub_magnitude_core(res, b, a);
+                }
                 res.m_sign = (res.m_size > 0) ? b.m_sign : 0;
             }
         }
@@ -910,10 +999,18 @@ public:
                 res.m_size = 0;
                 res.m_sign = 0;
             } else if (cmp > 0) {
-                sub_magnitude_core(res, a, b);
+                if (a.m_size <= 4 && b.m_size <= 4) {
+                    sub_unsigned_sbo4(res, a, b);
+                } else {
+                    sub_magnitude_core(res, a, b);
+                }
                 res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
             } else {
-                sub_magnitude_core(res, b, a);
+                if (a.m_size <= 4 && b.m_size <= 4) {
+                    sub_unsigned_sbo4(res, b, a);
+                } else {
+                    sub_magnitude_core(res, b, a);
+                }
                 res.m_sign = (res.m_size > 0) ? -b.m_sign : 0;
             }
         }
@@ -1155,6 +1252,264 @@ public:
     }
 
     /// <summary>
+    /// 精確除以 3：out = out / 3 (前置合約：out 能被 3 整除)。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void div_exact_3_raw(uint64_t* out, size_t len) noexcept {
+        uint64_t rem = 0;
+        for (size_t i = len; i > 0; --i) {
+            uint64_t next_rem = 0;
+            out[i - 1] = div128_64(rem, out[i - 1], 3, next_rem);
+            rem = next_rem;
+        }
+    }
+
+    /// <summary>
+    /// 乘法內部遞迴派發：依據運算元規模派發至 Schoolbook, Karatsuba 或 Toom-3。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void mul_dispatch_raw(
+        uint64_t* NUMERIC_RESTRICT out,
+        const uint64_t* a, size_t a_len,
+        const uint64_t* b, size_t b_len,
+        uint64_t* scratch) noexcept
+    {
+        size_t n = (a_len > b_len) ? a_len : b_len;
+        if (a_len == 0 || b_len == 0) {
+            BigIntStorage::zero_limbs(out, a_len + b_len);
+            return;
+        }
+        if (n < KARATSUBA_THRESHOLD || a_len < 4 || b_len < 4 ||
+            a_len >= 2 * b_len || b_len >= 2 * a_len) {
+            mul_schoolbook_raw(out, a, a_len, b, b_len);
+        } else if (n < TOOM3_THRESHOLD) {
+            mul_karatsuba_raw(out, a, a_len, b, b_len, scratch);
+        } else {
+            mul_toom3_raw(out, a, a_len, b, b_len, scratch);
+        }
+    }
+
+    /// <summary>
+    /// 生產級 Toom-Cook 3 (Toom-3) 乘法核心演算法：out = a * b。
+    /// 漸近時間複雜度 O(N^(log3 5)) ≈ O(N^1.465)，採用 5 點插值法 (0, 1, -1, 2, inf)。
+    /// 搭配 ScratchArena 達成全程 0 堆積記憶體配置。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void mul_toom3_raw(
+        uint64_t* NUMERIC_RESTRICT out,
+        const uint64_t* a, size_t a_len,
+        const uint64_t* b, size_t b_len,
+        uint64_t* scratch) noexcept
+    {
+        size_t n = (a_len > b_len) ? a_len : b_len;
+        size_t m = (n + 2) / 3;
+
+        const uint64_t* a0 = a;
+        size_t a0_len = (a_len < m) ? a_len : m;
+        while (a0_len > 0 && a0[a0_len - 1] == 0) --a0_len;
+
+        const uint64_t* a1 = (a_len > m) ? (a + m) : nullptr;
+        size_t a1_len = (a_len > m) ? ((a_len < 2 * m) ? (a_len - m) : m) : 0;
+        while (a1_len > 0 && a1[a1_len - 1] == 0) --a1_len;
+
+        const uint64_t* a2 = (a_len > 2 * m) ? (a + 2 * m) : nullptr;
+        size_t a2_len = (a_len > 2 * m) ? (a_len - 2 * m) : 0;
+        while (a2_len > 0 && a2[a2_len - 1] == 0) --a2_len;
+
+        const uint64_t* b0 = b;
+        size_t b0_len = (b_len < m) ? b_len : m;
+        while (b0_len > 0 && b0[b0_len - 1] == 0) --b0_len;
+
+        const uint64_t* b1 = (b_len > m) ? (b + m) : nullptr;
+        size_t b1_len = (b_len > m) ? ((b_len < 2 * m) ? (b_len - m) : m) : 0;
+        while (b1_len > 0 && b1[b1_len - 1] == 0) --b1_len;
+
+        const uint64_t* b2 = (b_len > 2 * m) ? (b + 2 * m) : nullptr;
+        size_t b2_len = (b_len > 2 * m) ? (b_len - 2 * m) : 0;
+        while (b2_len > 0 && b2[b2_len - 1] == 0) --b2_len;
+
+        size_t ev_sz = m + 2;
+        size_t pr_sz = 2 * m + 4;
+
+        uint64_t* p1   = scratch;
+        uint64_t* q1   = p1 + ev_sz;
+        uint64_t* p_m1 = q1 + ev_sz;
+        uint64_t* q_m1 = p_m1 + ev_sz;
+        uint64_t* p2   = q_m1 + ev_sz;
+        uint64_t* q2   = p2 + ev_sz;
+
+        uint64_t* v1   = q2 + ev_sz;
+        uint64_t* v_m1 = v1 + pr_sz;
+        uint64_t* v2   = v_m1 + pr_sz;
+        uint64_t* next_scratch = v2 + pr_sz;
+
+        BigIntStorage::zero_limbs(scratch, (v2 + pr_sz) - scratch);
+        BigIntStorage::zero_limbs(out, a_len + b_len);
+
+        if (a0_len > 0 && b0_len > 0) {
+            mul_dispatch_raw(out, a0, a0_len, b0, b0_len, next_scratch);
+        }
+
+        uint64_t* v_inf = out + 4 * m;
+        if (a2_len > 0 && b2_len > 0) {
+            mul_dispatch_raw(v_inf, a2, a2_len, b2, b2_len, next_scratch);
+        }
+
+        BigIntStorage::copy_limbs(p1, a0, a0_len);
+        if (a2_len > 0) add_to_raw(p1, ev_sz, a2, a2_len);
+        BigIntStorage::copy_limbs(p_m1, p1, ev_sz);
+        if (a1_len > 0) add_to_raw(p1, ev_sz, a1, a1_len);
+
+        int8_t s_a = 1;
+        size_t a0_a2_len = ev_sz;
+        while (a0_a2_len > 0 && p_m1[a0_a2_len - 1] == 0) --a0_a2_len;
+        int cmp_a = compare_unsigned(p_m1, a0_a2_len, a1, a1_len);
+        if (cmp_a >= 0) {
+            if (a1_len > 0) sub_from_raw(p_m1, ev_sz, a1, a1_len);
+            s_a = 1;
+        } else {
+            uint64_t tmp[256];
+            uint64_t* t_ptr = (ev_sz <= 256) ? tmp : next_scratch;
+            BigIntStorage::copy_limbs(t_ptr, a1, a1_len);
+            BigIntStorage::zero_limbs(t_ptr + a1_len, ev_sz - a1_len);
+            sub_from_raw(t_ptr, ev_sz, p_m1, a0_a2_len);
+            BigIntStorage::copy_limbs(p_m1, t_ptr, ev_sz);
+            s_a = -1;
+        }
+
+        if (a2_len > 0) {
+            add_to_raw(p2, ev_sz, a2, a2_len);
+            add_to_raw(p2, ev_sz, a2, a2_len);
+        }
+        if (a1_len > 0) add_to_raw(p2, ev_sz, a1, a1_len);
+        uint64_t carry = 0;
+        for (size_t i = 0; i < ev_sz; ++i) {
+            uint64_t cur = p2[i];
+            p2[i] = (cur << 1) | carry;
+            carry = cur >> 63;
+        }
+        if (a0_len > 0) add_to_raw(p2, ev_sz, a0, a0_len);
+
+        BigIntStorage::copy_limbs(q1, b0, b0_len);
+        if (b2_len > 0) add_to_raw(q1, ev_sz, b2, b2_len);
+        BigIntStorage::copy_limbs(q_m1, q1, ev_sz);
+        if (b1_len > 0) add_to_raw(q1, ev_sz, b1, b1_len);
+
+        int8_t s_b = 1;
+        size_t b0_b2_len = ev_sz;
+        while (b0_b2_len > 0 && q_m1[b0_b2_len - 1] == 0) --b0_b2_len;
+        int cmp_b = compare_unsigned(q_m1, b0_b2_len, b1, b1_len);
+        if (cmp_b >= 0) {
+            if (b1_len > 0) sub_from_raw(q_m1, ev_sz, b1, b1_len);
+            s_b = 1;
+        } else {
+            uint64_t tmp[256];
+            uint64_t* t_ptr = (ev_sz <= 256) ? tmp : next_scratch;
+            BigIntStorage::copy_limbs(t_ptr, b1, b1_len);
+            BigIntStorage::zero_limbs(t_ptr + b1_len, ev_sz - b1_len);
+            sub_from_raw(t_ptr, ev_sz, q_m1, b0_b2_len);
+            BigIntStorage::copy_limbs(q_m1, t_ptr, ev_sz);
+            s_b = -1;
+        }
+
+        if (b2_len > 0) {
+            add_to_raw(q2, ev_sz, b2, b2_len);
+            add_to_raw(q2, ev_sz, b2, b2_len);
+        }
+        if (b1_len > 0) add_to_raw(q2, ev_sz, b1, b1_len);
+        carry = 0;
+        for (size_t i = 0; i < ev_sz; ++i) {
+            uint64_t cur = q2[i];
+            q2[i] = (cur << 1) | carry;
+            carry = cur >> 63;
+        }
+        if (b0_len > 0) add_to_raw(q2, ev_sz, b0, b0_len);
+
+        size_t p1_len = ev_sz; while (p1_len > 0 && p1[p1_len - 1] == 0) --p1_len;
+        size_t q1_len = ev_sz; while (q1_len > 0 && q1[q1_len - 1] == 0) --q1_len;
+        if (p1_len > 0 && q1_len > 0) {
+            mul_dispatch_raw(v1, p1, p1_len, q1, q1_len, next_scratch);
+        }
+
+        size_t pm1_len = ev_sz; while (pm1_len > 0 && p_m1[pm1_len - 1] == 0) --pm1_len;
+        size_t qm1_len = ev_sz; while (qm1_len > 0 && q_m1[qm1_len - 1] == 0) --qm1_len;
+        if (pm1_len > 0 && qm1_len > 0) {
+            mul_dispatch_raw(v_m1, p_m1, pm1_len, q_m1, qm1_len, next_scratch);
+        }
+        int8_t s_vm1 = static_cast<int8_t>(s_a * s_b);
+
+        size_t p2_len = ev_sz; while (p2_len > 0 && p2[p2_len - 1] == 0) --p2_len;
+        size_t q2_len = ev_sz; while (q2_len > 0 && q2[q2_len - 1] == 0) --q2_len;
+        if (p2_len > 0 && q2_len > 0) {
+            mul_dispatch_raw(v2, p2, p2_len, q2, q2_len, next_scratch);
+        }
+
+        BigIntStorage st_v0, st_vinf, st_v1, st_vm1, st_v2;
+        st_v0.resize(2 * m);
+        BigIntStorage::copy_limbs(st_v0.data(), out, 2 * m);
+        st_v0.m_sign = 1;
+        st_v0.normalize();
+
+        size_t vinf_sz = (a_len + b_len > 4 * m) ? (a_len + b_len - 4 * m) : 0;
+        st_vinf.resize(vinf_sz);
+        if (vinf_sz > 0) {
+            BigIntStorage::copy_limbs(st_vinf.data(), v_inf, vinf_sz);
+        }
+        st_vinf.m_sign = 1;
+        st_vinf.normalize();
+
+        st_v1.resize(pr_sz);
+        BigIntStorage::copy_limbs(st_v1.data(), v1, pr_sz);
+        st_v1.m_sign = 1;
+        st_v1.normalize();
+
+        st_vm1.resize(pr_sz);
+        BigIntStorage::copy_limbs(st_vm1.data(), v_m1, pr_sz);
+        st_vm1.m_sign = s_vm1;
+        st_vm1.normalize();
+
+        st_v2.resize(pr_sz);
+        BigIntStorage::copy_limbs(st_v2.data(), v2, pr_sz);
+        st_v2.m_sign = 1;
+        st_v2.normalize();
+
+        BigIntStorage sum_v1_vm1, t1;
+        add_signed(sum_v1_vm1, st_v1, st_vm1);
+        shift_right(t1, sum_v1_vm1, 1);
+
+        BigIntStorage diff_v1_vm1, t2;
+        sub_signed(diff_v1_vm1, st_v1, st_vm1);
+        shift_right(t2, diff_v1_vm1, 1);
+
+        BigIntStorage c2_step1, c2;
+        sub_signed(c2_step1, t1, st_v0);
+        sub_signed(c2, c2_step1, st_vinf);
+
+        BigIntStorage v2_minus_v0, v2_step;
+        sub_signed(v2_minus_v0, st_v2, st_v0);
+        shift_right(v2_step, v2_minus_v0, 1);
+
+        BigIntStorage v2_step2;
+        sub_signed(v2_step2, v2_step, t2);
+
+        BigIntStorage eight_v_inf, v2_step3;
+        shift_left(eight_v_inf, st_vinf, 3);
+        sub_signed(v2_step3, v2_step2, eight_v_inf);
+
+        BigIntStorage two_c2, three_c3;
+        shift_left(two_c2, c2, 1);
+        sub_signed(three_c3, v2_step3, two_c2);
+
+        BigIntStorage c3 = three_c3;
+        div_exact_3_raw(c3.data(), c3.m_size);
+        c3.normalize();
+
+        BigIntStorage c1;
+        sub_signed(c1, t2, c3);
+
+        if (c1.m_size > 0) add_to_raw(out + m, (a_len + b_len) - m, c1.data(), c1.m_size);
+        if (c2.m_size > 0) add_to_raw(out + 2 * m, (a_len + b_len) - 2 * m, c2.data(), c2.m_size);
+        if (c3.m_size > 0) add_to_raw(out + 3 * m, (a_len + b_len) - 3 * m, c3.data(), c3.m_size);
+    }
+
+    /// <summary>
     /// 傳統 Schoolbook 長整數乘法演算法。
     /// </summary>
     /// <param name="res">輸出乘積儲存物件</param>
@@ -1279,17 +1634,74 @@ public:
     }
 
     /// <summary>
-    /// 內部乘法派發函式，依據位數自動切換 Schoolbook 與 Karatsuba。
+    /// Toom-3 (Toom-Cook 3-way) 快速乘法演算法（ScratchArena 記憶體池加速）。
+    /// </summary>
+    /// <param name="res">輸出結果</param>
+    /// <param name="a">乘數 a</param>
+    /// <param name="b">乘數 b</param>
+    static NUMERIC_CONSTEXPR_20 void mul_toom3(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
+        size_t n = (a.m_size > b.m_size) ? a.m_size : b.m_size;
+        if (n < TOOM3_THRESHOLD || a.m_size == 0 || b.m_size == 0) {
+            mul_karatsuba(res, a, b);
+            return;
+        }
+
+        // 自我別名防護
+        if (&res == &a || &res == &b) {
+            BigIntStorage tmp;
+            mul_toom3(tmp, a, b);
+            res = std::move(tmp);
+            return;
+        }
+
+        size_t total_len = a.m_size + b.m_size;
+        res.resize(total_len, 0);
+
+        // Scratchpad 預估大小：48 * n + 2048 limbs
+        size_t scratch_size = 48 * n + 2048;
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            if (scratch_size <= 2048) {
+                uint64_t stack_scratch[2048];
+                mul_toom3_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, stack_scratch);
+            } else {
+                std::vector<uint64_t> heap_scratch(scratch_size);
+                mul_toom3_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, heap_scratch.data());
+            }
+            res.m_sign = 1;
+            res.normalize();
+            return;
+        }
+#endif
+        if (scratch_size <= 2048) {
+            uint64_t stack_scratch[2048];
+            mul_toom3_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, stack_scratch);
+        } else {
+            auto& arena = ScratchArena::instance();
+            ScratchArena::Scope scope(arena);
+            uint64_t* scratch = arena.allocate(scratch_size);
+            mul_toom3_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, scratch);
+        }
+
+        res.m_sign = 1;
+        res.normalize();
+    }
+
+    /// <summary>
+    /// 內部乘法派發函式，依據位數自動切換 Schoolbook, Karatsuba 與 Toom-3。
     /// </summary>
     /// <param name="res">輸出結果</param>
     /// <param name="a">乘數 a</param>
     /// <param name="b">乘數 b</param>
     static NUMERIC_CONSTEXPR_20 void mul_core(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
+        size_t n = (a.m_size > b.m_size) ? a.m_size : b.m_size;
         if (a.m_size < KARATSUBA_THRESHOLD || b.m_size < KARATSUBA_THRESHOLD ||
             a.m_size >= 2 * b.m_size || b.m_size >= 2 * a.m_size) {
             mul_schoolbook(res, a, b);
-        } else {
+        } else if (n < TOOM3_THRESHOLD) {
             mul_karatsuba(res, a, b);
+        } else {
+            mul_toom3(res, a, b);
         }
     }
 
