@@ -12,6 +12,7 @@
 
 | 巨集名稱 | 預期取值 | 說明 |
 | :--- | :--- | :--- |
+| `NUMERIC_BIGINT_SBO_LIMBS` | 正整數（預設 `4`，可設為 `8`） | SBO 小對象最佳化容量（以 64-bit limb 為單位）。預設 4 肢（256 位元），物件大小 64 位元組剛好對齊單一 L1 快取行；設為 8 肢（512 位元）可支援 0-heap 加密運算。 |
 | `NUMERIC_CPLUSPLUS` | 數值（如 `202002L`） | 正規化後的 C++ 語言標準版本代碼（相容 MSVC `_MSVC_LANG` 與 GCC/Clang `__cplusplus`）。 |
 | `NUMERIC_NODISCARD` | `[[nodiscard]]` 或屬性 | 函式傳回值未被使用時觸發編譯器警告之屬性包裝。 |
 | `NUMERIC_CONSTEXPR_14` | `constexpr` 或 `inline` | 於 C++14 及以上展開為 `constexpr`，低於 C++14 時回退為 `inline`。 |
@@ -120,6 +121,36 @@ inline __attribute__((always_inline)) inline // 觸發 duplicate 'inline' 語法
 #  define NUMERIC_RESTRICT
 #endif
 ```
+
+---
+
+### 6. SBO 小對象最佳化容量配置 (`NUMERIC_BIGINT_SBO_LIMBS`)
+
+CPP-BigInt 採用了 Small Buffer Optimization (SBO) 架構，預設在物件內部保留靜態 Limb 空間，避免短整數運算產生任何堆疊記憶體配置（Heap Allocation）：
+
+```cpp
+#ifndef NUMERIC_BIGINT_SBO_LIMBS
+#  define NUMERIC_BIGINT_SBO_LIMBS 4
+#endif
+```
+
+#### 數值與架構對照
+
+| 配置值 | 內聯肢數 | 內聯無號位元數 | `sizeof(bigint)` | 適用情境與設計權衡 |
+| :---: | :---: | :---: | :---: | :--- |
+| **`4`** *(預設)* | 4 limbs (64-bit) | 256 bits | **64 bytes** | **極致快取友好**：整體結構體尺寸精確契合現代 CPU 單一 L1 快取行（Cache Line, 64 bytes）。涵蓋絕大多數常規高精度運算，並提供最高的記憶體密度。 |
+| **`8`** | 8 limbs (64-bit) | 512 bits | **96 bytes** | **密碼學專用 (Zero-Heap Crypto)**：為 256 位元橢圓曲線密碼（如 secp256k1、Curve25519）、SHA-512、Ed448 及 RSA 中間值提供完全零記憶體配置的純暫存器/棧上運算保障。 |
+
+#### 配置方式
+- **CMake 全域配置**：
+  ```cmake
+  target_compile_definitions(my_project PRIVATE NUMERIC_BIGINT_SBO_LIMBS=8)
+  ```
+- **原始碼預定義**：
+  ```cpp
+  #define NUMERIC_BIGINT_SBO_LIMBS 8
+  #include <numeric/BigInt.hpp>
+  ```
 
 ---
 

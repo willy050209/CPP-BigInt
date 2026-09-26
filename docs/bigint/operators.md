@@ -88,12 +88,14 @@ NUMERIC_CONSTEXPR_20 bigint& operator%=(const bigint& rhs);
   - **Direct-Result 語意與零深拷貝 (Zero Copy Overhead)**：`operator+` 與 `operator-` 針對左值運算元採用 `(const bigint& lhs, const bigint& rhs)`，運算結果直接寫入回傳物件，徹底消除傳統以值傳遞（Pass-by-value）時非必要的大數 Heap 深層拷貝。在大數加減法實測中獲得 **2.3x ~ 2.6x** 的顯著效能飛躍。
   - **右值移動重用 (Rvalue Move Optimization)**：當運算元包含暫時物件（如 `bigint&&` 或連續運算 `a + b + c`）時，自動觸發移動重載，就地重用已配置之內部堆積緩衝區，達成連續鏈式運算 0 額外記憶體配置。
   - **硬體指令級加速 (Hardware Intrinsics)**：核心採用 `adc64` 與 `sbb64`，於 MSVC 啟用 `_addcarry_u64` / `_subborrow_u64`，於 GCC/Clang 啟用 `__builtin_addcll` / `__builtin_subcll`，利用 CPU Carry Flag 進行單週期連鎖進借位。
-  - **256-bit SBO 4-Limb 展開優化**：針對 SBO 內部 4 個 limbs 實施完全迴圈展開（Unrolled Loop），消除迴圈跳轉開銷並極大化暫存器利用率。
+  - **4-Limb SBO 加減法對稱暫存器級快速路徑 (`add_unsigned_sbo4` / `sub_unsigned_sbo4`)**：針對 $\le 256$ 位元之 SBO 內部 4 個 limbs 實施完全無分支展開（Unrolled Loop），消除迴圈跳轉開銷，完全於 CPU 暫存器中以單週期 carry/borrow chain 執行。加法與減法分別取得 **~5.0 ns 與 ~5.1 ns** 的對稱極致延遲，大幅超越 .NET 10 Native AOT（~19 ns）與 Python（~41 ns）。
   - **早期終止機制 (Early-exit Propagation)**：當殘留進位/借位歸零且較短運算元已耗盡時，立即退出運算迴圈並執行批次記憶體拷貝，大幅縮短不對稱位元加減時間。
   - **自我別名安全 (Self-Aliasing Safety)**：底層演算法（如 `BigIntCore::add_signed`、`BigIntCore::sub_signed`）全面通過別名防護檢測，即使運算元位址重疊（例如 `a += a`），亦能保證計算正確性。
-- **乘法**：
-  - **多層級分派與線程局部暫存池 (`ScratchArena`)**：小規模採用學校乘法 (Schoolbook $O(N^2)$)，大數自動啟用 **Karatsuba 分治演算法** ($O(N^{\log_2 3}) \approx O(N^{1.585})$)。
-  - **1024-Limb 棧上展開與 RAII Arena**：8,192 位元（1024 limbs）以內全面採用棧上刮痕緩衝區（8 KB）；更大規模數值則由線程局部無鎖的 RAII `ScratchArena` 管理，遞迴深度內達成 **0 次 Heap 動態分配與釋放**。
+- **乘法 (三層階梯式演算法架構)**：
+  - **第 1 階：Schoolbook 乘法 ($N \le 16$ limbs / 1024 bits, $O(N^2)$)**：小規模乘法採用高度內聯與向量化之學校乘法。當運算元長度總和 $\le \text{SBO}$ 容量時（例如 128-bit $\times$ 128-bit），直接在棧上 SBO 緩衝區就地計算，**達成 0 次 Heap 分配與 ~12 ns 延遲**。
+  - **第 2 階：Karatsuba 分治乘法 ($16 < N \le 64$ limbs / 1024 ~ 4096 bits, $O(N^{\log_2 3}) \approx O(N^{1.585})$)**：中型整數自動啟用 Karatsuba 乘法，透過 $(A_1 + A_0)(B_1 + B_0)$ 將 4 次子乘法縮減為 3 次。
+  - **第 3 階：Toom-Cook 3 (Toom-3) 分治乘法 ($N > 64$ limbs / > 4096 bits, $O(N^{\log_3 5}) \approx O(N^{1.465})$)**：針對 4,096 位元以上的大型數值，將運算元分割為 3 項多項式，於 $0, 1, -1, -2, \infty$ 五個點進行插值求值與高精度矩陣逆轉換，運算複雜度由 $N^{1.585}$ 進一步壓低至 $N^{1.465}$。
+  - **Thread-Local 刮痕池 (`ScratchArena`)**：Karatsuba 與 Toom-3 的多層遞迴臨時緩衝區由線程局部無鎖的 RAII `ScratchArena` 管理，整個乘法運算生命週期內達成 **0 次 Heap 動態分配與釋放**。
 - **除法與取模**：
   - **雙階派發架構 (Two-Tier Division Architecture)**：
     - **中小型運算元 ($< 128$ limbs / 8,192 bits)**：採用改良版 **Knuth Algorithm D** 規格化長除法。對於 16,384 位元以內的運算元，正規化工作陣列完全配置於棧上（`stack_scratch[512]`），達成 0 次 Heap 動態配置。

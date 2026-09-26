@@ -110,15 +110,21 @@ NUMERIC_NODISCARD std::string to_string() const;
 
 #### 備註與極致優化架構
 內部序列化採用結合分治法（Divide-and-Conquer）、Burnikel-Ziegler 快速長除法與常數乘法求逆除法之現代高效架構，徹底打破傳統逐位除法的 $O(N^2)$ 效能瓶頸：
-1. **小規模棧上逆向格式化 (Small Stack Buffer Backward Formatting)**：
-   對於 16 個 limbs 以內（$\le 1024$ 位元，涵蓋 64-bit、128-bit、256-bit SBO）之中小型數值，直接於棧上 512-byte 刮痕緩衝區以 2-Digit LUT 逆向輸出字元，格式化過程 **0 次 Heap 動態配置**。最後一次性建構精確尺寸的 `std::string`。在 64-bit 測試中延遲由 `35.85 ns` 降至 **`20.35 ns`**（**1.76x 加速**）；256-bit 延遲由 `79.46 ns` 降至 **`37.19 ns`**（**2.14x 加速**）。
-2. **$10^{19}$ 乘法求逆除法 (Reciprocal Multiplication Division)**：
+1. **單 Limb 零除法極速路徑 (Single-Limb Fast Path, ~36 ns)**：
+   對於單肢數值（$N = 1$，值域 $\le 2^{64}-1$），完全不調用高階大數演算法：
+   - 透過二分搜尋常數比較之 `digits10_u64` 無分支快速求得精確十進位位元數。
+   - 採用 32 位元區塊常數乘法求逆將數值拆解為 32 位元整數，避免 64 位元慢速硬體整數除法。
+   - 搭配雙位元查找表（2-Digit LUT, `char_table2`）以 16-bit 記憶體寫入兩兩填入棧上 `stack_buf[32]`，最後一次性構造 `std::string`。
+   - 單肢 `ToString` 延遲僅需 **~36.1 ns**，超越 .NET 10 Native AOT（~62.4 ns）與 Python（~182.5 ns）。
+2. **小規模棧上逆向格式化 (Small Stack Buffer Backward Formatting)**：
+   對於 16 個 limbs 以內（$\le 1024$ 位元，涵蓋 128-bit、256-bit SBO）之中小型數值，直接於棧上 512-byte 刮痕緩衝區以分治法與 2-Digit LUT 逆向輸出字元，格式化過程 **0 次初步 Heap 動態配置**。最後一次性建構精確尺寸的 `std::string`。
+3. **$10^{19}$ 乘法求逆除法 (Reciprocal Multiplication Division)**：
    對於 Radix-10 轉換最頻繁的 64 位元除數 $10^{19}$（最大可容納十進位冪次），預先計算 128 位元定點逆元常數 $v = \lfloor (2^{128} - 1) / 10^{19} \rfloor - 2^{64} = \text{0xd83c94fb6d2ac34a}$。以乘法高位與進位加法完全取代 x86-64 硬體 `_udiv128` 指令，將單 limb 除法延遲由 ~40 週期劇降至 ~6 週期。
-3. **分治進位轉換 (Divide-and-Conquer Radix Conversion)**：
+4. **分治進位轉換 (Divide-and-Conquer Radix Conversion)**：
    當數值大於 16 個 chunks（約 304 位數 / 1010 bits）時，自動切換至二分切分演算法。利用 [`Pow10Cache`](../parsing.md) 快取的二分冪次 $10^{19 \cdot 2^k}$，將大數遞迴切半：$Q, R = \text{div\_qr}(A, 10^{19 \cdot 2^k})$。遞迴深度降為 $O(\log N)$，並結合 **Burnikel-Ziegler 快速分治除法**，使 64K-bit `ToString` 耗時進一步由 `710.23 µs` 降低至 **`433.02 µs`**（**1.64x 加速**），大幅超越 C++ MPIR（`1.08 ms`）。
-4. **2-Digit LUT 雙位元查表加速**：
-   透過靜態內聯的百位查找表（`get_digit_pairs()`），將數字轉換為兩兩一組的 ASCII 字元（如 `"00"`, `"01"`, ..., `"99"`），將除法與取模指令次數直接減半，並利用 16-bit 記憶體存取就地填入。
-5. **精確長度配置 (Exact Digit Allocation)**：
+5. **2-Digit LUT 雙位元查表加速**：
+   透過靜態內聯的百位查找表（`char_table2`），將數字轉換為兩兩一組的 ASCII 字元（如 `"00"`, `"01"`, ..., `"99"`），將除法與取模指令次數直接減半，並利用 16-bit 記憶體存取就地填入。
+6. **精確長度配置 (Exact Digit Allocation)**：
    在最高位區塊透過精確的常數階梯判斷實際位元長度，預先單次精確配置目標 `std::string` 容量，完全避免 `push_back` 擴容與傳統字串反轉（`std::reverse`）之雙重記憶體遍歷開銷。
 
 #### 範例

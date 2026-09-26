@@ -389,7 +389,7 @@ public:
     }
 
     /// <summary>
-    /// 查詢是否正在使用 128-bit SBO 內建緩衝區（無堆積配置）。
+    /// 查詢是否正在使用 SBO 內建緩衝區（無堆積配置，預設 256 位元 / 4 limbs）。
     /// </summary>
     /// <returns>若使用 SBO 回傳 true，否則回傳 false</returns>
     NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_sbo() const noexcept {

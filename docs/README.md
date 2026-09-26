@@ -19,7 +19,7 @@
 ## 文件導覽目錄 (Table of Contents)
 
 ### 1. [numeric::bigint 類別](bigint/index.md)
-任意精度有符號整數核心型別，具備 **256-bit Small Buffer Optimization (SBO)** 與硬體 ADC/SBB 加速之高效架構。
+任意精度有符號整數核心型別，具備 **可配置 Small Buffer Optimization (SBO)**、硬體 ADC/SBB 加速與三層乘法架構之高效模型。
 
 - **[建構函式 (Constructors)](bigint/constructors.md)**
   - 預設建構子、複製/移動建構子
@@ -28,19 +28,19 @@
   - 字串解析建構子 (`string_view`, `const char*`, `std::string`)
   - 泛型位元集合建構子 (`template <size_t N> bigint(const std::bitset<N>&)`)
 - **[屬性與狀態檢測 (Properties & Status)](bigint/properties.md)**
-  - `is_sbo()` / `is_small()`：256-bit (4 limbs) SBO 內建緩衝區使用狀態查詢
+  - `is_sbo()` / `is_small()`：SBO 內建緩衝區使用狀態查詢（預設 4 limbs / 256 位元，可擴展至 8 limbs / 512 位元）
   - `is_zero()`：數值為零檢查
   - `sign()`：正負符號檢查 (-1, 0, 1)
   - `limb_count()` / `limbs()`：64-bit 區塊計數與內部陣列存取
   - `storage()`：底層儲存結構存取
 - **[型別轉換與字串化 (Conversions)](bigint/conversions.md)**
   - 明確型別轉換運算子：`bool`, `int64_t`, `uint64_t`, `int32_t`, `uint32_t`, `double`
-  - 分治十進位字串轉換：`to_string()`（$10^{19}$ 乘法求逆除法 + 分治切分 + 棧上 0-Heap 展開）
+  - 分治十進位字串轉換：`to_string()`（單肢 `digits10_u64` + 32-bit chunking + 2-Digit LUT 極速路徑 ~36 ns；中大數 $10^{19}$ 乘法求逆除法 + 分治切分）
   - 二進位字串轉換：`to_binary_string()`
   - 泛型位元集合轉換：`to_bitset<N>()`
 - **[運算子重載 (Operators)](bigint/operators.md)**
   - 單元運算子：`+`, `-`, 前置/後置 `++`, 前置/後置 `--`, `~`, `!`
-  - 算術二元運算子：`+`, `-`, `*`, `/`, `%`（ADC/SBB 硬體原語加速、4-limb 展開、Karatsuba 刮痕緩衝、常數參考傳遞零深拷貝、16K-bit 棧上 Scratch Buffer 與商餘分離）
+  - 算術二元運算子：`+`, `-`, `*`, `/`, `%`（對稱 4-limb SBO 加減法 ~5 ns、三階乘法：Schoolbook $\to$ Karatsuba $\to$ Toom-Cook 3、常數參考傳遞零深拷貝、棧上 Scratch Buffer 與商餘分離）
   - 複合賦值運算子：`+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`（完整自我別名安全，商餘解耦求值）
   - 位元運算與位移運算子（含泛型位移）：`&`, `|`, `^`, `<<`, `>>`
   - 比較運算子與跨型別混合運算：`==`, `!=`, `<`, `<=`, `>`, `>=`
