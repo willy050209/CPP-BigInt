@@ -96,6 +96,24 @@ void run_benchmarks_for_tier(
         reporter.add_metric(tier, bits, "Add", arithmetic_iters * N, elapsed);
     }
 
+    // 1b. Addition In-Place (Capacity Reuse)
+    {
+        mpz_t c;
+        mpz_init(c);
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                mpz_add(c, a_nums[i].get_mpz_t(), b_nums[i].get_mpz_t());
+#else
+                mpz_add(c, a_nums[i].val, b_nums[i].val);
+#endif
+                bench::do_not_optimize(c);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Add_InPlace", arithmetic_iters * N, elapsed);
+        mpz_clear(c);
+    }
+
     // 2. Subtraction
     {
         double elapsed = bench::measure_time_ns([&]() {
@@ -214,6 +232,25 @@ void run_benchmarks_for_tier(
             }
         }, mem_pressure_iters);
         reporter.add_metric(tier, bits, "MemPressure", mem_pressure_iters * N, elapsed);
+    }
+
+    // 9. Chained temporary expression: (a + b) * (a - b)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+#if USE_GMPXX
+                mpz_class d = (a_nums[i] + b_nums[i]) * (a_nums[i] - b_nums[i]);
+                bench::do_not_optimize(d);
+#else
+                GmpInt t1, t2, d;
+                mpz_add(t1.val, a_nums[i].val, b_nums[i].val);
+                mpz_sub(t2.val, a_nums[i].val, b_nums[i].val);
+                mpz_mul(d.val, t1.val, t2.val);
+                bench::do_not_optimize(d.val);
+#endif
+            }
+        }, mul_div_iters);
+        reporter.add_metric(tier, bits, "Chained_Expr", mul_div_iters * N, elapsed);
     }
 }
 #endif

@@ -83,3 +83,46 @@ if(GMP_INCLUDE_DIR AND GMP_LIB)
 else()
     message(STATUS "[Benchmark] GMP not found (optional)")
 endif()
+
+# 4. Target: bench_layer1_kernels (Pure Arithmetic Kernels)
+add_executable(bench_layer1_kernels
+    "${CMAKE_CURRENT_SOURCE_DIR}/cpp/bench_layer1_kernels.cpp"
+)
+target_include_directories(bench_layer1_kernels PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include"
+)
+target_link_libraries(bench_layer1_kernels PRIVATE bigint)
+if(GMP_INCLUDE_DIR AND GMP_LIB)
+    target_include_directories(bench_layer1_kernels PRIVATE "${GMP_INCLUDE_DIR}")
+    target_link_libraries(bench_layer1_kernels PRIVATE ${GMP_LIB})
+endif()
+if(MSVC)
+    target_compile_options(bench_layer1_kernels PRIVATE /O2 /Oi /Ot /Gy)
+endif()
+
+# 5. Target: bench_layer3_overhead (Allocation & Representation Cost Decomposition)
+add_executable(bench_layer3_overhead
+    "${CMAKE_CURRENT_SOURCE_DIR}/cpp/bench_layer3_overhead.cpp"
+)
+target_include_directories(bench_layer3_overhead PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include"
+)
+target_link_libraries(bench_layer3_overhead PRIVATE bigint)
+if(MSVC)
+    target_compile_options(bench_layer3_overhead PRIVATE /O2 /Oi /Ot /Gy)
+endif()
+
+# 6. Target: bench_layer4_scaling (Algorithm Crossover & Asymptotic Scaling)
+add_executable(bench_layer4_scaling
+    "${CMAKE_CURRENT_SOURCE_DIR}/cpp/bench_layer4_scaling.cpp"
+)
+target_include_directories(bench_layer4_scaling PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include"
+)
+target_link_libraries(bench_layer4_scaling PRIVATE bigint)
+if(MSVC)
+    target_compile_options(bench_layer4_scaling PRIVATE /O2 /Oi /Ot /Gy)
+endif()

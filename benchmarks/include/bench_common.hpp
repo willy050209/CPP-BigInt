@@ -84,6 +84,7 @@ struct Metric {
     double total_ns;
     double ns_per_op;
     double ops_per_sec;
+    std::string layer = "layer2_user";
 };
 
 class BenchmarkReporter {
@@ -96,15 +97,16 @@ public:
         : m_target_name(std::move(target_name)) {}
 
     void add_metric(const std::string& tier, int bits, const std::string& op,
-                    size_t iters, double total_ns) {
+                    size_t iters, double total_ns, const std::string& layer = "layer2_user") {
         double ns_per_op = total_ns / static_cast<double>(iters);
         double ops_per_sec = (total_ns > 0.0) ? (static_cast<double>(iters) * 1e9 / total_ns) : 0.0;
-        m_metrics.push_back(Metric{m_target_name, tier, bits, op, iters, total_ns, ns_per_op, ops_per_sec});
+        m_metrics.push_back(Metric{m_target_name, tier, bits, op, iters, total_ns, ns_per_op, ops_per_sec, layer});
         
-        std::cout << std::left << std::setw(16) << m_target_name
+        std::cout << std::left << std::setw(18) << m_target_name
+                  << std::setw(14) << layer
                   << std::setw(8) << tier
                   << std::setw(6) << bits
-                  << std::setw(16) << op
+                  << std::setw(18) << op
                   << std::right << std::setw(12) << std::fixed << std::setprecision(2) << ns_per_op << " ns/op"
                   << std::setw(14) << std::fixed << std::setprecision(0) << ops_per_sec << " ops/s"
                   << std::endl;
@@ -122,6 +124,7 @@ public:
         for (size_t i = 0; i < m_metrics.size(); ++i) {
             const auto& m = m_metrics[i];
             out << "    {\n";
+            out << "      \"layer\": \"" << m.layer << "\",\n";
             out << "      \"tier\": \"" << m.tier << "\",\n";
             out << "      \"bits\": " << m.bits << ",\n";
             out << "      \"operation\": \"" << m.operation << "\",\n";
@@ -159,6 +162,22 @@ inline double measure_time_ns(Func&& f, size_t iterations, size_t warmup = 3, si
     }
     std::sort(sample_ns.begin(), sample_ns.end());
     return sample_ns[samples / 2]; // Return median sample
+}
+
+inline double measure_malloc_free_ns(size_t bytes, size_t iters) {
+    return measure_time_ns([bytes]() {
+        void* p = std::malloc(bytes);
+        bench::do_not_optimize(p);
+        std::free(p);
+    }, iters);
+}
+
+inline double measure_new_delete_u64_ns(size_t limbs, size_t iters) {
+    return measure_time_ns([limbs]() {
+        uint64_t* p = new uint64_t[limbs];
+        bench::do_not_optimize(p);
+        delete[] p;
+    }, iters);
 }
 
 } // namespace bench

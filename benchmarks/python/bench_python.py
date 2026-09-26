@@ -74,39 +74,53 @@ def run_suite(target_name, use_gmpy, data_dir, out_json):
             })
             print(f"{target_name:<22} {tier:<8} {bits:>6} {op:<16} {ns_per_op:>12.2f} ns/op {ops_per_sec:>14,.0f} ops/s")
 
-        # 1. Add
+        # 1. Add (Fresh Return)
         def test_add():
             sink = 0
             for i in range(N):
-                sink ^= (a_nums[i] + b_nums[i])
+                c = a_nums[i] + b_nums[i]
+                sink += (c > 0)
         record("Add", arith_iters, measure_ns(test_add, arith_iters))
+
+        # 1b. Add In-Place
+        def test_add_inplace():
+            sink = 0
+            a_copy = list(a_nums)
+            for i in range(N):
+                a_copy[i] += b_nums[i]
+                sink += (a_copy[i] > 0)
+        record("Add_InPlace", arith_iters, measure_ns(test_add_inplace, arith_iters))
 
         # 2. Sub
         def test_sub():
             sink = 0
             for i in range(N):
-                sink ^= (a_nums[i] - b_nums[i])
+                c = a_nums[i] - b_nums[i]
+                sink += (c > 0)
         record("Sub", arith_iters, measure_ns(test_sub, arith_iters))
 
         # 3. Mul
         def test_mul():
             sink = 0
             for i in range(N):
-                sink ^= (a_nums[i] * b_nums[i])
+                c = a_nums[i] * b_nums[i]
+                sink += (c > 0)
         record("Mul", mul_div_iters, measure_ns(test_mul, mul_div_iters))
 
         # 4. Div
         def test_div():
             sink = 0
             for i in range(N):
-                sink ^= (a_nums[i] // b_nums[i])
+                c = a_nums[i] // b_nums[i]
+                sink += (c > 0)
         record("Div", mul_div_iters, measure_ns(test_div, mul_div_iters))
 
         # 5. Mod
         def test_mod():
             sink = 0
             for i in range(N):
-                sink ^= (a_nums[i] % b_nums[i])
+                c = a_nums[i] % b_nums[i]
+                sink += (c > 0)
         record("Mod", mul_div_iters, measure_ns(test_mod, mul_div_iters))
 
         # 6. ToString_10
@@ -121,13 +135,15 @@ def run_suite(target_name, use_gmpy, data_dir, out_json):
             def test_from_str():
                 sink = 0
                 for i in range(N):
-                    sink ^= gmpy2.mpz(pairs[i][0])
+                    val = gmpy2.mpz(pairs[i][0])
+                    sink += (val > 0)
             record("FromString_10", io_iters, measure_ns(test_from_str, io_iters))
         else:
             def test_from_str():
                 sink = 0
                 for i in range(N):
-                    sink ^= int(pairs[i][0])
+                    val = int(pairs[i][0])
+                    sink += (val > 0)
             record("FromString_10", io_iters, measure_ns(test_from_str, io_iters))
 
         # 8. MemPressure: temporary variable chained operations
@@ -135,8 +151,16 @@ def run_suite(target_name, use_gmpy, data_dir, out_json):
             sink = 0
             for i in range(N):
                 tmp = (a_nums[i] + b_nums[i]) - (a_nums[i] ^ b_nums[i])
-                sink ^= tmp
+                sink += (tmp > 0)
         record("MemPressure", mem_iters, measure_ns(test_mem, mem_iters))
+
+        # 9. Chained temporary expression: (a + b) * (a - b)
+        def test_chained():
+            sink = 0
+            for i in range(N):
+                d = (a_nums[i] + b_nums[i]) * (a_nums[i] - b_nums[i])
+                sink += (d > 0)
+        record("Chained_Expr", mul_div_iters, measure_ns(test_chained, mul_div_iters))
 
     # Small
     run_tier("small", 64,  50, 50, 20, 50)

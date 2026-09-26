@@ -34,7 +34,7 @@ void run_benchmarks_for_tier(
         b_nums.emplace_back(p.b_dec);
     }
 
-    // 1. Addition (c = a + b)
+    // 1. Addition (c = a + b) - Fresh Return
     {
         double elapsed = bench::measure_time_ns([&]() {
             for (size_t i = 0; i < N; ++i) {
@@ -43,6 +43,18 @@ void run_benchmarks_for_tier(
             }
         }, arithmetic_iters);
         reporter.add_metric(tier, bits, "Add", arithmetic_iters * N, elapsed);
+    }
+
+    // 1b. Addition In-Place (a += b) - Capacity Reuse
+    {
+        auto a_copy = a_nums;
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+                a_copy[i] += b_nums[i];
+                bench::do_not_optimize(a_copy[i]);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Add_InPlace", arithmetic_iters * N, elapsed);
     }
 
     // 2. Subtraction (c = a - b)
@@ -121,6 +133,17 @@ void run_benchmarks_for_tier(
             }
         }, mem_pressure_iters);
         reporter.add_metric(tier, bits, "MemPressure", mem_pressure_iters * N, elapsed);
+    }
+
+    // 9. Chained temporary expression: (a + b) * (a - b)
+    {
+        double elapsed = bench::measure_time_ns([&]() {
+            for (size_t i = 0; i < N; ++i) {
+                numeric::bigint d = (a_nums[i] + b_nums[i]) * (a_nums[i] - b_nums[i]);
+                bench::do_not_optimize(d);
+            }
+        }, mul_div_iters);
+        reporter.add_metric(tier, bits, "Chained_Expr", mul_div_iters * N, elapsed);
     }
 }
 
