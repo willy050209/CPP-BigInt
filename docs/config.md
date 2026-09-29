@@ -124,24 +124,40 @@ inline __attribute__((always_inline)) inline // 觸發 duplicate 'inline' 語法
 
 ---
 
-### 6. SBO 小對象最佳化容量配置 (`NUMERIC_BIGINT_SBO_LIMBS`)
+### 6. SBO 小對象最佳化容量配置與樣板化 (`BasicBigInt<SboLimbs>`)
 
-CPP-BigInt 採用了 Small Buffer Optimization (SBO) 架構，預設在物件內部保留靜態 Limb 空間，避免短整數運算產生任何堆疊記憶體配置（Heap Allocation）：
+CPP-BigInt 採用了借鑒 **LLVM SmallVector** 的雙層儲存與演算法解耦架構：
+- **底層核心**：`numeric::BigIntBase`（非樣板中介層），封裝指針、大小、容量、符號，並實作 Karatsuba、Toom-3、Burnikel-Ziegler 等所有重量級演算法，杜絕樣板代碼膨脹（Zero Code Bloat）。
+- **最上層**：`numeric::BasicBigInt<size_t SboLimbs>`，僅負責靜態內聯陣列宣告與容量傳遞。
 
 ```cpp
-#ifndef NUMERIC_BIGINT_SBO_LIMBS
-#  define NUMERIC_BIGINT_SBO_LIMBS 4
-#endif
+template <size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
+class BasicBigInt;
+
+using BigInt     = BasicBigInt<NUMERIC_BIGINT_SBO_LIMBS>; // 預設 4 limbs (256-bit, 64B)
+using bigint     = BigInt;                                // 向後相容別名
+using BigInt256  = BasicBigInt<4>;                        // 256-bit SBO (64B)
+using bigint256  = BigInt256;
+using BigInt512  = BasicBigInt<8>;                        // 512-bit SBO (96B, 0-Heap Crypto)
+using bigint512  = BigInt512;
+using BigInt1024 = BasicBigInt<16>;                       // 1024-bit SBO (160B)
+using bigint1024 = BigInt1024;
 ```
 
 #### 數值與架構對照
 
-| 配置值 | 內聯肢數 | 內聯無號位元數 | `sizeof(bigint)` | 適用情境與設計權衡 |
+| 型別別名 | 內聯肢數 | 內聯無號位元數 | `sizeof(...)` | 適用情境與設計權衡 |
 | :---: | :---: | :---: | :---: | :--- |
-| **`4`** *(預設)* | 4 limbs (64-bit) | 256 bits | **64 bytes** | **極致快取友好**：整體結構體尺寸精確契合現代 CPU 單一 L1 快取行（Cache Line, 64 bytes）。涵蓋絕大多數常規高精度運算，並提供最高的記憶體密度。 |
-| **`8`** | 8 limbs (64-bit) | 512 bits | **96 bytes** | **密碼學專用 (Zero-Heap Crypto)**：為 256 位元橢圓曲線密碼（如 secp256k1、Curve25519）、SHA-512、Ed448 及 RSA 中間值提供完全零記憶體配置的純暫存器/棧上運算保障。 |
+| **`BigInt` / `bigint`** *(預設)* | 4 limbs (64-bit) | 256 bits | **64 bytes** | **極致快取友好**：整體結構體尺寸精確契合現代 CPU 單一 L1 快取行（Cache Line, 64 bytes）。涵蓋絕大多數常規高精度運算，並提供最高的記憶體密度。 |
+| **`BigInt512` / `bigint512`** | 8 limbs (64-bit) | 512 bits | **96 bytes** | **密碼學專用 (Zero-Heap Crypto)**：為 256/512 位元橢圓曲線密碼（如 secp256k1、Curve25519）、SHA-512、Ed448 及 RSA 中間值提供完全零記憶體配置的純暫存器/棧上運算保障。 |
+| **`BigInt1024` / `bigint1024`** | 16 limbs (64-bit) | 1024 bits | **160 bytes** | **大數專用**：為 RSA-1024 或超高精度運算提供棧上零配置運算。 |
 
-#### 配置方式
+#### 異質運算與右值取負
+- **異質雙目運算**：不同 SBO 容量的型別可直接混算（例如 `BasicBigInt<4> + BasicBigInt<8>`），回傳型別嚴格遵循 LHS（左運算元）型別。
+- **右值單元取負**：`operator-() &&` 原地反轉符號並沿用暫存緩衝區，杜絕任何不必要的動態記憶體配置。
+
+#### 全域預設配置方式
+若需變更全域預設之 `BigInt` / `bigint` 預設 Limb 數，可調整巨集 `NUMERIC_BIGINT_SBO_LIMBS`：
 - **CMake 全域配置**：
   ```cmake
   target_compile_definitions(my_project PRIVATE NUMERIC_BIGINT_SBO_LIMBS=8)

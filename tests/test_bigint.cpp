@@ -416,5 +416,88 @@ void run_test_bigint() {
         TEST_ASSERT(neg_big_val.to_string() == neg_long_str);
     }
 
+    // 17. 樣板化 SBO 容量 (BasicBigInt<SboLimbs>)、BigInt512 與異質運算測試
+    {
+#if defined(_WIN64) || defined(__x86_64__) || defined(__aarch64__) || (defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8)
+        static_assert(sizeof(numeric::BasicBigInt<4>) == 64, "BasicBigInt<4> must be exactly 64 bytes (1 cache line)");
+        static_assert(sizeof(numeric::BigInt) == 64, "BigInt must be exactly 64 bytes");
+        static_assert(sizeof(numeric::bigint) == 64, "bigint alias must be exactly 64 bytes");
+        static_assert(sizeof(numeric::BasicBigInt<8>) == 96, "BasicBigInt<8> must be exactly 96 bytes");
+        static_assert(sizeof(numeric::BigInt512) == 96, "BigInt512 must be exactly 96 bytes");
+        static_assert(sizeof(numeric::bigint512) == 96, "bigint512 alias must be exactly 96 bytes");
+#endif
+
+        // 17.1 BigInt512 零動態配置 512-bit 運算
+        numeric::BigInt512 val512(1);
+        val512 <<= 510;
+        TEST_ASSERT(val512.is_sbo());
+        TEST_ASSERT(val512.sbo_capacity() == 8);
+        TEST_ASSERT(val512.size() == 8);
+
+        val512 += (numeric::BigInt512(1) << 256);
+        TEST_ASSERT(val512.is_sbo());
+        TEST_ASSERT(val512.size() == 8);
+
+        // 17.2 異質運算（LHS 決定回傳型別）
+        numeric::BasicBigInt<4> a4(123456789);
+        numeric::BasicBigInt<8> b8(987654321);
+
+        auto c4 = a4 + b8;
+        auto d8 = b8 + a4;
+        static_assert(std::is_same<decltype(c4), numeric::BasicBigInt<4>>::value, "LHS determines return type");
+        static_assert(std::is_same<decltype(d8), numeric::BasicBigInt<8>>::value, "LHS determines return type");
+        TEST_ASSERT(c4 == d8);
+        TEST_ASSERT(c4 == 1111111110);
+        TEST_ASSERT(c4.is_sbo());
+        TEST_ASSERT(d8.is_sbo());
+
+        auto diff4 = a4 - b8;
+        auto diff8 = b8 - a4;
+        static_assert(std::is_same<decltype(diff4), numeric::BasicBigInt<4>>::value, "LHS determines return type");
+        static_assert(std::is_same<decltype(diff8), numeric::BasicBigInt<8>>::value, "LHS determines return type");
+        TEST_ASSERT(diff4 == -diff8);
+
+        auto prod4 = a4 * b8;
+        auto prod8 = b8 * a4;
+        static_assert(std::is_same<decltype(prod4), numeric::BasicBigInt<4>>::value, "LHS determines return type");
+        static_assert(std::is_same<decltype(prod8), numeric::BasicBigInt<8>>::value, "LHS determines return type");
+        TEST_ASSERT(prod4 == prod8);
+
+        // 17.3 異質位元運算
+        auto and_res = a4 & b8;
+        auto or_res = a4 | b8;
+        auto xor_res = a4 ^ b8;
+        static_assert(std::is_same<decltype(and_res), numeric::BasicBigInt<4>>::value, "LHS determines return type");
+        static_assert(std::is_same<decltype(or_res), numeric::BasicBigInt<4>>::value, "LHS determines return type");
+        static_assert(std::is_same<decltype(xor_res), numeric::BasicBigInt<4>>::value, "LHS determines return type");
+        TEST_ASSERT((a4 ^ b8 ^ b8) == a4);
+        TEST_ASSERT((a4 & b8) == (b8 & a4));
+        TEST_ASSERT((a4 | b8) == (b8 | a4));
+
+        // 17.4 跨 SBO 複製與移動賦值
+        numeric::BasicBigInt<4> small_target;
+        small_target = b8;
+        TEST_ASSERT(small_target == b8);
+        TEST_ASSERT(small_target.is_sbo());
+
+        numeric::BasicBigInt<8> large_target;
+        large_target = a4;
+        TEST_ASSERT(large_target == a4);
+        TEST_ASSERT(large_target.is_sbo());
+
+        numeric::BasicBigInt<8> b8_copy = b8;
+        numeric::BasicBigInt<4> moved_target = std::move(b8_copy);
+        TEST_ASSERT(moved_target == 987654321);
+        TEST_ASSERT(moved_target.is_sbo());
+
+        // 17.5 右值單元取負 (operator-() &&)
+        numeric::BigInt512 orig512 = 42;
+        auto neg512 = -std::move(orig512);
+        TEST_ASSERT(neg512 == -42);
+        TEST_ASSERT(neg512.is_sbo());
+        TEST_ASSERT(-(-neg512) == -42);
+        TEST_ASSERT((-numeric::BasicBigInt<4>(100)) == -100);
+    }
+
     std::cout << "--- BigInt Tests Completed Successfully ---" << std::endl;
 }

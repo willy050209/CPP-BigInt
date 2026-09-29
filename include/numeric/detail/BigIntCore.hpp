@@ -25,22 +25,27 @@
 #endif
 
 namespace numeric {
+
+class BigIntBase;
+
 namespace detail {
+    using BigIntBase = numeric::BigIntBase;
+    using BigIntStorage = numeric::BigIntBase;
+} // namespace detail
 
 /// <summary>
-/// BigInt 內部儲存層，採用 256-bit Small Buffer Optimization (SBO) 架構。
-/// 內建 4 個 64-bit limbs 緩衝區，當數值在 256 位元以內時達成 0 堆積記憶體配置。
-/// 整體結構大小在 64 位元架構下剛好對齊單一 64-Byte CPU L1 Cache Line。
+/// BigInt 基礎儲存與演算法基底類別，採用 LLVM SmallVector 雙層解耦架構。
+/// 支援動態指定 SBO 內聯容量，在 64 位元架構下基底大小嚴格控制為 32 位元組。
 /// </summary>
-class BigIntStorage {
+class BigIntBase {
 public:
-    static constexpr size_t SBO_CAPACITY = NUMERIC_BIGINT_SBO_LIMBS;
-
-    uint64_t m_sbo[SBO_CAPACITY];
-    uint64_t* m_heap;
-    size_t m_size;
-    size_t m_capacity;
-    int8_t m_sign;
+    uint64_t* m_data;
+    uint64_t* m_inline_data;
+    uint32_t  m_size;
+    uint32_t  m_capacity;
+    uint32_t  m_sbo_capacity;
+    int8_t    m_sign;
+    uint8_t   m_pad[3];
 
     /// <summary>
     /// 拷貝指定數量之 limbs，支援編譯期 constexpr 運算。
@@ -64,134 +69,276 @@ public:
     /// 檢查當前是否使用 SBO 內建緩衝區儲存。
     /// </summary>
     NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_sbo() const noexcept {
-        return m_heap == nullptr;
+        return m_inline_data != nullptr && m_data == m_inline_data;
+    }
+
+    /// <summary>
+    /// 檢查是否為小整數（SBO 模式之別名）。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_small() const noexcept {
+        return is_sbo();
     }
 
     /// <summary>
     /// 取得 limbs 資料指標（可修改）。
     /// </summary>
     NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 uint64_t* data() noexcept {
-        return (m_heap != nullptr) ? m_heap : m_sbo;
+        return m_data;
     }
 
     /// <summary>
     /// 取得 limbs 資料常數指標。
     /// </summary>
     NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t* data() const noexcept {
-        return (m_heap != nullptr) ? m_heap : m_sbo;
+        return m_data;
+    }
+
+    /// <summary>
+    /// 取得 limbs 資料常數指標。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t* limbs() const noexcept {
+        return m_data;
+    }
+
+    /// <summary>
+    /// 取得有效 limbs 數量。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t size() const noexcept {
+        return m_size;
+    }
+
+    /// <summary>
+    /// 取得有效 limbs 數量（size 之別名）。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t limb_count() const noexcept {
+        return m_size;
+    }
+
+    /// <summary>
+    /// 取得目前配置之總容量。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t capacity() const noexcept {
+        return m_capacity;
+    }
+
+    /// <summary>
+    /// 取得物件之 SBO 靜態內聯容量。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t sbo_capacity() const noexcept {
+        return m_sbo_capacity;
+    }
+
+    /// <summary>
+    /// 取得整數符號：負數為 -1，零為 0，正數為 1。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 int8_t sign() const noexcept {
+        return m_sign;
+    }
+
+    /// <summary>
+    /// 判斷是否為負數。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_negative() const noexcept {
+        return m_sign < 0;
+    }
+
+    /// <summary>
+    /// 判斷數值是否為 0。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_zero() const noexcept {
+        return m_sign == 0 || m_size == 0;
     }
 
     /// <summary>
     /// 下標運算子，直接存取指定索引之 limb。
     /// </summary>
     NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 uint64_t& operator[](size_t idx) noexcept {
-        return data()[idx];
+        return m_data[idx];
     }
 
     /// <summary>
     /// 下標常數運算子，直接唯讀存取指定索引之 limb。
     /// </summary>
     NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t& operator[](size_t idx) const noexcept {
-        return data()[idx];
+        return m_data[idx];
     }
 
     /// <summary>
-    /// 釋放堆積緩衝區並將內部資料重置回 SBO。
+    /// 釋放堆積緩衝區並將內部指標重置回 SBO。
     /// </summary>
     NUMERIC_CONSTEXPR_20 void reset_heap() noexcept {
-        if (m_heap != nullptr) {
-            delete[] m_heap;
-            m_heap = nullptr;
+        if (!is_sbo() && m_data != nullptr) {
+            delete[] m_data;
         }
-        m_capacity = SBO_CAPACITY;
+        m_data = m_inline_data;
+        m_capacity = m_sbo_capacity;
     }
 
     /// <summary>
-    /// 預設建構子：初始化為零值，使用 SBO 緩衝區。
+    /// 預設建構子：未配置 SBO 緩衝區（一般由衍生類別提供，或作為演算法內部暫存）。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntStorage() noexcept
-        : m_sbo{}, m_heap(nullptr), m_size(0), m_capacity(SBO_CAPACITY), m_sign(0) {}
+    NUMERIC_CONSTEXPR_20 BigIntBase() noexcept
+        : m_data(nullptr),
+          m_inline_data(nullptr),
+          m_size(0),
+          m_capacity(0),
+          m_sbo_capacity(0),
+          m_sign(0),
+          m_pad{0, 0, 0} {}
+
+    /// <summary>
+    /// 基底建構子：由衍生類別傳入 inline buffer 的位置與容量。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 BigIntBase(uint64_t* inline_ptr, uint32_t inline_cap) noexcept
+        : m_data(inline_ptr),
+          m_inline_data(inline_ptr),
+          m_size(0),
+          m_capacity(inline_cap),
+          m_sbo_capacity(inline_cap),
+          m_sign(0),
+          m_pad{0, 0, 0} {}
+
+    /// <summary>
+    /// 複製建構子：深拷貝另一物件之 limbs。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 BigIntBase(const BigIntBase& other)
+        : m_data(nullptr),
+          m_inline_data(nullptr),
+          m_size(0),
+          m_capacity(0),
+          m_sbo_capacity(0),
+          m_sign(0),
+          m_pad{0, 0, 0} {
+        assign_from(other);
+    }
+
+    /// <summary>
+    /// 移動建構子。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 BigIntBase(BigIntBase&& other) noexcept
+        : m_data(nullptr),
+          m_inline_data(nullptr),
+          m_size(0),
+          m_capacity(0),
+          m_sbo_capacity(0),
+          m_sign(0),
+          m_pad{0, 0, 0} {
+        move_from(std::move(other));
+    }
 
     /// <summary>
     /// 解構子：若已配置堆積記憶體則進行釋放。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 ~BigIntStorage() noexcept {
-        reset_heap();
-    }
-
-    /// <summary>
-    /// 複製建構子：深拷貝另一儲存物件之 limbs。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntStorage(const BigIntStorage& other)
-        : m_sbo{},
-          m_heap(nullptr), m_size(other.m_size), m_capacity(SBO_CAPACITY), m_sign(other.m_sign) {
-        copy_limbs(m_sbo, other.m_sbo, SBO_CAPACITY);
-        if (!other.is_sbo()) {
-            m_capacity = other.m_capacity;
-            m_heap = new uint64_t[m_capacity];
-            copy_limbs(m_heap, other.m_heap, other.m_size);
+    NUMERIC_CONSTEXPR_20 ~BigIntBase() noexcept {
+        if (!is_sbo() && m_data != nullptr) {
+            delete[] m_data;
+            m_data = nullptr;
         }
     }
 
     /// <summary>
-    /// 移動建構子：轉移堆積緩衝區擁有權，或拷貝 SBO 內容，確保來源安全復位。
+    /// 複製賦值運算子。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntStorage(BigIntStorage&& other) noexcept
-        : m_sbo{},
-          m_heap(other.m_heap), m_size(other.m_size), m_capacity(other.m_capacity), m_sign(other.m_sign) {
-        copy_limbs(m_sbo, other.m_sbo, SBO_CAPACITY);
-        other.m_heap = nullptr;
-        other.m_size = 0;
-        other.m_capacity = SBO_CAPACITY;
-        other.m_sign = 0;
-        zero_limbs(other.m_sbo, SBO_CAPACITY);
-    }
-
-    /// <summary>
-    /// 複製賦值運算子：提供強例外安全保證 (Strong Exception Guarantee)。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntStorage& operator=(const BigIntStorage& other) {
-        if (this != &other) {
-            if (other.is_sbo()) {
-                reset_heap();
-                copy_limbs(m_sbo, other.m_sbo, SBO_CAPACITY);
-            } else {
-                if (m_capacity < other.m_size || is_sbo()) {
-                    uint64_t* new_data = new uint64_t[other.m_capacity];
-                    reset_heap();
-                    m_heap = new_data;
-                    m_capacity = other.m_capacity;
-                }
-                copy_limbs(m_heap, other.m_heap, other.m_size);
-            }
-            m_size = other.m_size;
-            m_sign = other.m_sign;
-        }
+    NUMERIC_CONSTEXPR_20 BigIntBase& operator=(const BigIntBase& other) {
+        assign_from(other);
         return *this;
     }
 
     /// <summary>
-    /// 移動賦值運算子：轉移緩衝區資源。
+    /// 移動賦值運算子。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntStorage& operator=(BigIntStorage&& other) noexcept {
+    NUMERIC_CONSTEXPR_20 BigIntBase& operator=(BigIntBase&& other) noexcept {
+        move_from(std::move(other));
+        return *this;
+    }
+
+    /// <summary>
+    /// 複製賦值輔助函式：深拷貝另一物件之 limbs，支援跨 SBO 容量。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void assign_from(const BigIntBase& other) {
+        if (this != &other) {
+            if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
+                reset_heap();
+                if (other.m_size > 0 && other.m_data != nullptr) {
+                    copy_limbs(m_inline_data, other.m_data, other.m_size);
+                }
+                if (m_sbo_capacity > other.m_size) {
+                    zero_limbs(m_inline_data + other.m_size, m_sbo_capacity - other.m_size);
+                }
+                m_data = m_inline_data;
+                m_capacity = m_sbo_capacity;
+            } else {
+                size_t needed = (other.m_capacity > other.m_size) ? other.m_capacity : other.m_size;
+                if (needed == 0) needed = 1;
+                if (other.m_size > 0) {
+                    if (m_capacity < other.m_size || is_sbo() || m_data == nullptr) {
+                        uint64_t* new_heap = new uint64_t[needed];
+                        reset_heap();
+                        m_data = new_heap;
+                        m_capacity = static_cast<uint32_t>(needed);
+                    }
+                    copy_limbs(m_data, other.m_data, other.m_size);
+                } else {
+                    reset_heap();
+                }
+            }
+            m_size = other.m_size;
+            m_sign = other.m_sign;
+        }
+    }
+
+    /// <summary>
+    /// 移動賦值輔助函式：若來源在 SBO 內則 memcpy，超出 SBO 則直接竊取 heap 指標。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void move_from(BigIntBase&& other) noexcept {
         if (this != &other) {
             reset_heap();
-            if (other.is_sbo()) {
-                copy_limbs(m_sbo, other.m_sbo, SBO_CAPACITY);
-                m_capacity = SBO_CAPACITY;
+            if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
+                if (other.m_size > 0 && other.m_data != nullptr) {
+                    copy_limbs(m_inline_data, other.m_data, other.m_size);
+                }
+                if (m_sbo_capacity > other.m_size) {
+                    zero_limbs(m_inline_data + other.m_size, m_sbo_capacity - other.m_size);
+                }
+                m_data = m_inline_data;
+                m_capacity = m_sbo_capacity;
+                if (!other.is_sbo() && other.m_data != nullptr) {
+                    delete[] other.m_data;
+                }
+                other.m_data = other.m_inline_data;
+                other.m_capacity = other.m_sbo_capacity;
+            } else if (other.is_sbo()) {
+                if (other.m_size > 0) {
+                    m_data = new uint64_t[other.m_size];
+                    m_capacity = static_cast<uint32_t>(other.m_size);
+                    copy_limbs(m_data, other.m_inline_data, other.m_size);
+                } else {
+                    m_data = m_inline_data;
+                    m_capacity = m_sbo_capacity;
+                }
             } else {
-                m_heap = other.m_heap;
+                m_data = other.m_data;
                 m_capacity = other.m_capacity;
-                other.m_heap = nullptr;
-                other.m_capacity = SBO_CAPACITY;
+                other.m_data = other.m_inline_data;
+                other.m_capacity = other.m_sbo_capacity;
             }
             m_size = other.m_size;
             m_sign = other.m_sign;
             other.m_size = 0;
             other.m_sign = 0;
-            zero_limbs(other.m_sbo, SBO_CAPACITY);
+            if (other.m_inline_data != nullptr && other.m_sbo_capacity > 0) {
+                zero_limbs(other.m_inline_data, other.m_sbo_capacity);
+            }
         }
-        return *this;
+    }
+
+    /// <summary>
+    /// 原地單元取負操作。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void negate() noexcept {
+        if (m_size > 0 && m_sign != 0) {
+            m_sign = -m_sign;
+        }
     }
 
     /// <summary>
@@ -200,14 +347,14 @@ public:
     NUMERIC_CONSTEXPR_20 void reserve(size_t new_cap) {
         if (new_cap <= m_capacity) return;
         uint64_t* new_heap = new uint64_t[new_cap];
-        if (m_size > 0) {
-            copy_limbs(new_heap, data(), m_size);
+        if (m_size > 0 && m_data != nullptr) {
+            copy_limbs(new_heap, m_data, m_size);
         }
-        if (m_heap != nullptr) {
-            delete[] m_heap;
+        if (!is_sbo() && m_data != nullptr) {
+            delete[] m_data;
         }
-        m_heap = new_heap;
-        m_capacity = new_cap;
+        m_data = new_heap;
+        m_capacity = static_cast<uint32_t>(new_cap);
     }
 
     /// <summary>
@@ -215,7 +362,7 @@ public:
     /// </summary>
     NUMERIC_CONSTEXPR_20 void resize(size_t new_size, uint64_t init_val = 0) {
         if (new_size > m_capacity) {
-            size_t next_cap = m_capacity * 2;
+            size_t next_cap = static_cast<size_t>(m_capacity) * 2;
             if (next_cap < new_size) next_cap = new_size;
             reserve(next_cap);
         }
@@ -225,7 +372,7 @@ public:
                 d[i] = init_val;
             }
         }
-        m_size = new_size;
+        m_size = static_cast<uint32_t>(new_size);
     }
 
     /// <summary>
@@ -246,14 +393,16 @@ public:
     /// 當 limbs 數量小於等於 SBO 容量且當前為堆積配置時，縮回 SBO。
     /// </summary>
     NUMERIC_CONSTEXPR_20 void shrink_to_sbo_if_possible() noexcept {
-        if (!is_sbo() && m_size <= SBO_CAPACITY) {
-            uint64_t* old_heap = m_heap;
-            for (size_t i = 0; i < SBO_CAPACITY; ++i) {
-                m_sbo[i] = (i < m_size) ? old_heap[i] : 0;
+        if (!is_sbo() && m_sbo_capacity > 0 && m_inline_data != nullptr && m_size <= m_sbo_capacity) {
+            uint64_t* old_heap = m_data;
+            for (size_t i = 0; i < m_sbo_capacity; ++i) {
+                m_inline_data[i] = (i < m_size && old_heap != nullptr) ? old_heap[i] : 0;
             }
-            m_heap = nullptr;
-            m_capacity = SBO_CAPACITY;
-            delete[] old_heap;
+            m_data = m_inline_data;
+            m_capacity = m_sbo_capacity;
+            if (old_heap != nullptr) {
+                delete[] old_heap;
+            }
         }
     }
 
@@ -268,25 +417,38 @@ public:
     /// <summary>
     /// 設定為 64 位元無符號整數與指定正負號。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 void set_uint64(uint64_t val, int8_t sign) noexcept {
-        reset_heap();
-        for (size_t i = 0; i < SBO_CAPACITY; ++i) {
-            m_sbo[i] = 0;
-        }
+    NUMERIC_CONSTEXPR_20 void set_uint64(uint64_t val, int8_t sign) {
         if (val == 0) {
             m_size = 0;
             m_sign = 0;
-        } else {
+            return;
+        }
+        if (m_sbo_capacity > 0 && m_inline_data != nullptr) {
+            reset_heap();
+            for (size_t i = 0; i < m_sbo_capacity; ++i) {
+                m_inline_data[i] = 0;
+            }
             m_size = 1;
             m_sign = sign;
-            m_sbo[0] = val;
+            m_inline_data[0] = val;
+        } else {
+            if (m_capacity < 1 || m_data == nullptr) {
+                reserve(1);
+            }
+            m_size = 1;
+            m_sign = sign;
+            m_data[0] = val;
         }
     }
 };
 
 #if defined(_WIN64) || defined(__x86_64__) || defined(__aarch64__) || (defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8)
-static_assert(sizeof(BigIntStorage) == 64, "BigIntStorage must be exactly 64 bytes on 64-bit platforms!");
+static_assert(sizeof(BigIntBase) == 32, "BigIntBase must be exactly 32 bytes on 64-bit platforms!");
 #endif
+
+namespace detail {
+
+using BigIntStorage = numeric::BigIntBase;
 
 /// <summary>
 /// BigInt 演算法核心類別，提供無符號與有符號之任意精度運算。
@@ -724,17 +886,23 @@ public:
         c = adc64(c, a3, b3, &r3);
 
         if (c == 0) {
-            res.reset_heap();
-            res.m_sbo[0] = r0;
-            res.m_sbo[1] = r1;
-            res.m_sbo[2] = r2;
-            res.m_sbo[3] = r3;
+            if (res.sbo_capacity() >= 4) {
+                res.reset_heap();
+            } else if (res.capacity() < 4) {
+                res.reserve(4);
+            }
+            uint64_t* d = res.data();
+            d[0] = r0;
+            d[1] = r1;
+            d[2] = r2;
+            d[3] = r3;
             size_t s = 4;
-            while (s > 0 && res.m_sbo[s - 1] == 0) --s;
-            res.m_size = s;
+            while (s > 0 && d[s - 1] == 0) --s;
+            res.m_size = static_cast<uint32_t>(s);
             if (s == 0) {
                 res.m_sign = 0;
             }
+            res.shrink_to_sbo_if_possible();
         } else {
             res.resize(5, 0);
             uint64_t* d = res.data();
@@ -774,18 +942,24 @@ public:
         borrow = sbb64(borrow, a2, b2, &r2);
         borrow = sbb64(borrow, a3, b3, &r3);
 
-        res.reset_heap();
-        res.m_sbo[0] = r0;
-        res.m_sbo[1] = r1;
-        res.m_sbo[2] = r2;
-        res.m_sbo[3] = r3;
+        if (res.sbo_capacity() >= 4) {
+            res.reset_heap();
+        } else if (res.capacity() < 4) {
+            res.reserve(4);
+        }
+        uint64_t* d = res.data();
+        d[0] = r0;
+        d[1] = r1;
+        d[2] = r2;
+        d[3] = r3;
 
         size_t s = 4;
-        while (s > 0 && res.m_sbo[s - 1] == 0) --s;
-        res.m_size = s;
+        while (s > 0 && d[s - 1] == 0) --s;
+        res.m_size = static_cast<uint32_t>(s);
         if (s == 0) {
             res.m_sign = 0;
         }
+        res.shrink_to_sbo_if_possible();
     }
 
     /// <summary>
@@ -862,7 +1036,7 @@ public:
     static NUMERIC_CONSTEXPR_20 void add_unsigned(
         BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
     {
-        if (a.m_size <= BigIntStorage::SBO_CAPACITY && b.m_size <= BigIntStorage::SBO_CAPACITY) {
+        if (a.m_size <= 4 && b.m_size <= 4) {
             add_unsigned_sbo4(res, a, b);
         } else {
             add_unsigned_general(res, a, b);
@@ -916,11 +1090,11 @@ public:
 
         size_t sz = a_len;
         while (sz > 0 && res.data()[sz - 1] == 0) --sz;
-        res.m_size = sz;
+        res.m_size = static_cast<uint32_t>(sz);
         if (sz == 0) {
             res.m_sign = 0;
         }
-        if (sz <= BigIntStorage::SBO_CAPACITY) {
+        if (sz <= res.m_sbo_capacity) {
             res.shrink_to_sbo_if_possible();
         }
     }

@@ -8,9 +8,11 @@
 
 ## 核心特性
 
-- **可配置 Small Buffer Optimization (SBO)**：
-  - 預設 256 位元（4 個 64-bit limbs），結構大小為 64 位元組剛好對齊單一 L1 快取行，享有 **0 次 Heap 動態記憶體配置**。
-  - 可透過編譯旗標 `-DNUMERIC_BIGINT_SBO_LIMBS=8` 擴展至 512 位元（8 limbs），為 256 位元與 512 位元密碼學運算提供完全零堆疊配置的暫存器/棧上運算保障。
+- **樣板化 Small Buffer Optimization (SBO) 雙層架構**：
+  - 借鑒 **LLVM SmallVector** 設計，將核心運算邏輯解耦至中介層 `BigIntBase`，上層樣板 `BasicBigInt<SboLimbs>` 僅宣告內聯容量，徹底杜絕多樣板實例化之編譯代碼膨脹（Zero Code Bloat）。
+  - **預設 `BigInt` / `bigint`**：256 位元（4 個 64-bit limbs），結構大小為 64 位元組剛好對齊單一 L1 快取行，享有 **0 次 Heap 動態記憶體配置**。
+  - **專用別名 `BigInt512` / `bigint512`**：8 limbs（512 位元，96 位元組），為 SHA-512、Curve25519、Ed448 及 512-bit 密碼學運算提供完全零堆疊配置的棧上運算保障。
+  - **異質運算與右值取負**：支援不同 SBO 容量型別無縫混算（回傳型別嚴格由 LHS 決定），且單元取負支援右值暫存緩衝區原地重用（`operator-() &&`）。
   - 數值擴展時自動平滑晉升至動態陣列；運算回縮至 SBO 容量以內時自動退回 SBO，維持極高快取局部性。
 - **高效數值運算法與硬體原語加速**：
   - **對稱加減法 (~5 ns)**：直接編譯為硬體進位/借位指令（MSVC `_addcarry_u64` / `_subborrow_u64`，GCC/Clang `__builtin_addcll` / `__builtin_subcll`），配合 SBO 4-limb 完全無分支展開快速路徑（`add_unsigned_sbo4` / `sub_unsigned_sbo4`），於暫存器內以單週期管線執行；雙目運算子採 Direct-Result 零深拷貝與 Move-Reuse 機制。
