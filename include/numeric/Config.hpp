@@ -51,6 +51,13 @@
 #  define NUMERIC_CONSTEXPR_20 inline
 #endif
 
+// Inline variable support (C++17+)
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_17)
+#  define NUMERIC_INLINE_VAR inline
+#else
+#  define NUMERIC_INLINE_VAR
+#endif
+
 // Exception handling and throw-or-abort abstraction
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || (defined(_MSC_VER) && defined(_CPPUNWIND))
 #  define NUMERIC_HAS_EXCEPTIONS 1

@@ -90,6 +90,13 @@ export module bigint;
 #  define NUMERIC_CONSTEXPR_20 inline
 #endif
 
+// Inline variable support (C++17+)
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_17)
+#  define NUMERIC_INLINE_VAR inline
+#else
+#  define NUMERIC_INLINE_VAR
+#endif
+
 // Exception handling and throw-or-abort abstraction
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || (defined(_MSC_VER) && defined(_CPPUNWIND))
 #  define NUMERIC_HAS_EXCEPTIONS 1
@@ -229,7 +236,8 @@ public:
     uint32_t  m_capacity;
     uint32_t  m_sbo_capacity;
     int8_t    m_sign;
-    uint8_t   m_pad[3];
+    bool      m_is_sbo;
+    uint8_t   m_pad[2];
 
     /// <summary>
     /// 拷貝指定數量之 limbs，支援編譯期 constexpr 運算。
@@ -253,7 +261,7 @@ public:
     /// 檢查當前是否使用 SBO 內建緩衝區儲存。
     /// </summary>
     NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_sbo() const noexcept {
-        return m_inline_data != nullptr && m_data == m_inline_data;
+        return m_is_sbo;
     }
 
     /// <summary>
@@ -351,11 +359,12 @@ public:
     /// 釋放堆積緩衝區並將內部指標重置回 SBO。
     /// </summary>
     NUMERIC_CONSTEXPR_20 void reset_heap() noexcept {
-        if (!is_sbo() && m_data != nullptr) {
+        if (!m_is_sbo && m_data != nullptr) {
             delete[] m_data;
         }
         m_data = m_inline_data;
         m_capacity = m_sbo_capacity;
+        m_is_sbo = (m_sbo_capacity > 0);
     }
 
     /// <summary>
@@ -368,7 +377,8 @@ public:
           m_capacity(0),
           m_sbo_capacity(0),
           m_sign(0),
-          m_pad{0, 0, 0} {}
+          m_is_sbo(false),
+          m_pad{0, 0} {}
 
     /// <summary>
     /// 基底建構子：由衍生類別傳入 inline buffer 的位置與容量。
@@ -380,7 +390,8 @@ public:
           m_capacity(inline_cap),
           m_sbo_capacity(inline_cap),
           m_sign(0),
-          m_pad{0, 0, 0} {}
+          m_is_sbo(inline_cap > 0),
+          m_pad{0, 0} {}
 
     /// <summary>
     /// 複製建構子：深拷貝另一物件之 limbs。
@@ -392,7 +403,8 @@ public:
           m_capacity(0),
           m_sbo_capacity(0),
           m_sign(0),
-          m_pad{0, 0, 0} {
+          m_is_sbo(false),
+          m_pad{0, 0} {
         assign_from(other);
     }
 
@@ -406,7 +418,8 @@ public:
           m_capacity(0),
           m_sbo_capacity(0),
           m_sign(0),
-          m_pad{0, 0, 0} {
+          m_is_sbo(false),
+          m_pad{0, 0} {
         move_from(std::move(other));
     }
 
@@ -414,7 +427,7 @@ public:
     /// 解構子：若已配置堆積記憶體則進行釋放。
     /// </summary>
     NUMERIC_CONSTEXPR_20 ~BigIntBase() noexcept {
-        if (!is_sbo() && m_data != nullptr) {
+        if (!m_is_sbo && m_data != nullptr) {
             delete[] m_data;
             m_data = nullptr;
         }
@@ -451,15 +464,17 @@ public:
                 }
                 m_data = m_inline_data;
                 m_capacity = m_sbo_capacity;
+                m_is_sbo = true;
             } else {
                 size_t needed = (other.m_capacity > other.m_size) ? other.m_capacity : other.m_size;
                 if (needed == 0) needed = 1;
                 if (other.m_size > 0) {
-                    if (m_capacity < other.m_size || is_sbo() || m_data == nullptr) {
+                    if (m_capacity < other.m_size || m_is_sbo || m_data == nullptr) {
                         uint64_t* new_heap = new uint64_t[needed];
                         reset_heap();
                         m_data = new_heap;
                         m_capacity = static_cast<uint32_t>(needed);
+                        m_is_sbo = false;
                     }
                     copy_limbs(m_data, other.m_data, other.m_size);
                 } else {
@@ -486,31 +501,37 @@ public:
                 }
                 m_data = m_inline_data;
                 m_capacity = m_sbo_capacity;
-                if (!other.is_sbo() && other.m_data != nullptr) {
+                m_is_sbo = true;
+                if (!other.m_is_sbo && other.m_data != nullptr) {
                     delete[] other.m_data;
                 }
                 other.m_data = other.m_inline_data;
                 other.m_capacity = other.m_sbo_capacity;
-            } else if (other.is_sbo()) {
+                other.m_is_sbo = (other.m_sbo_capacity > 0);
+            } else if (other.m_is_sbo) {
                 if (other.m_size > 0) {
                     m_data = new uint64_t[other.m_size];
                     m_capacity = static_cast<uint32_t>(other.m_size);
+                    m_is_sbo = false;
                     copy_limbs(m_data, other.m_inline_data, other.m_size);
                 } else {
                     m_data = m_inline_data;
                     m_capacity = m_sbo_capacity;
+                    m_is_sbo = (m_sbo_capacity > 0);
                 }
             } else {
                 m_data = other.m_data;
                 m_capacity = other.m_capacity;
+                m_is_sbo = false;
                 other.m_data = other.m_inline_data;
                 other.m_capacity = other.m_sbo_capacity;
+                other.m_is_sbo = (other.m_sbo_capacity > 0);
             }
             m_size = other.m_size;
             m_sign = other.m_sign;
             other.m_size = 0;
             other.m_sign = 0;
-            if (other.m_inline_data != nullptr && other.m_sbo_capacity > 0) {
+            if (other.m_sbo_capacity > 0) {
                 zero_limbs(other.m_inline_data, other.m_sbo_capacity);
             }
         }
@@ -534,11 +555,12 @@ public:
         if (m_size > 0 && m_data != nullptr) {
             copy_limbs(new_heap, m_data, m_size);
         }
-        if (!is_sbo() && m_data != nullptr) {
+        if (!m_is_sbo && m_data != nullptr) {
             delete[] m_data;
         }
         m_data = new_heap;
         m_capacity = static_cast<uint32_t>(new_cap);
+        m_is_sbo = false;
     }
 
     /// <summary>
@@ -577,13 +599,14 @@ public:
     /// 當 limbs 數量小於等於 SBO 容量且當前為堆積配置時，縮回 SBO。
     /// </summary>
     NUMERIC_CONSTEXPR_20 void shrink_to_sbo_if_possible() noexcept {
-        if (!is_sbo() && m_sbo_capacity > 0 && m_inline_data != nullptr && m_size <= m_sbo_capacity) {
+        if (!m_is_sbo && m_sbo_capacity > 0 && m_size <= m_sbo_capacity) {
             uint64_t* old_heap = m_data;
             for (size_t i = 0; i < m_sbo_capacity; ++i) {
                 m_inline_data[i] = (i < m_size && old_heap != nullptr) ? old_heap[i] : 0;
             }
             m_data = m_inline_data;
             m_capacity = m_sbo_capacity;
+            m_is_sbo = true;
             if (old_heap != nullptr) {
                 delete[] old_heap;
             }
@@ -607,7 +630,7 @@ public:
             m_sign = 0;
             return;
         }
-        if (m_sbo_capacity > 0 && m_inline_data != nullptr) {
+        if (m_sbo_capacity > 0) {
             reset_heap();
             for (size_t i = 0; i < m_sbo_capacity; ++i) {
                 m_inline_data[i] = 0;
@@ -615,6 +638,7 @@ public:
             m_size = 1;
             m_sign = sign;
             m_inline_data[0] = val;
+            m_is_sbo = true;
         } else {
             if (m_capacity < 1 || m_data == nullptr) {
                 reserve(1);
@@ -622,6 +646,7 @@ public:
             m_size = 1;
             m_sign = sign;
             m_data[0] = val;
+            m_is_sbo = false;
         }
     }
 };
@@ -3568,8 +3593,8 @@ private:
     alignas(uint64_t) uint64_t m_inline_storage[ACTUAL_SBO];
 
 public:
-    static constexpr detail::BigIntConstantProxy zero{0};
-    static constexpr detail::BigIntConstantProxy one{1};
+    static NUMERIC_INLINE_VAR constexpr detail::BigIntConstantProxy zero{0};
+    static NUMERIC_INLINE_VAR constexpr detail::BigIntConstantProxy one{1};
 
     /// <summary>
     /// 預設建構子：初始化數值為 0。
@@ -4682,6 +4707,14 @@ public:
         return os;
     }
 };
+
+#if (NUMERIC_CPLUSPLUS < NUMERIC_CXX_17)
+template <size_t SboLimbs>
+constexpr detail::BigIntConstantProxy BasicBigInt<SboLimbs>::zero;
+
+template <size_t SboLimbs>
+constexpr detail::BigIntConstantProxy BasicBigInt<SboLimbs>::one;
+#endif
 
 #if defined(_WIN64) || defined(__x86_64__) || defined(__aarch64__) || (defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8)
 static_assert(sizeof(BasicBigInt<4>) == 64, "BasicBigInt<4> must be exactly 64 bytes (1 cache line) on 64-bit platforms!");

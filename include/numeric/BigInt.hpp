@@ -137,8 +137,8 @@ private:
     alignas(uint64_t) uint64_t m_inline_storage[ACTUAL_SBO];
 
 public:
-    static constexpr detail::BigIntConstantProxy zero{0};
-    static constexpr detail::BigIntConstantProxy one{1};
+    static NUMERIC_INLINE_VAR constexpr detail::BigIntConstantProxy zero{0};
+    static NUMERIC_INLINE_VAR constexpr detail::BigIntConstantProxy one{1};
 
     /// <summary>
     /// 預設建構子：初始化數值為 0。
@@ -1251,6 +1251,14 @@ public:
         return os;
     }
 };
+
+#if (NUMERIC_CPLUSPLUS < NUMERIC_CXX_17)
+template <size_t SboLimbs>
+constexpr detail::BigIntConstantProxy BasicBigInt<SboLimbs>::zero;
+
+template <size_t SboLimbs>
+constexpr detail::BigIntConstantProxy BasicBigInt<SboLimbs>::one;
+#endif
 
 #if defined(_WIN64) || defined(__x86_64__) || defined(__aarch64__) || (defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8)
 static_assert(sizeof(BasicBigInt<4>) == 64, "BasicBigInt<4> must be exactly 64 bytes (1 cache line) on 64-bit platforms!");
