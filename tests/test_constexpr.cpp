@@ -20,6 +20,30 @@ namespace test_ce_bigint {
     static_assert(b_proxy_zero == 0, "bigint::zero proxy check");
     static_assert(b_proxy_one == 1, "bigint::one proxy check");
 
+    // 直讀常數代理與純量及物件之編譯期比對 (避免建構完整 BasicBigInt 物件)
+    static_assert(numeric::bigint::zero == 0, "bigint::zero == 0");
+    static_assert(numeric::bigint::one == 1, "bigint::one == 1");
+    static_assert(0 == numeric::bigint::zero, "0 == bigint::zero");
+    static_assert(1 == numeric::bigint::one, "1 == bigint::one");
+    static_assert(numeric::bigint::zero != 1, "bigint::zero != 1");
+    static_assert(numeric::bigint::one != 0, "bigint::one != 0");
+    static_assert(numeric::bigint::zero == numeric::bigint::zero, "zero == zero");
+    static_assert(numeric::bigint::zero != numeric::bigint::one, "zero != one");
+    static_assert(numeric::bigint::zero() == 0, "bigint::zero() == 0");
+    static_assert(numeric::bigint::one() == 1, "bigint::one() == 1");
+    static_assert(b_proxy_zero == numeric::bigint::zero, "b_proxy_zero == bigint::zero");
+    static_assert(b_proxy_one == numeric::bigint::one, "b_proxy_one == bigint::one");
+    static_assert(numeric::bigint::zero == b_proxy_zero, "bigint::zero == b_proxy_zero");
+    static_assert(numeric::bigint::one == b_proxy_one, "bigint::one == b_proxy_one");
+
+    // 跨 SBO 樣板參數常數初始化與靜態檢查
+    constexpr numeric::BigInt512 b512_zero = numeric::BigInt512::zero;
+    constexpr numeric::BigInt512 b512_one = numeric::BigInt512::one;
+    static_assert(b512_zero == 0, "BigInt512::zero == 0");
+    static_assert(b512_one == 1, "BigInt512::one == 1");
+    static_assert(b512_zero == numeric::bigint::zero, "b512_zero == bigint::zero");
+    static_assert(numeric::BigInt512::zero == b512_zero, "BigInt512::zero == b512_zero");
+
     constexpr numeric::bigint b42(42);
     constexpr numeric::bigint b_neg(-100);
     static_assert(b42 == 42, "bigint(42) == 42");

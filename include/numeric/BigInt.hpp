@@ -45,28 +45,66 @@ namespace detail {
         constexpr explicit BigIntConstantProxy(int64_t v) noexcept : value(v) {}
 
         /// <summary>
+        /// 純量轉換至 int64_t。
+        /// </summary>
+        constexpr explicit operator int64_t() const noexcept { return value; }
+
+        /// <summary>
+        /// 條件判斷布林轉換。
+        /// </summary>
+        constexpr explicit operator bool() const noexcept { return value != 0; }
+
+        /// <summary>
         /// 隱式轉換至 BasicBigInt<SboLimbs>。
         /// </summary>
         template <size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
-        NUMERIC_CONSTEXPR_20 operator BasicBigInt<SboLimbs>() const;
+        NUMERIC_CONSTEXPR_20 operator BasicBigInt<SboLimbs>() const noexcept;
 
         /// <summary>
         /// 函式呼叫運算子，傳回對應之 BasicBigInt<SboLimbs>。
         /// </summary>
         template <size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
-        NUMERIC_CONSTEXPR_20 BasicBigInt<SboLimbs> operator()() const;
+        NUMERIC_CONSTEXPR_20 BasicBigInt<SboLimbs> operator()() const noexcept;
 
-        template <typename T>
-        friend NUMERIC_CONSTEXPR_20 bool operator==(BigIntConstantProxy p, const T& other);
+        friend constexpr bool operator==(BigIntConstantProxy a, BigIntConstantProxy b) noexcept {
+            return a.value == b.value;
+        }
 
-        template <typename T>
-        friend NUMERIC_CONSTEXPR_20 bool operator==(const T& other, BigIntConstantProxy p);
+        friend constexpr bool operator!=(BigIntConstantProxy a, BigIntConstantProxy b) noexcept {
+            return a.value != b.value;
+        }
 
-        template <typename T>
-        friend NUMERIC_CONSTEXPR_20 bool operator!=(BigIntConstantProxy p, const T& other);
+        template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
+        friend NUMERIC_CONSTEXPR_20 bool operator==(BigIntConstantProxy p, T other) noexcept {
+            return p.value == static_cast<int64_t>(other);
+        }
 
-        template <typename T>
-        friend NUMERIC_CONSTEXPR_20 bool operator!=(const T& other, BigIntConstantProxy p);
+        template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
+        friend NUMERIC_CONSTEXPR_20 bool operator==(T other, BigIntConstantProxy p) noexcept {
+            return static_cast<int64_t>(other) == p.value;
+        }
+
+        template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
+        friend NUMERIC_CONSTEXPR_20 bool operator!=(BigIntConstantProxy p, T other) noexcept {
+            return p.value != static_cast<int64_t>(other);
+        }
+
+        template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
+        friend NUMERIC_CONSTEXPR_20 bool operator!=(T other, BigIntConstantProxy p) noexcept {
+            return static_cast<int64_t>(other) != p.value;
+        }
+
+        template <size_t OtherLimbs>
+        friend NUMERIC_CONSTEXPR_20 bool operator==(BigIntConstantProxy p, const BasicBigInt<OtherLimbs>& other) noexcept;
+
+        template <size_t OtherLimbs>
+        friend NUMERIC_CONSTEXPR_20 bool operator==(const BasicBigInt<OtherLimbs>& other, BigIntConstantProxy p) noexcept;
+
+        template <size_t OtherLimbs>
+        friend NUMERIC_CONSTEXPR_20 bool operator!=(BigIntConstantProxy p, const BasicBigInt<OtherLimbs>& other) noexcept;
+
+        template <size_t OtherLimbs>
+        friend NUMERIC_CONSTEXPR_20 bool operator!=(const BasicBigInt<OtherLimbs>& other, BigIntConstantProxy p) noexcept;
     };
 
     /// <summary>
@@ -99,6 +137,9 @@ private:
     alignas(uint64_t) uint64_t m_inline_storage[ACTUAL_SBO];
 
 public:
+    static constexpr detail::BigIntConstantProxy zero{0};
+    static constexpr detail::BigIntConstantProxy one{1};
+
     /// <summary>
     /// 預設建構子：初始化數值為 0。
     /// </summary>
@@ -180,9 +221,22 @@ public:
     }
 
     /// <summary>
+    /// 自常數代理物件指派賦值。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 BasicBigInt& operator=(detail::BigIntConstantProxy proxy) noexcept {
+        return *this = BasicBigInt(proxy.value);
+    }
+
+    /// <summary>
     /// 解構子。
     /// </summary>
     NUMERIC_CONSTEXPR_20 ~BasicBigInt() = default;
+
+    /// <summary>
+    /// 自常數代理物件（如 bigint::zero, bigint::one）直接建構，避免透過轉換運算子樣板推導。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 BasicBigInt(detail::BigIntConstantProxy proxy) noexcept
+        : BasicBigInt(proxy.value) {}
 
     /// <summary>
     /// 自內部 BigIntStorage 建立 BasicBigInt。
@@ -1206,33 +1260,33 @@ static_assert(sizeof(BasicBigInt<8>) == 96, "BasicBigInt<8> must be exactly 96 b
 namespace detail {
 
     template <size_t SboLimbs>
-    NUMERIC_CONSTEXPR_20 BigIntConstantProxy::operator BasicBigInt<SboLimbs>() const {
+    NUMERIC_CONSTEXPR_20 BigIntConstantProxy::operator BasicBigInt<SboLimbs>() const noexcept {
         return BasicBigInt<SboLimbs>(value);
     }
 
     template <size_t SboLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt<SboLimbs> BigIntConstantProxy::operator()() const {
+    NUMERIC_CONSTEXPR_20 BasicBigInt<SboLimbs> BigIntConstantProxy::operator()() const noexcept {
         return BasicBigInt<SboLimbs>(value);
     }
 
-    template <typename T>
-    NUMERIC_CONSTEXPR_20 bool operator==(BigIntConstantProxy p, const T& other) {
-        return BasicBigInt<>(p.value) == other;
+    template <size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 bool operator==(BigIntConstantProxy p, const BasicBigInt<OtherLimbs>& other) noexcept {
+        return other == p.value;
     }
 
-    template <typename T>
-    NUMERIC_CONSTEXPR_20 bool operator==(const T& other, BigIntConstantProxy p) {
-        return other == BasicBigInt<>(p.value);
+    template <size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 bool operator==(const BasicBigInt<OtherLimbs>& other, BigIntConstantProxy p) noexcept {
+        return other == p.value;
     }
 
-    template <typename T>
-    NUMERIC_CONSTEXPR_20 bool operator!=(BigIntConstantProxy p, const T& other) {
-        return BasicBigInt<>(p.value) != other;
+    template <size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 bool operator!=(BigIntConstantProxy p, const BasicBigInt<OtherLimbs>& other) noexcept {
+        return !(other == p.value);
     }
 
-    template <typename T>
-    NUMERIC_CONSTEXPR_20 bool operator!=(const T& other, BigIntConstantProxy p) {
-        return other != BasicBigInt<>(p.value);
+    template <size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 bool operator!=(const BasicBigInt<OtherLimbs>& other, BigIntConstantProxy p) noexcept {
+        return !(other == p.value);
     }
 
 } // namespace detail
