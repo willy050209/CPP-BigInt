@@ -167,9 +167,6 @@ namespace numeric {
     using string_view = std::string_view;
 }
 #else
-#  include <cstddef>
-#  include <cstring>
-#  include <string>
 namespace numeric {
     class string_view {
     private:
@@ -196,471 +193,25 @@ namespace numeric {
 #endif
 // --- End Section: include/numeric/Config.hpp ---
 
-// --- Begin Section: include/numeric/detail/BigIntCore.hpp ---
-// BigIntCore.hpp
-// Core arbitrary-precision integer algorithms and SBO storage layer for CPP-BigInt.
+// --- Begin Section: include/numeric/detail/Intrinsics.hpp ---
+// Intrinsics.hpp
+// Hardware-accelerated CPU intrinsics and bitwise primitive operations for CPP-BigInt.
 // Zero external dependencies, downward compatible from C++23 to C++11.
 
 
 #if defined(_MSC_VER)
-#include <intrin.h>
+#  include <intrin.h>
 #elif (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
-#include <immintrin.h>
+#  include <immintrin.h>
 #endif
 
 namespace numeric {
-
-class BigIntBase;
-
-namespace detail {
-    using BigIntBase = numeric::BigIntBase;
-    using BigIntStorage = numeric::BigIntBase;
-} // namespace detail
-
-/// <summary>
-/// BigInt 基礎儲存與演算法基底類別，採用 LLVM SmallVector 雙層解耦架構。
-/// 支援動態指定 SBO 內聯容量，在 64 位元架構下基底大小嚴格控制為 32 位元組。
-/// </summary>
-class BigIntBase {
-public:
-    uint64_t* m_data;
-    uint64_t* m_inline_data;
-    uint32_t  m_size;
-    uint32_t  m_capacity;
-    uint32_t  m_sbo_capacity;
-    int8_t    m_sign;
-    bool      m_is_sbo;
-    uint8_t   m_pad[2];
-
-    /// <summary>
-    /// 拷貝指定數量之 limbs，支援編譯期 constexpr 運算。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20 void copy_limbs(uint64_t* dst, const uint64_t* src, size_t count) noexcept {
-        for (size_t i = 0; i < count; ++i) {
-            dst[i] = src[i];
-        }
-    }
-
-    /// <summary>
-    /// 將指定數量之 limbs 清零，支援編譯期 constexpr 運算。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20 void zero_limbs(uint64_t* dst, size_t count) noexcept {
-        for (size_t i = 0; i < count; ++i) {
-            dst[i] = 0;
-        }
-    }
-
-    /// <summary>
-    /// 檢查當前是否使用 SBO 內建緩衝區儲存。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_sbo() const noexcept {
-        return m_is_sbo;
-    }
-
-    /// <summary>
-    /// 檢查是否為小整數（SBO 模式之別名）。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_small() const noexcept {
-        return is_sbo();
-    }
-
-    /// <summary>
-    /// 取得 limbs 資料指標（可修改）。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 uint64_t* data() noexcept {
-        return m_data;
-    }
-
-    /// <summary>
-    /// 取得 limbs 資料常數指標。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t* data() const noexcept {
-        return m_data;
-    }
-
-    /// <summary>
-    /// 取得 limbs 資料常數指標。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t* limbs() const noexcept {
-        return m_data;
-    }
-
-    /// <summary>
-    /// 取得有效 limbs 數量。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t size() const noexcept {
-        return m_size;
-    }
-
-    /// <summary>
-    /// 取得有效 limbs 數量（size 之別名）。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t limb_count() const noexcept {
-        return m_size;
-    }
-
-    /// <summary>
-    /// 取得目前配置之總容量。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t capacity() const noexcept {
-        return m_capacity;
-    }
-
-    /// <summary>
-    /// 取得物件之 SBO 靜態內聯容量。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t sbo_capacity() const noexcept {
-        return m_sbo_capacity;
-    }
-
-    /// <summary>
-    /// 取得整數符號：負數為 -1，零為 0，正數為 1。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 int8_t sign() const noexcept {
-        return m_sign;
-    }
-
-    /// <summary>
-    /// 判斷是否為負數。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_negative() const noexcept {
-        return m_sign < 0;
-    }
-
-    /// <summary>
-    /// 判斷數值是否為 0。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_zero() const noexcept {
-        return m_sign == 0 || m_size == 0;
-    }
-
-    /// <summary>
-    /// 下標運算子，直接存取指定索引之 limb。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 uint64_t& operator[](size_t idx) noexcept {
-        return m_data[idx];
-    }
-
-    /// <summary>
-    /// 下標常數運算子，直接唯讀存取指定索引之 limb。
-    /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t& operator[](size_t idx) const noexcept {
-        return m_data[idx];
-    }
-
-    /// <summary>
-    /// 釋放堆積緩衝區並將內部指標重置回 SBO。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 void reset_heap() noexcept {
-        if (!m_is_sbo && m_data != nullptr) {
-            delete[] m_data;
-        }
-        m_data = m_inline_data;
-        m_capacity = m_sbo_capacity;
-        m_is_sbo = (m_sbo_capacity > 0);
-    }
-
-    /// <summary>
-    /// 預設建構子：未配置 SBO 緩衝區（一般由衍生類別提供，或作為演算法內部暫存）。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntBase() noexcept
-        : m_data(nullptr),
-          m_inline_data(nullptr),
-          m_size(0),
-          m_capacity(0),
-          m_sbo_capacity(0),
-          m_sign(0),
-          m_is_sbo(false),
-          m_pad{0, 0} {}
-
-    /// <summary>
-    /// 基底建構子：由衍生類別傳入 inline buffer 的位置與容量。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntBase(uint64_t* inline_ptr, uint32_t inline_cap) noexcept
-        : m_data(inline_ptr),
-          m_inline_data(inline_ptr),
-          m_size(0),
-          m_capacity(inline_cap),
-          m_sbo_capacity(inline_cap),
-          m_sign(0),
-          m_is_sbo(inline_cap > 0),
-          m_pad{0, 0} {}
-
-    /// <summary>
-    /// 複製建構子：深拷貝另一物件之 limbs。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntBase(const BigIntBase& other)
-        : m_data(nullptr),
-          m_inline_data(nullptr),
-          m_size(0),
-          m_capacity(0),
-          m_sbo_capacity(0),
-          m_sign(0),
-          m_is_sbo(false),
-          m_pad{0, 0} {
-        assign_from(other);
-    }
-
-    /// <summary>
-    /// 移動建構子。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntBase(BigIntBase&& other) noexcept
-        : m_data(nullptr),
-          m_inline_data(nullptr),
-          m_size(0),
-          m_capacity(0),
-          m_sbo_capacity(0),
-          m_sign(0),
-          m_is_sbo(false),
-          m_pad{0, 0} {
-        move_from(std::move(other));
-    }
-
-    /// <summary>
-    /// 解構子：若已配置堆積記憶體則進行釋放。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 ~BigIntBase() noexcept {
-        if (!m_is_sbo && m_data != nullptr) {
-            delete[] m_data;
-            m_data = nullptr;
-        }
-    }
-
-    /// <summary>
-    /// 複製賦值運算子。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntBase& operator=(const BigIntBase& other) {
-        assign_from(other);
-        return *this;
-    }
-
-    /// <summary>
-    /// 移動賦值運算子。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntBase& operator=(BigIntBase&& other) noexcept {
-        move_from(std::move(other));
-        return *this;
-    }
-
-    /// <summary>
-    /// 複製賦值輔助函式：深拷貝另一物件之 limbs，支援跨 SBO 容量。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 void assign_from(const BigIntBase& other) {
-        if (this != &other) {
-            if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
-                reset_heap();
-                if (other.m_size > 0) {
-                    copy_limbs(m_inline_data, other.m_data, other.m_size);
-                }
-                if (m_sbo_capacity > other.m_size) {
-                    zero_limbs(m_inline_data + other.m_size, m_sbo_capacity - other.m_size);
-                }
-                m_data = m_inline_data;
-                m_capacity = m_sbo_capacity;
-                m_is_sbo = true;
-            } else {
-                size_t needed = (other.m_capacity > other.m_size) ? other.m_capacity : other.m_size;
-                if (needed == 0) needed = 1;
-                if (other.m_size > 0) {
-                    if (m_capacity < other.m_size || m_is_sbo || m_data == nullptr) {
-                        uint64_t* new_heap = new uint64_t[needed];
-                        reset_heap();
-                        m_data = new_heap;
-                        m_capacity = static_cast<uint32_t>(needed);
-                        m_is_sbo = false;
-                    }
-                    copy_limbs(m_data, other.m_data, other.m_size);
-                } else {
-                    reset_heap();
-                }
-            }
-            m_size = other.m_size;
-            m_sign = other.m_sign;
-        }
-    }
-
-    /// <summary>
-    /// 移動賦值輔助函式：若來源在 SBO 內則 memcpy，超出 SBO 則直接竊取 heap 指標。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 void move_from(BigIntBase&& other) noexcept {
-        if (this != &other) {
-            reset_heap();
-            if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
-                if (other.m_size > 0) {
-                    copy_limbs(m_inline_data, other.m_data, other.m_size);
-                }
-                if (m_sbo_capacity > other.m_size) {
-                    zero_limbs(m_inline_data + other.m_size, m_sbo_capacity - other.m_size);
-                }
-                m_data = m_inline_data;
-                m_capacity = m_sbo_capacity;
-                m_is_sbo = true;
-                if (!other.m_is_sbo && other.m_data != nullptr) {
-                    delete[] other.m_data;
-                }
-                other.m_data = other.m_inline_data;
-                other.m_capacity = other.m_sbo_capacity;
-                other.m_is_sbo = (other.m_sbo_capacity > 0);
-            } else if (other.m_is_sbo) {
-                if (other.m_size > 0) {
-                    m_data = new uint64_t[other.m_size];
-                    m_capacity = static_cast<uint32_t>(other.m_size);
-                    m_is_sbo = false;
-                    copy_limbs(m_data, other.m_inline_data, other.m_size);
-                } else {
-                    m_data = m_inline_data;
-                    m_capacity = m_sbo_capacity;
-                    m_is_sbo = (m_sbo_capacity > 0);
-                }
-            } else {
-                m_data = other.m_data;
-                m_capacity = other.m_capacity;
-                m_is_sbo = false;
-                other.m_data = other.m_inline_data;
-                other.m_capacity = other.m_sbo_capacity;
-                other.m_is_sbo = (other.m_sbo_capacity > 0);
-            }
-            m_size = other.m_size;
-            m_sign = other.m_sign;
-            other.m_size = 0;
-            other.m_sign = 0;
-            if (other.m_sbo_capacity > 0) {
-                zero_limbs(other.m_inline_data, other.m_sbo_capacity);
-            }
-        }
-    }
-
-    /// <summary>
-    /// 原地單元取負操作。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 void negate() noexcept {
-        if (m_size > 0 && m_sign != 0) {
-            m_sign = -m_sign;
-        }
-    }
-
-    /// <summary>
-    /// 預留緩衝區容量。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 void reserve(size_t new_cap) {
-        if (new_cap <= m_capacity) return;
-        uint64_t* new_heap = new uint64_t[new_cap];
-        if (m_size > 0) {
-            copy_limbs(new_heap, m_data, m_size);
-        }
-        if (!m_is_sbo && m_data != nullptr) {
-            delete[] m_data;
-        }
-        m_data = new_heap;
-        m_capacity = static_cast<uint32_t>(new_cap);
-        m_is_sbo = false;
-    }
-
-    /// <summary>
-    /// 調整 limbs 數量大小並可選填預設值。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 void resize(size_t new_size, uint64_t init_val = 0) {
-        if (new_size > m_capacity) {
-            size_t next_cap = static_cast<size_t>(m_capacity) * 2;
-            if (next_cap < new_size) next_cap = new_size;
-            reserve(next_cap);
-        }
-        uint64_t* d = data();
-        if (new_size > m_size) {
-            for (size_t i = m_size; i < new_size; ++i) {
-                d[i] = init_val;
-            }
-        }
-        m_size = static_cast<uint32_t>(new_size);
-    }
-
-    /// <summary>
-    /// 規範化 limbs 陣列，移除高位無效之 0 limbs 並調整正負符號；若長度落回 SBO 則縮回 SBO。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 void normalize() noexcept {
-        uint64_t* d = data();
-        while (m_size > 0 && d[m_size - 1] == 0) {
-            --m_size;
-        }
-        if (m_size == 0) {
-            m_sign = 0;
-        }
-        shrink_to_sbo_if_possible();
-    }
-
-    /// <summary>
-    /// 當 limbs 數量小於等於 SBO 容量且當前為堆積配置時，縮回 SBO。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 void shrink_to_sbo_if_possible() noexcept {
-        if (!m_is_sbo && m_sbo_capacity > 0 && m_size <= m_sbo_capacity) {
-            uint64_t* old_heap = m_data;
-            for (size_t i = 0; i < m_sbo_capacity; ++i) {
-                m_inline_data[i] = (i < m_size && old_heap != nullptr) ? old_heap[i] : 0;
-            }
-            m_data = m_inline_data;
-            m_capacity = m_sbo_capacity;
-            m_is_sbo = true;
-            if (old_heap != nullptr) {
-                delete[] old_heap;
-            }
-        }
-    }
-
-    /// <summary>
-    /// 清空數值為 0。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 void clear() noexcept {
-        m_size = 0;
-        m_sign = 0;
-    }
-
-    /// <summary>
-    /// 設定為 64 位元無符號整數與指定正負號。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 void set_uint64(uint64_t val, int8_t sign) {
-        if (val == 0) {
-            m_size = 0;
-            m_sign = 0;
-            return;
-        }
-        if (m_sbo_capacity > 0) {
-            reset_heap();
-            for (size_t i = 0; i < m_sbo_capacity; ++i) {
-                m_inline_data[i] = 0;
-            }
-            m_size = 1;
-            m_sign = sign;
-            m_inline_data[0] = val;
-            m_is_sbo = true;
-        } else {
-            if (m_capacity < 1 || m_data == nullptr) {
-                reserve(1);
-            }
-            m_size = 1;
-            m_sign = sign;
-            m_data[0] = val;
-            m_is_sbo = false;
-        }
-    }
-};
-
-#if defined(_WIN64) || defined(__x86_64__) || defined(__aarch64__) || (defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8)
-static_assert(sizeof(BigIntBase) == 32, "BigIntBase must be exactly 32 bytes on 64-bit platforms!");
-#endif
-
 namespace detail {
 
-using BigIntStorage = numeric::BigIntBase;
-
 /// <summary>
-/// BigInt 演算法核心類別，提供無符號與有符號之任意精度運算。
+/// 底層硬體指令與暫存器原語輔助結構。
 /// </summary>
-class BigIntCore {
-public:
-    static constexpr size_t KARATSUBA_THRESHOLD = 16;
-    static constexpr size_t TOOM3_THRESHOLD = 2048;
-    static constexpr size_t FROM_STRING_DC_THRESHOLD = 10;
-
+struct BigIntIntrinsics {
     /// <summary>
     /// 64-bit ADC 原語：out = a + b + carry_in，回傳 carry_out (0 或 1)。
     /// 消除 C++ 純量條件判斷分支，並支援 C++20 constexpr 常數求值。
@@ -743,109 +294,6 @@ public:
         *out = diff2;
         return b1 | b2;
 #endif
-    }
-
-    /// <summary>
-    /// 2-Digit 快速十進位查詢表（200 位元組，長駐 L1 Cache）。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20_FORCEINLINE const char* get_digit_pairs() noexcept {
-        return
-            "00010203040506070809"
-            "10111213141516171819"
-            "20212223242526272829"
-            "30313233343536373839"
-            "40414243444546474849"
-            "50515253545556575859"
-            "60616263646566676869"
-            "70717273747576777879"
-            "80818283848586878889"
-            "90919293949596979899";
-    }
-
-    /// <summary>
-    /// 支援完整 64 位元無符號整數（最大 18446744073709551615，共 20 位）之精準十進位位數判定。
-    /// 採零硬體除法二分判定分支，單一週期等級解析，杜絕任何緩衝區溢位。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20_FORCEINLINE size_t digits10_u64(uint64_t v) noexcept {
-        if (v < 100000000ULL) { // < 10^8
-            if (v < 10000ULL) { // < 10^4
-                if (v < 100ULL) return (v < 10ULL) ? 1 : 2;
-                else return (v < 1000ULL) ? 3 : 4;
-            } else {
-                if (v < 1000000ULL) return (v < 100000ULL) ? 5 : 6;
-                else return (v < 10000000ULL) ? 7 : 8;
-            }
-        } else if (v < 10000000000000000ULL) { // < 10^16
-            if (v < 1000000000000ULL) { // < 10^12
-                if (v < 10000000000ULL) return (v < 1000000000ULL) ? 9 : 10;
-                else return (v < 100000000000ULL) ? 11 : 12;
-            } else {
-                if (v < 100000000000000ULL) return (v < 10000000000000ULL) ? 13 : 14;
-                else return (v < 1000000000000000ULL) ? 15 : 16;
-            }
-        } else { // >= 10^16
-            if (v < 100000000000000000ULL) return 17;
-            if (v < 1000000000000000000ULL) return 18;
-            if (v < 10000000000000000000ULL) return 19;
-            return 20;
-        }
-    }
-
-    /// <summary>
-    /// 格式化最高位 chunk：直接利用已知的 top_digits 由尾向頭倒序填寫。
-    /// 採 10^8 區塊分割與純 32 位元倒序倒數乘法，徹底消除 64 位元硬體除法延遲。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20_FORCEINLINE void format_highest_chunk(
-        char* dst, uint64_t val, size_t digits) noexcept
-    {
-        const char* pairs = get_digit_pairs();
-        int pos = static_cast<int>(digits);
-        while (val >= 100000000ULL) {
-            uint64_t q = val / 100000000ULL;
-            uint32_t v32 = static_cast<uint32_t>(val - q * 100000000ULL);
-            val = q;
-            for (int k = 0; k < 4; ++k) {
-                uint32_t q32 = v32 / 100;
-                uint32_t rem = v32 - q32 * 100;
-                v32 = q32;
-                pos -= 2;
-                dst[pos]     = pairs[rem * 2];
-                dst[pos + 1] = pairs[rem * 2 + 1];
-            }
-        }
-        uint32_t v32 = static_cast<uint32_t>(val);
-        while (v32 >= 100) {
-            uint32_t q32 = v32 / 100;
-            uint32_t rem = v32 - q32 * 100;
-            v32 = q32;
-            pos -= 2;
-            dst[pos]     = pairs[rem * 2];
-            dst[pos + 1] = pairs[rem * 2 + 1];
-        }
-        if (v32 < 10) {
-            dst[--pos] = static_cast<char>('0' + v32);
-        } else {
-            pos -= 2;
-            dst[pos]     = pairs[v32 * 2];
-            dst[pos + 1] = pairs[v32 * 2 + 1];
-        }
-        assert(pos == 0 && "format_highest_chunk failed to match exact digit count");
-    }
-
-    /// <summary>
-    /// 格式化中間 19 位 fixed-width chunk：倒序逆向填充 9 組 LUT 雙字元加上 1 個最高位單字元。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20_FORCEINLINE void format_chunk_19_digits(
-        char* dst, uint64_t val) noexcept
-    {
-        const char* pairs = get_digit_pairs();
-        for (int p = 8; p >= 0; --p) {
-            uint32_t rem = static_cast<uint32_t>(val % 100);
-            val /= 100;
-            dst[1 + p * 2]     = pairs[rem * 2];
-            dst[1 + p * 2 + 1] = pairs[rem * 2 + 1];
-        }
-        dst[0] = static_cast<char>('0' + val);
     }
 
     /// <summary>
@@ -1018,28 +466,483 @@ public:
         rem = r;
         return q_est;
     }
+};
+
+} // namespace detail
+} // namespace numeric
+// --- End Section: include/numeric/detail/Intrinsics.hpp ---
+
+// --- Begin Section: include/numeric/detail/Storage.hpp ---
+// Storage.hpp
+// Decoupled storage and memory management base class (BigIntBase) for CPP-BigInt.
+// Employs LLVM SmallVector two-layer architecture with compile-time SBO parameterization.
+// Zero external dependencies, downward compatible from C++23 to C++11.
+
+
+namespace numeric {
+
+class BigIntBase;
+
+namespace detail {
+    using BigIntBase = numeric::BigIntBase;
+    using BigIntStorage = numeric::BigIntBase;
+} // namespace detail
+
+/// <summary>
+/// BigInt 基礎儲存與演算法基底類別，採用 LLVM SmallVector 雙層解耦架構。
+/// 支援動態指定 SBO 內聯容量，在 64 位元架構下基底大小嚴格控制為 32 位元組。
+/// </summary>
+class BigIntBase {
+public:
+    uint64_t* m_data;
+    uint64_t* m_inline_data;
+    uint32_t  m_size;
+    uint32_t  m_capacity;
+    uint32_t  m_sbo_capacity;
+    int8_t    m_sign;
+    bool      m_is_sbo;
+    uint8_t   m_pad[2];
 
     /// <summary>
-    /// 將 64 位元無符號整數格式化為十進位字元陣列寫入 buf（不含 null 結尾），回傳字元長度。
-    /// 棧上無配置零開銷輔助函式。
+    /// 拷貝指定數量之 limbs，支援編譯期 constexpr 運算。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 size_t format_uint64_to_buf(char* buf, uint64_t val) noexcept {
-        if (val == 0) {
-            buf[0] = '0';
-            return 1;
+    static NUMERIC_CONSTEXPR_20 void copy_limbs(uint64_t* dst, const uint64_t* src, size_t count) noexcept {
+        for (size_t i = 0; i < count; ++i) {
+            dst[i] = src[i];
         }
-        char tmp[24];
-        size_t pos = 0;
-        while (val > 0) {
-            tmp[pos++] = static_cast<char>('0' + (val % 10));
-            val /= 10;
-        }
-        for (size_t i = 0; i < pos; ++i) {
-            buf[i] = tmp[pos - 1 - i];
-        }
-        return pos;
     }
 
+    /// <summary>
+    /// 將指定數量之 limbs 清零，支援編譯期 constexpr 運算。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void zero_limbs(uint64_t* dst, size_t count) noexcept {
+        for (size_t i = 0; i < count; ++i) {
+            dst[i] = 0;
+        }
+    }
+
+    /// <summary>
+    /// 檢查當前是否使用 SBO 內建緩衝區儲存。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_sbo() const noexcept {
+        return m_is_sbo;
+    }
+
+    /// <summary>
+    /// 檢查是否為小整數（SBO 模式之別名）。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_small() const noexcept {
+        return is_sbo();
+    }
+
+    /// <summary>
+    /// 檢查當前資料指標是否指向內聯 SBO 陣列。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_inline() const noexcept {
+        return m_is_sbo;
+    }
+
+    /// <summary>
+    /// 取得 limbs 資料指標（可修改）。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 uint64_t* data() noexcept {
+        return m_data;
+    }
+
+    /// <summary>
+    /// 取得 limbs 資料常數指標。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t* data() const noexcept {
+        return m_data;
+    }
+
+    /// <summary>
+    /// 取得 limbs 資料常數指標。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t* limbs() const noexcept {
+        return m_data;
+    }
+
+    /// <summary>
+    /// 取得有效 limbs 數量。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t size() const noexcept {
+        return m_size;
+    }
+
+    /// <summary>
+    /// 取得有效 limbs 數量（size 之別名）。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t limb_count() const noexcept {
+        return m_size;
+    }
+
+    /// <summary>
+    /// 取得目前配置之總容量。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t capacity() const noexcept {
+        return m_capacity;
+    }
+
+    /// <summary>
+    /// 取得物件之 SBO 靜態內聯容量。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t sbo_capacity() const noexcept {
+        return m_sbo_capacity;
+    }
+
+    /// <summary>
+    /// 取得整數符號：負數為 -1，零為 0，正數為 1。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 int8_t sign() const noexcept {
+        return m_sign;
+    }
+
+    /// <summary>
+    /// 判斷是否為負數。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_negative() const noexcept {
+        return m_sign < 0;
+    }
+
+    /// <summary>
+    /// 判斷數值是否為 0。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_zero() const noexcept {
+        return m_sign == 0 || m_size == 0;
+    }
+
+    /// <summary>
+    /// 下標運算子，直接存取指定索引之 limb。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 uint64_t& operator[](size_t idx) noexcept {
+        return m_data[idx];
+    }
+
+    /// <summary>
+    /// 下標常數運算子，直接唯讀存取指定索引之 limb。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t& operator[](size_t idx) const noexcept {
+        return m_data[idx];
+    }
+
+    /// <summary>
+    /// 釋放堆積緩衝區並將內部指標重置回 SBO。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void reset_heap() noexcept {
+        if (!m_is_sbo && m_data != nullptr && m_data != m_inline_data) {
+            delete[] m_data;
+        }
+        m_data = m_inline_data;
+        m_capacity = m_sbo_capacity;
+        m_is_sbo = (m_sbo_capacity > 0);
+    }
+
+    /// <summary>
+    /// 預設建構子：未配置 SBO 緩衝區（一般由衍生類別提供，或作為演算法內部暫存）。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 BigIntBase() noexcept
+        : m_data(nullptr),
+          m_inline_data(nullptr),
+          m_size(0),
+          m_capacity(0),
+          m_sbo_capacity(0),
+          m_sign(0),
+          m_is_sbo(false),
+          m_pad{0, 0} {}
+
+    /// <summary>
+    /// 基底建構子：由衍生類別傳入 inline buffer 的位置與容量。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 BigIntBase(uint64_t* inline_ptr, uint32_t inline_cap) noexcept
+        : m_data(inline_cap > 0 ? inline_ptr : nullptr),
+          m_inline_data(inline_cap > 0 ? inline_ptr : nullptr),
+          m_size(0),
+          m_capacity(inline_cap),
+          m_sbo_capacity(inline_cap),
+          m_sign(0),
+          m_is_sbo(inline_cap > 0),
+          m_pad{0, 0} {}
+
+    /// <summary>
+    /// 複製建構子：深拷貝另一物件之 limbs。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 BigIntBase(const BigIntBase& other)
+        : m_data(nullptr),
+          m_inline_data(nullptr),
+          m_size(0),
+          m_capacity(0),
+          m_sbo_capacity(0),
+          m_sign(0),
+          m_is_sbo(false),
+          m_pad{0, 0} {
+        assign_from(other);
+    }
+
+    /// <summary>
+    /// 移動建構子。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 BigIntBase(BigIntBase&& other) noexcept
+        : m_data(nullptr),
+          m_inline_data(nullptr),
+          m_size(0),
+          m_capacity(0),
+          m_sbo_capacity(0),
+          m_sign(0),
+          m_is_sbo(false),
+          m_pad{0, 0} {
+        move_from(std::move(other));
+    }
+
+    /// <summary>
+    /// 解構子：若已配置堆積記憶體則進行釋放。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 ~BigIntBase() noexcept {
+        if (!m_is_sbo && m_data != nullptr && m_data != m_inline_data) {
+            delete[] m_data;
+            m_data = nullptr;
+        }
+    }
+
+    /// <summary>
+    /// 複製賦值運算子。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 BigIntBase& operator=(const BigIntBase& other) {
+        assign_from(other);
+        return *this;
+    }
+
+    /// <summary>
+    /// 移動賦值運算子。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 BigIntBase& operator=(BigIntBase&& other) noexcept {
+        move_from(std::move(other));
+        return *this;
+    }
+
+    /// <summary>
+    /// 複製賦值輔助函式：深拷貝另一物件之 limbs，支援跨 SBO 容量。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void assign_from(const BigIntBase& other) {
+        if (this != &other) {
+            if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
+                reset_heap();
+                if (other.m_size > 0) {
+                    copy_limbs(m_inline_data, other.m_data, other.m_size);
+                }
+                if (m_sbo_capacity > other.m_size) {
+                    zero_limbs(m_inline_data + other.m_size, m_sbo_capacity - other.m_size);
+                }
+                m_data = m_inline_data;
+                m_capacity = m_sbo_capacity;
+                m_is_sbo = true;
+            } else {
+                size_t needed = (other.m_capacity > other.m_size) ? other.m_capacity : other.m_size;
+                if (needed == 0) needed = 1;
+                if (other.m_size > 0) {
+                    if (m_capacity < other.m_size || m_is_sbo || m_data == nullptr) {
+                        uint64_t* new_heap = new uint64_t[needed];
+                        reset_heap();
+                        m_data = new_heap;
+                        m_capacity = static_cast<uint32_t>(needed);
+                        m_is_sbo = false;
+                    }
+                    copy_limbs(m_data, other.m_data, other.m_size);
+                } else {
+                    reset_heap();
+                }
+            }
+            m_size = other.m_size;
+            m_sign = other.m_sign;
+        }
+    }
+
+    /// <summary>
+    /// 移動賦值輔助函式：若來源在 SBO 內則 memcpy，超出 SBO 則直接竊取 heap 指標。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void move_from(BigIntBase&& other) noexcept {
+        if (this != &other) {
+            reset_heap();
+            if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
+                if (other.m_size > 0) {
+                    copy_limbs(m_inline_data, other.m_data, other.m_size);
+                }
+                if (m_sbo_capacity > other.m_size) {
+                    zero_limbs(m_inline_data + other.m_size, m_sbo_capacity - other.m_size);
+                }
+                m_data = m_inline_data;
+                m_capacity = m_sbo_capacity;
+                m_is_sbo = true;
+                if (!other.m_is_sbo && other.m_data != nullptr && other.m_data != other.m_inline_data) {
+                    delete[] other.m_data;
+                }
+                other.m_data = other.m_inline_data;
+                other.m_capacity = other.m_sbo_capacity;
+                other.m_is_sbo = (other.m_sbo_capacity > 0);
+            } else if (other.m_is_sbo) {
+                if (other.m_size > 0) {
+                    m_data = new uint64_t[other.m_size];
+                    m_capacity = static_cast<uint32_t>(other.m_size);
+                    m_is_sbo = false;
+                    copy_limbs(m_data, other.m_inline_data, other.m_size);
+                } else {
+                    m_data = m_inline_data;
+                    m_capacity = m_sbo_capacity;
+                    m_is_sbo = (m_sbo_capacity > 0);
+                }
+            } else {
+                m_data = other.m_data;
+                m_capacity = other.m_capacity;
+                m_is_sbo = false;
+                other.m_data = other.m_inline_data;
+                other.m_capacity = other.m_sbo_capacity;
+                other.m_is_sbo = (other.m_sbo_capacity > 0);
+            }
+            m_size = other.m_size;
+            m_sign = other.m_sign;
+            other.m_size = 0;
+            other.m_sign = 0;
+            if (other.m_sbo_capacity > 0) {
+                zero_limbs(other.m_inline_data, other.m_sbo_capacity);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 原地單元取負操作。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void negate() noexcept {
+        if (m_size > 0 && m_sign != 0) {
+            m_sign = -m_sign;
+        }
+    }
+
+    /// <summary>
+    /// 預留緩衝區容量。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void reserve(size_t new_cap) {
+        if (new_cap <= m_capacity) return;
+        uint64_t* new_heap = new uint64_t[new_cap];
+        if (m_size > 0) {
+            copy_limbs(new_heap, m_data, m_size);
+        }
+        if (!m_is_sbo && m_data != nullptr && m_data != m_inline_data) {
+            delete[] m_data;
+        }
+        m_data = new_heap;
+        m_capacity = static_cast<uint32_t>(new_cap);
+        m_is_sbo = false;
+    }
+
+    /// <summary>
+    /// 調整 limbs 數量大小並可選填預設值。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void resize(size_t new_size, uint64_t init_val = 0) {
+        if (new_size > m_capacity) {
+            size_t next_cap = static_cast<size_t>(m_capacity) * 2;
+            if (next_cap < new_size) next_cap = new_size;
+            reserve(next_cap);
+        }
+        uint64_t* d = data();
+        if (new_size > m_size) {
+            for (size_t i = m_size; i < new_size; ++i) {
+                d[i] = init_val;
+            }
+        }
+        m_size = static_cast<uint32_t>(new_size);
+    }
+
+    /// <summary>
+    /// 規範化 limbs 陣列，移除高位無效之 0 limbs 並調整正負符號；若長度落回 SBO 則縮回 SBO。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void normalize() noexcept {
+        uint64_t* d = data();
+        while (m_size > 0 && d[m_size - 1] == 0) {
+            --m_size;
+        }
+        if (m_size == 0) {
+            m_sign = 0;
+        }
+        shrink_to_sbo_if_possible();
+    }
+
+    /// <summary>
+    /// 當 limbs 數量小於等於 SBO 容量且當前為堆積配置時，縮回 SBO。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void shrink_to_sbo_if_possible() noexcept {
+        if (!m_is_sbo && m_sbo_capacity > 0 && m_size <= m_sbo_capacity) {
+            uint64_t* old_heap = m_data;
+            for (size_t i = 0; i < m_sbo_capacity; ++i) {
+                m_inline_data[i] = (i < m_size && old_heap != nullptr) ? old_heap[i] : 0;
+            }
+            m_data = m_inline_data;
+            m_capacity = m_sbo_capacity;
+            m_is_sbo = true;
+            if (old_heap != nullptr && old_heap != m_inline_data) {
+                delete[] old_heap;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 清空數值為 0。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void clear() noexcept {
+        m_size = 0;
+        m_sign = 0;
+    }
+
+    /// <summary>
+    /// 設定為 64 位元無符號整數與指定正負號。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void set_uint64(uint64_t val, int8_t sign) {
+        if (val == 0) {
+            m_size = 0;
+            m_sign = 0;
+            return;
+        }
+        if (m_sbo_capacity > 0) {
+            reset_heap();
+            for (size_t i = 0; i < m_sbo_capacity; ++i) {
+                m_inline_data[i] = 0;
+            }
+            m_size = 1;
+            m_sign = sign;
+            m_inline_data[0] = val;
+            m_is_sbo = true;
+        } else {
+            if (m_capacity < 1 || m_data == nullptr) {
+                reserve(1);
+            }
+            m_size = 1;
+            m_sign = sign;
+            m_data[0] = val;
+            m_is_sbo = false;
+        }
+    }
+};
+
+#if defined(_WIN64) || defined(__x86_64__) || defined(__aarch64__) || (defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8)
+static_assert(sizeof(BigIntBase) == 32, "BigIntBase must be exactly 32 bytes on 64-bit platforms!");
+#endif
+
+} // namespace numeric
+// --- End Section: include/numeric/detail/Storage.hpp ---
+
+// --- Begin Section: include/numeric/detail/Arithmetic.hpp ---
+// Arithmetic.hpp
+// Core addition, subtraction, and comparison algorithms for CPP-BigInt.
+// Features 256-bit unrolled SBO fast-paths, zero-allocation branch elimination, and signed dispatch.
+// Zero external dependencies, downward compatible from C++23 to C++11.
+
+
+namespace numeric {
+namespace detail {
+
+/// <summary>
+/// 核心加法與減法演算法結構。
+/// </summary>
+struct BigIntArithmetic : public BigIntIntrinsics {
     /// <summary>
     /// 比較兩無符號 limbs 陣列之大小。
     /// </summary>
@@ -1088,25 +991,41 @@ public:
         c = adc64(c, a3, b3, &r3);
 
         if (c == 0) {
-            if (res.sbo_capacity() >= 4) {
-                res.reset_heap();
-            } else if (res.capacity() < 4) {
-                res.reserve(4);
-            }
-            uint64_t* d = res.data();
-            d[0] = r0;
-            d[1] = r1;
-            d[2] = r2;
-            d[3] = r3;
             size_t s = 4;
-            while (s > 0 && d[s - 1] == 0) --s;
+            if (r3 == 0) {
+                if (r2 == 0) {
+                    if (r1 == 0) s = (r0 == 0) ? 0 : 1;
+                    else s = 2;
+                } else {
+                    s = 3;
+                }
+            }
+
+            if (s <= res.sbo_capacity()) {
+                if (!res.is_inline()) {
+                    res.reset_heap();
+                }
+            } else if (res.capacity() < s) {
+                res.reserve(s);
+            }
+
+            uint64_t* d = res.data();
+            switch (s) {
+            case 4: d[3] = r3; /* fallthrough */
+            case 3: d[2] = r2; /* fallthrough */
+            case 2: d[1] = r1; /* fallthrough */
+            case 1: d[0] = r0; break;
+            default: break;
+            }
+
             res.m_size = static_cast<uint32_t>(s);
             if (s == 0) {
                 res.m_sign = 0;
             }
-            res.shrink_to_sbo_if_possible();
         } else {
-            res.resize(5, 0);
+            if (res.capacity() < 5) {
+                res.reserve(5);
+            }
             uint64_t* d = res.data();
             d[0] = r0; d[1] = r1; d[2] = r2; d[3] = r3;
             d[4] = 1;
@@ -1144,24 +1063,37 @@ public:
         borrow = sbb64(borrow, a2, b2, &r2);
         borrow = sbb64(borrow, a3, b3, &r3);
 
-        if (res.sbo_capacity() >= 4) {
-            res.reset_heap();
-        } else if (res.capacity() < 4) {
-            res.reserve(4);
-        }
-        uint64_t* d = res.data();
-        d[0] = r0;
-        d[1] = r1;
-        d[2] = r2;
-        d[3] = r3;
-
         size_t s = 4;
-        while (s > 0 && d[s - 1] == 0) --s;
+        if (r3 == 0) {
+            if (r2 == 0) {
+                if (r1 == 0) s = (r0 == 0) ? 0 : 1;
+                else s = 2;
+            } else {
+                s = 3;
+            }
+        }
+
+        if (s <= res.sbo_capacity()) {
+            if (!res.is_inline()) {
+                res.reset_heap();
+            }
+        } else if (res.capacity() < s) {
+            res.reserve(s);
+        }
+
+        uint64_t* d = res.data();
+        switch (s) {
+        case 4: d[3] = r3; /* fallthrough */
+        case 3: d[2] = r2; /* fallthrough */
+        case 2: d[1] = r1; /* fallthrough */
+        case 1: d[0] = r0; break;
+        default: break;
+        }
+
         res.m_size = static_cast<uint32_t>(s);
         if (s == 0) {
             res.m_sign = 0;
         }
-        res.shrink_to_sbo_if_possible();
     }
 
     /// <summary>
@@ -1222,13 +1154,13 @@ public:
             if (res.data() != longer_ptr && i < max_len) {
                 std::copy_n(longer_ptr + i, max_len - i, res.data() + i);
             }
-            res.m_size = max_len;
+            res.m_size = static_cast<uint32_t>(max_len);
         } else {
             if (res.m_size < max_len + 1) {
                 res.resize(max_len + 1, 0);
             }
             res.data()[max_len] = 1;
-            res.m_size = max_len + 1;
+            res.m_size = static_cast<uint32_t>(max_len + 1);
         }
     }
 
@@ -1391,6 +1323,313 @@ public:
             }
         }
     }
+};
+
+} // namespace detail
+} // namespace numeric
+// --- End Section: include/numeric/detail/Arithmetic.hpp ---
+
+// --- Begin Section: include/numeric/detail/Bitwise.hpp ---
+// Bitwise.hpp
+// Arbitrary-precision bitwise logic and shifting operations for CPP-BigInt.
+// Part of the numeric::detail modular core.
+
+
+namespace numeric {
+namespace detail {
+
+/// <summary>
+/// BigInt 位元邏輯與位移演算法類別，繼承自 BigIntArithmetic。
+/// 支援左移、算術/邏輯右移、NOT、AND、OR、XOR 等完整位元運算。
+/// </summary>
+struct BigIntBitwise : public BigIntArithmetic {
+    /// <summary>
+    /// limbs 級別的高效整區塊左移：res = a &lt;&lt; (limbs * 64)。
+    /// </summary>
+    /// <param name="res">輸出結果</param>
+    /// <param name="a">輸入數值</param>
+    /// <param name="limbs">移動 limbs 數量</param>
+    static NUMERIC_CONSTEXPR_20 void shift_left_limbs(BigIntStorage& res, const BigIntStorage& a, size_t limbs) {
+        if (a.m_size == 0) {
+            res.m_size = 0;
+            res.m_sign = 0;
+            return;
+        }
+        if (&res == &a) {
+            BigIntStorage tmp;
+            shift_left_limbs(tmp, a, limbs);
+            res = std::move(tmp);
+            return;
+        }
+        res.resize(a.m_size + limbs, 0);
+        BigIntStorage::copy_limbs(res.data() + limbs, a.data(), a.m_size);
+        BigIntStorage::zero_limbs(res.data(), limbs);
+        res.m_sign = a.m_sign;
+        res.normalize();
+    }
+
+    /// <summary>
+    /// 位元左移運算：res = a &lt;&lt; shift。
+    /// </summary>
+    /// <param name="res">輸出結果</param>
+    /// <param name="a">運算元</param>
+    /// <param name="shift">位移位元數</param>
+    static NUMERIC_CONSTEXPR_20 void shift_left(BigIntStorage& res, const BigIntStorage& a, size_t shift) {
+        if (shift == 0 || a.m_size == 0) {
+            res = a;
+            return;
+        }
+        if (&res == &a) {
+            BigIntStorage tmp;
+            shift_left(tmp, a, shift);
+            res = std::move(tmp);
+            return;
+        }
+        size_t limb_shift = shift / 64;
+        size_t bit_shift = shift % 64;
+        size_t new_size = a.m_size + limb_shift + 1;
+        res.resize(new_size, 0);
+
+        if (bit_shift == 0) {
+            BigIntStorage::copy_limbs(res.data() + limb_shift, a.data(), a.m_size);
+            if (limb_shift > 0) {
+                BigIntStorage::zero_limbs(res.data(), limb_shift);
+            }
+        } else {
+            if (limb_shift > 0) {
+                BigIntStorage::zero_limbs(res.data(), limb_shift);
+            }
+            uint64_t carry = 0;
+            for (size_t i = 0; i < a.m_size; ++i) {
+                uint64_t cur = a.data()[i];
+                res.data()[i + limb_shift] = (cur << bit_shift) | carry;
+                carry = cur >> (64 - bit_shift);
+            }
+            res.data()[a.m_size + limb_shift] = carry;
+        }
+        res.m_sign = a.m_sign;
+        res.normalize();
+    }
+
+    /// <summary>
+    /// 位元右移運算：res = a &gt;&gt; shift（支援負數算術右移語意）。
+    /// </summary>
+    /// <param name="res">輸出結果</param>
+    /// <param name="a">運算元</param>
+    /// <param name="shift">位移位元數</param>
+    static NUMERIC_CONSTEXPR_20 void shift_right(BigIntStorage& res, const BigIntStorage& a, size_t shift) {
+        if (shift == 0 || a.m_size == 0) {
+            res = a;
+            return;
+        }
+        if (a.m_sign < 0) {
+            // 負數算術右移：a >> shift = ~((~a) >> shift) = - ((-a - 1) >> shift) - 1
+            BigIntStorage u;
+            BigIntStorage one_st; one_st.set_uint64(1, 1);
+            BigIntStorage abs_a = a; abs_a.m_sign = 1;
+            sub_signed(u, abs_a, one_st);
+
+            BigIntStorage shifted_u;
+            shift_right_positive(shifted_u, u, shift);
+
+            BigIntStorage final_res;
+            add_signed(final_res, shifted_u, one_st);
+            final_res.m_sign = -1;
+            final_res.normalize();
+            res = std::move(final_res);
+            return;
+        }
+        shift_right_positive(res, a, shift);
+    }
+
+    /// <summary>
+    /// 正整數無符號位元右移運算。
+    /// </summary>
+    /// <param name="res">輸出結果</param>
+    /// <param name="a">運算元</param>
+    /// <param name="shift">位移位元數</param>
+    static NUMERIC_CONSTEXPR_20 void shift_right_positive(BigIntStorage& res, const BigIntStorage& a, size_t shift) {
+        if (&res == &a) {
+            BigIntStorage tmp;
+            shift_right_positive(tmp, a, shift);
+            res = std::move(tmp);
+            return;
+        }
+        size_t limb_shift = shift / 64;
+        size_t bit_shift = shift % 64;
+        if (limb_shift >= a.m_size) {
+            res.m_size = 0;
+            res.m_sign = 0;
+            return;
+        }
+        size_t new_size = a.m_size - limb_shift;
+        res.resize(new_size, 0);
+
+        if (bit_shift == 0) {
+            BigIntStorage::copy_limbs(res.data(), a.data() + limb_shift, new_size);
+        } else {
+            for (size_t i = 0; i < new_size; ++i) {
+                uint64_t cur = a.data()[i + limb_shift];
+                uint64_t next = (i + limb_shift + 1 < a.m_size) ? a.data()[i + limb_shift + 1] : 0;
+                res.data()[i] = (cur >> bit_shift) | (next << (64 - bit_shift));
+            }
+        }
+        res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
+        res.normalize();
+    }
+
+    /// <summary>
+    /// 位元非運算：~a = -a - 1。
+    /// </summary>
+    /// <param name="res">輸出結果</param>
+    /// <param name="a">輸入數值</param>
+    static NUMERIC_CONSTEXPR_20 void bitwise_not(BigIntStorage& res, const BigIntStorage& a) {
+        BigIntStorage one_st; one_st.set_uint64(1, 1);
+        BigIntStorage tmp;
+        add_signed(tmp, a, one_st);
+        tmp.m_sign = -tmp.m_sign;
+        tmp.normalize();
+        res = std::move(tmp);
+    }
+
+    /// <summary>
+    /// 位元及運算：res = a &amp; b。
+    /// </summary>
+    /// <param name="res">輸出結果</param>
+    /// <param name="a">運算元 a</param>
+    /// <param name="b">運算元 b</param>
+    static NUMERIC_CONSTEXPR_20 void bitwise_and(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
+        if (a.m_sign == 0 || b.m_sign == 0) {
+            res.m_size = 0;
+            res.m_sign = 0;
+            return;
+        }
+        if (a.m_sign > 0 && b.m_sign > 0) {
+            size_t min_len = (a.m_size < b.m_size) ? a.m_size : b.m_size;
+            res.resize(min_len, 0);
+            for (size_t i = 0; i < min_len; ++i) {
+                res.data()[i] = a.data()[i] & b.data()[i];
+            }
+            res.m_sign = 1;
+            res.normalize();
+            return;
+        }
+        if (a.m_sign > 0 && b.m_sign < 0) {
+            // a & b = a & ~(~b) = a & ~u
+            BigIntStorage not_b;
+            bitwise_not(not_b, b);
+            res.resize(a.m_size, 0);
+            for (size_t i = 0; i < a.m_size; ++i) {
+                uint64_t nu = (i < not_b.m_size) ? not_b.data()[i] : 0;
+                res.data()[i] = a.data()[i] & (~nu);
+            }
+            res.m_sign = 1;
+            res.normalize();
+            return;
+        }
+        if (a.m_sign < 0 && b.m_sign > 0) {
+            bitwise_and(res, b, a);
+            return;
+        }
+        // a < 0 && b < 0: ~(a & b) = (~a) | (~b)
+        BigIntStorage not_a, not_b, or_res;
+        bitwise_not(not_a, a);
+        bitwise_not(not_b, b);
+        bitwise_or(or_res, not_a, not_b);
+        bitwise_not(res, or_res);
+    }
+
+    /// <summary>
+    /// 位元或運算：res = a | b。
+    /// </summary>
+    /// <param name="res">輸出結果</param>
+    /// <param name="a">運算元 a</param>
+    /// <param name="b">運算元 b</param>
+    static NUMERIC_CONSTEXPR_20 void bitwise_or(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
+        if (a.m_sign == 0) { res = b; return; }
+        if (b.m_sign == 0) { res = a; return; }
+        if (a.m_sign > 0 && b.m_sign > 0) {
+            size_t max_len = (a.m_size > b.m_size) ? a.m_size : b.m_size;
+            res.resize(max_len, 0);
+            for (size_t i = 0; i < max_len; ++i) {
+                uint64_t av = (i < a.m_size) ? a.data()[i] : 0;
+                uint64_t bv = (i < b.m_size) ? b.data()[i] : 0;
+                res.data()[i] = av | bv;
+            }
+            res.m_sign = 1;
+            res.normalize();
+            return;
+        }
+        // De Morgan: ~(a | b) = (~a) & (~b)
+        BigIntStorage not_a, not_b, and_res;
+        bitwise_not(not_a, a);
+        bitwise_not(not_b, b);
+        bitwise_and(and_res, not_a, not_b);
+        bitwise_not(res, and_res);
+    }
+
+    /// <summary>
+    /// 位元互斥或運算：res = a ^ b。
+    /// </summary>
+    /// <param name="res">輸出結果</param>
+    /// <param name="a">運算元 a</param>
+    /// <param name="b">運算元 b</param>
+    static NUMERIC_CONSTEXPR_20 void bitwise_xor(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
+        if (a.m_sign == 0) { res = b; return; }
+        if (b.m_sign == 0) { res = a; return; }
+        if (a.m_sign > 0 && b.m_sign > 0) {
+            size_t max_len = (a.m_size > b.m_size) ? a.m_size : b.m_size;
+            res.resize(max_len, 0);
+            for (size_t i = 0; i < max_len; ++i) {
+                uint64_t av = (i < a.m_size) ? a.data()[i] : 0;
+                uint64_t bv = (i < b.m_size) ? b.data()[i] : 0;
+                res.data()[i] = av ^ bv;
+            }
+            res.m_sign = 1;
+            res.normalize();
+            return;
+        }
+        if (a.m_sign > 0 && b.m_sign < 0) {
+            // a ^ b = ~(a ^ ~b)
+            BigIntStorage not_b, xor_res;
+            bitwise_not(not_b, b);
+            bitwise_xor(xor_res, a, not_b);
+            bitwise_not(res, xor_res);
+            return;
+        }
+        if (a.m_sign < 0 && b.m_sign > 0) {
+            bitwise_xor(res, b, a);
+            return;
+        }
+        // a < 0 && b < 0: a ^ b = (~a) ^ (~b)
+        BigIntStorage not_a, not_b;
+        bitwise_not(not_a, a);
+        bitwise_not(not_b, b);
+        bitwise_xor(res, not_a, not_b);
+    }
+};
+
+} // namespace detail
+} // namespace numeric
+// --- End Section: include/numeric/detail/Bitwise.hpp ---
+
+// --- Begin Section: include/numeric/detail/Multiplication.hpp ---
+// Multiplication.hpp
+// High-performance arbitrary-precision multiplication algorithms for CPP-BigInt:
+// Schoolbook, Karatsuba, Toom-Cook 3-way, and ScratchArena allocator.
+// Part of the numeric::detail modular core.
+
+
+namespace numeric {
+namespace detail {
+
+/// <summary>
+/// BigInt 乘法運算核心類別，繼承自 BigIntBitwise。
+/// 提供 Schoolbook、Karatsuba、Toom-3 以及 ScratchArena 高效無鎖記憶體池。
+/// </summary>
+struct BigIntMultiplication : public BigIntBitwise {
+    static constexpr size_t KARATSUBA_THRESHOLD = 16;
+    static constexpr size_t TOOM3_THRESHOLD = 2048;
 
     /// <summary>
     /// 原生 Schoolbook 乘法：out = a * b。out 長度至少為 a_len + b_len。
@@ -2128,7 +2367,27 @@ public:
         mul_core(res, a, b);
         res.m_sign = res_sign;
     }
+};
 
+} // namespace detail
+} // namespace numeric
+// --- End Section: include/numeric/detail/Multiplication.hpp ---
+
+// --- Begin Section: include/numeric/detail/Division.hpp ---
+// Division.hpp
+// Arbitrary-precision integer division algorithms for CPP-BigInt:
+// Knuth Algorithm D, Burnikel-Ziegler 3/2 and 2/1 divide-and-conquer division.
+// Part of the numeric::detail modular core.
+
+
+namespace numeric {
+namespace detail {
+
+/// <summary>
+/// BigInt 除法運算核心類別，繼承自 BigIntMultiplication。
+/// 支援單肢段快除、Knuth Algorithm D 長除法與 Burnikel-Ziegler 分治除法。
+/// </summary>
+struct BigIntDivision : public BigIntMultiplication {
     static constexpr size_t BZ_THRESHOLD = 128; // Tuned threshold for Burnikel-Ziegler division
 
     /// <summary>
@@ -2567,7 +2826,7 @@ public:
                 out.m_sign = 0;
                 return;
             }
-            size_t len = std::min(n, u_shifted.m_size - start);
+            size_t len = (std::min)(n, u_shifted.m_size - start);
             out.resize(len, 0);
             BigIntStorage::copy_limbs(out.data(), u_shifted.data() + start, len);
             out.m_sign = 1;
@@ -2690,270 +2949,152 @@ public:
     static NUMERIC_CONSTEXPR_20 void div_mod_core(BigIntStorage& q, BigIntStorage& r, const BigIntStorage& u, const BigIntStorage& v) {
         div_mod_core(&q, &r, u, v);
     }
+};
+
+} // namespace detail
+} // namespace numeric
+// --- End Section: include/numeric/detail/Division.hpp ---
+
+// --- Begin Section: include/numeric/detail/StringConversion.hpp ---
+// StringConversion.hpp
+// High-performance arbitrary-precision Radix-10 string serialization and deserialization for CPP-BigInt.
+// Features 2-digit LUT formatting, Reciprocal Radix-10^19 division, Divide-and-Conquer string conversion,
+// and compile-time constexpr Horner evaluation.
+// Part of the numeric::detail modular core.
+
+
+namespace numeric {
+namespace detail {
+
+/// <summary>
+/// BigInt 十進位字串轉換類別，繼承自 BigIntDivision。
+/// 支援分治十進位轉換、Pow10Cache 快取、2-Digit LUT、以及 C++20 constexpr 字串解析。
+/// </summary>
+struct BigIntStringConversion : public BigIntDivision {
+    static constexpr size_t FROM_STRING_DC_THRESHOLD = 10;
 
     /// <summary>
-    /// 將 limbs 整體左移指定 limbs 數量。
+    /// 2-Digit 快速十進位查詢表（200 位元組，長駐 L1 Cache）。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">輸入數值</param>
-    /// <param name="limbs">移動 limbs 數量</param>
-    static NUMERIC_CONSTEXPR_20 void shift_left_limbs(BigIntStorage& res, const BigIntStorage& a, size_t limbs) {
-        if (a.m_size == 0) {
-            res.m_size = 0;
-            res.m_sign = 0;
-            return;
-        }
-        if (&res == &a) {
-            BigIntStorage tmp;
-            shift_left_limbs(tmp, a, limbs);
-            res = std::move(tmp);
-            return;
-        }
-        res.resize(a.m_size + limbs, 0);
-        BigIntStorage::copy_limbs(res.data() + limbs, a.data(), a.m_size);
-        BigIntStorage::zero_limbs(res.data(), limbs);
-        res.m_sign = a.m_sign;
-        res.normalize();
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE const char* get_digit_pairs() noexcept {
+        return
+            "00010203040506070809"
+            "10111213141516171819"
+            "20212223242526272829"
+            "30313233343536373839"
+            "40414243444546474849"
+            "50515253545556575859"
+            "60616263646566676869"
+            "70717273747576777879"
+            "80818283848586878889"
+            "90919293949596979899";
     }
 
     /// <summary>
-    /// 位元左移運算：res = a &lt;&lt; shift。
+    /// 支援完整 64 位元無符號整數（最大 18446744073709551615，共 20 位）之精準十進位位數判定。
+    /// 採零硬體除法二分判定分支，單一週期等級解析，杜絕任何緩衝區溢位。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">運算元</param>
-    /// <param name="shift">位移位元數</param>
-    static NUMERIC_CONSTEXPR_20 void shift_left(BigIntStorage& res, const BigIntStorage& a, size_t shift) {
-        if (shift == 0 || a.m_size == 0) {
-            res = a;
-            return;
-        }
-        if (&res == &a) {
-            BigIntStorage tmp;
-            shift_left(tmp, a, shift);
-            res = std::move(tmp);
-            return;
-        }
-        size_t limb_shift = shift / 64;
-        size_t bit_shift = shift % 64;
-        size_t new_size = a.m_size + limb_shift + 1;
-        res.resize(new_size, 0);
-
-        if (bit_shift == 0) {
-            BigIntStorage::copy_limbs(res.data() + limb_shift, a.data(), a.m_size);
-            if (limb_shift > 0) {
-                BigIntStorage::zero_limbs(res.data(), limb_shift);
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE size_t digits10_u64(uint64_t v) noexcept {
+        if (v < 100000000ULL) { // < 10^8
+            if (v < 10000ULL) { // < 10^4
+                if (v < 100ULL) return (v < 10ULL) ? 1 : 2;
+                else return (v < 1000ULL) ? 3 : 4;
+            } else {
+                if (v < 1000000ULL) return (v < 100000ULL) ? 5 : 6;
+                else return (v < 10000000ULL) ? 7 : 8;
             }
+        } else if (v < 10000000000000000ULL) { // < 10^16
+            if (v < 1000000000000ULL) { // < 10^12
+                if (v < 10000000000ULL) return (v < 1000000000ULL) ? 9 : 10;
+                else return (v < 100000000000ULL) ? 11 : 12;
+            } else {
+                if (v < 100000000000000ULL) return (v < 10000000000000ULL) ? 13 : 14;
+                else return (v < 1000000000000000ULL) ? 15 : 16;
+            }
+        } else { // >= 10^16
+            if (v < 100000000000000000ULL) return 17;
+            if (v < 1000000000000000000ULL) return 18;
+            if (v < 10000000000000000000ULL) return 19;
+            return 20;
+        }
+    }
+
+    /// <summary>
+    /// 格式化最高位 chunk：直接利用已知的 top_digits 由尾向頭倒序填寫。
+    /// 採 10^8 區塊分割與純 32 位元倒序倒數乘法，徹底消除 64 位元硬體除法延遲。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE void format_highest_chunk(
+        char* dst, uint64_t val, size_t digits) noexcept
+    {
+        const char* pairs = get_digit_pairs();
+        int pos = static_cast<int>(digits);
+        while (val >= 100000000ULL) {
+            uint64_t q = val / 100000000ULL;
+            uint32_t v32 = static_cast<uint32_t>(val - q * 100000000ULL);
+            val = q;
+            for (int k = 0; k < 4; ++k) {
+                uint32_t q32 = v32 / 100;
+                uint32_t rem = v32 - q32 * 100;
+                v32 = q32;
+                pos -= 2;
+                dst[pos]     = pairs[rem * 2];
+                dst[pos + 1] = pairs[rem * 2 + 1];
+            }
+        }
+        uint32_t v32 = static_cast<uint32_t>(val);
+        while (v32 >= 100) {
+            uint32_t q32 = v32 / 100;
+            uint32_t rem = v32 - q32 * 100;
+            v32 = q32;
+            pos -= 2;
+            dst[pos]     = pairs[rem * 2];
+            dst[pos + 1] = pairs[rem * 2 + 1];
+        }
+        if (v32 < 10) {
+            dst[--pos] = static_cast<char>('0' + v32);
         } else {
-            if (limb_shift > 0) {
-                BigIntStorage::zero_limbs(res.data(), limb_shift);
-            }
-            uint64_t carry = 0;
-            for (size_t i = 0; i < a.m_size; ++i) {
-                uint64_t cur = a.data()[i];
-                res.data()[i + limb_shift] = (cur << bit_shift) | carry;
-                carry = cur >> (64 - bit_shift);
-            }
-            res.data()[a.m_size + limb_shift] = carry;
+            pos -= 2;
+            dst[pos]     = pairs[v32 * 2];
+            dst[pos + 1] = pairs[v32 * 2 + 1];
         }
-        res.m_sign = a.m_sign;
-        res.normalize();
+        assert(pos == 0 && "format_highest_chunk failed to match exact digit count");
     }
 
     /// <summary>
-    /// 位元右移運算：res = a &gt;&gt; shift（支援負數算術右移語意）。
+    /// 格式化中間 19 位 fixed-width chunk：倒序逆向填充 9 組 LUT 雙字元加上 1 個最高位單字元。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">運算元</param>
-    /// <param name="shift">位移位元數</param>
-    static NUMERIC_CONSTEXPR_20 void shift_right(BigIntStorage& res, const BigIntStorage& a, size_t shift) {
-        if (shift == 0 || a.m_size == 0) {
-            res = a;
-            return;
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE void format_chunk_19_digits(
+        char* dst, uint64_t val) noexcept
+    {
+        const char* pairs = get_digit_pairs();
+        for (int p = 8; p >= 0; --p) {
+            uint32_t rem = static_cast<uint32_t>(val % 100);
+            val /= 100;
+            dst[1 + p * 2]     = pairs[rem * 2];
+            dst[1 + p * 2 + 1] = pairs[rem * 2 + 1];
         }
-        if (a.m_sign < 0) {
-            // 負數算術右移：a >> shift = ~((~a) >> shift) = - ((-a - 1) >> shift) - 1
-            BigIntStorage u;
-            BigIntStorage one_st; one_st.set_uint64(1, 1);
-            BigIntStorage abs_a = a; abs_a.m_sign = 1;
-            sub_signed(u, abs_a, one_st);
-
-            BigIntStorage shifted_u;
-            shift_right_positive(shifted_u, u, shift);
-
-            BigIntStorage final_res;
-            add_signed(final_res, shifted_u, one_st);
-            final_res.m_sign = -1;
-            final_res.normalize();
-            res = std::move(final_res);
-            return;
-        }
-        shift_right_positive(res, a, shift);
+        dst[0] = static_cast<char>('0' + val);
     }
 
     /// <summary>
-    /// 正整數無符號位元右移運算。
+    /// 將 64 位元無符號整數格式化為十進位字元陣列寫入 buf（不含 null 結尾），回傳字元長度。
+    /// 棧上無配置零開銷輔助函式。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">運算元</param>
-    /// <param name="shift">位移位元數</param>
-    static NUMERIC_CONSTEXPR_20 void shift_right_positive(BigIntStorage& res, const BigIntStorage& a, size_t shift) {
-        if (&res == &a) {
-            BigIntStorage tmp;
-            shift_right_positive(tmp, a, shift);
-            res = std::move(tmp);
-            return;
+    static NUMERIC_CONSTEXPR_20 size_t format_uint64_to_buf(char* buf, uint64_t val) noexcept {
+        if (val == 0) {
+            buf[0] = '0';
+            return 1;
         }
-        size_t limb_shift = shift / 64;
-        size_t bit_shift = shift % 64;
-        if (limb_shift >= a.m_size) {
-            res.m_size = 0;
-            res.m_sign = 0;
-            return;
+        char tmp[24];
+        size_t pos = 0;
+        while (val > 0) {
+            tmp[pos++] = static_cast<char>('0' + (val % 10));
+            val /= 10;
         }
-        size_t new_size = a.m_size - limb_shift;
-        res.resize(new_size, 0);
-
-        if (bit_shift == 0) {
-            BigIntStorage::copy_limbs(res.data(), a.data() + limb_shift, new_size);
-        } else {
-            for (size_t i = 0; i < new_size; ++i) {
-                uint64_t cur = a.data()[i + limb_shift];
-                uint64_t next = (i + limb_shift + 1 < a.m_size) ? a.data()[i + limb_shift + 1] : 0;
-                res.data()[i] = (cur >> bit_shift) | (next << (64 - bit_shift));
-            }
+        for (size_t i = 0; i < pos; ++i) {
+            buf[i] = tmp[pos - 1 - i];
         }
-        res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
-        res.normalize();
-    }
-
-    /// <summary>
-    /// 位元非運算：~a = -a - 1。
-    /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">輸入數值</param>
-    static NUMERIC_CONSTEXPR_20 void bitwise_not(BigIntStorage& res, const BigIntStorage& a) {
-        BigIntStorage one_st; one_st.set_uint64(1, 1);
-        BigIntStorage tmp;
-        add_signed(tmp, a, one_st);
-        tmp.m_sign = -tmp.m_sign;
-        tmp.normalize();
-        res = std::move(tmp);
-    }
-
-    /// <summary>
-    /// 位元及運算：res = a &amp; b。
-    /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">運算元 a</param>
-    /// <param name="b">運算元 b</param>
-    static NUMERIC_CONSTEXPR_20 void bitwise_and(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
-        if (a.m_sign == 0 || b.m_sign == 0) {
-            res.m_size = 0;
-            res.m_sign = 0;
-            return;
-        }
-        if (a.m_sign > 0 && b.m_sign > 0) {
-            size_t min_len = (a.m_size < b.m_size) ? a.m_size : b.m_size;
-            res.resize(min_len, 0);
-            for (size_t i = 0; i < min_len; ++i) {
-                res.data()[i] = a.data()[i] & b.data()[i];
-            }
-            res.m_sign = 1;
-            res.normalize();
-            return;
-        }
-        if (a.m_sign > 0 && b.m_sign < 0) {
-            // a & b = a & ~(~b) = a & ~u
-            BigIntStorage not_b;
-            bitwise_not(not_b, b);
-            res.resize(a.m_size, 0);
-            for (size_t i = 0; i < a.m_size; ++i) {
-                uint64_t nu = (i < not_b.m_size) ? not_b.data()[i] : 0;
-                res.data()[i] = a.data()[i] & (~nu);
-            }
-            res.m_sign = 1;
-            res.normalize();
-            return;
-        }
-        if (a.m_sign < 0 && b.m_sign > 0) {
-            bitwise_and(res, b, a);
-            return;
-        }
-        // a < 0 && b < 0: ~(a & b) = (~a) | (~b)
-        BigIntStorage not_a, not_b, or_res;
-        bitwise_not(not_a, a);
-        bitwise_not(not_b, b);
-        bitwise_or(or_res, not_a, not_b);
-        bitwise_not(res, or_res);
-    }
-
-    /// <summary>
-    /// 位元或運算：res = a | b。
-    /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">運算元 a</param>
-    /// <param name="b">運算元 b</param>
-    static NUMERIC_CONSTEXPR_20 void bitwise_or(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
-        if (a.m_sign == 0) { res = b; return; }
-        if (b.m_sign == 0) { res = a; return; }
-        if (a.m_sign > 0 && b.m_sign > 0) {
-            size_t max_len = (a.m_size > b.m_size) ? a.m_size : b.m_size;
-            res.resize(max_len, 0);
-            for (size_t i = 0; i < max_len; ++i) {
-                uint64_t av = (i < a.m_size) ? a.data()[i] : 0;
-                uint64_t bv = (i < b.m_size) ? b.data()[i] : 0;
-                res.data()[i] = av | bv;
-            }
-            res.m_sign = 1;
-            res.normalize();
-            return;
-        }
-        // De Morgan: ~(a | b) = (~a) & (~b)
-        BigIntStorage not_a, not_b, and_res;
-        bitwise_not(not_a, a);
-        bitwise_not(not_b, b);
-        bitwise_and(and_res, not_a, not_b);
-        bitwise_not(res, and_res);
-    }
-
-    /// <summary>
-    /// 位元互斥或運算：res = a ^ b。
-    /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">運算元 a</param>
-    /// <param name="b">運算元 b</param>
-    static NUMERIC_CONSTEXPR_20 void bitwise_xor(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
-        if (a.m_sign == 0) { res = b; return; }
-        if (b.m_sign == 0) { res = a; return; }
-        if (a.m_sign > 0 && b.m_sign > 0) {
-            size_t max_len = (a.m_size > b.m_size) ? a.m_size : b.m_size;
-            res.resize(max_len, 0);
-            for (size_t i = 0; i < max_len; ++i) {
-                uint64_t av = (i < a.m_size) ? a.data()[i] : 0;
-                uint64_t bv = (i < b.m_size) ? b.data()[i] : 0;
-                res.data()[i] = av ^ bv;
-            }
-            res.m_sign = 1;
-            res.normalize();
-            return;
-        }
-        if (a.m_sign > 0 && b.m_sign < 0) {
-            // a ^ b = ~(a ^ ~b)
-            BigIntStorage not_b, xor_res;
-            bitwise_not(not_b, b);
-            bitwise_xor(xor_res, a, not_b);
-            bitwise_not(res, xor_res);
-            return;
-        }
-        if (a.m_sign < 0 && b.m_sign > 0) {
-            bitwise_xor(res, b, a);
-            return;
-        }
-        // a < 0 && b < 0: a ^ b = (~a) ^ (~b)
-        BigIntStorage not_a, not_b;
-        bitwise_not(not_a, a);
-        bitwise_not(not_b, b);
-        bitwise_xor(res, not_a, not_b);
+        return pos;
     }
 
     /// <summary>
@@ -2983,7 +3124,7 @@ public:
                 std::lock_guard<std::mutex> lock(mtx);
                 size_t cur = computed_levels.load(std::memory_order_relaxed);
                 for (size_t i = cur; i <= k && i < MAX_LEVELS; ++i) {
-                    BigIntCore::mul_core(table[i], table[i - 1], table[i - 1]);
+                    mul_core(table[i], table[i - 1], table[i - 1]);
                     computed_levels.store(i + 1, std::memory_order_release);
                 }
             }
@@ -2994,7 +3135,7 @@ public:
         Pow10Cache() {
             table[0].set_uint64(10000000000000000000ULL, 1);
             for (size_t k = 1; k < PRECOMPUTED_LEVELS; ++k) {
-                BigIntCore::mul_core(table[k], table[k - 1], table[k - 1]);
+                mul_core(table[k], table[k - 1], table[k - 1]);
             }
         }
     };
@@ -3238,11 +3379,6 @@ public:
     }
 
     /// <summary>
-    /// 將 BigIntStorage 轉換為 Radix-10 十進位字串。
-    /// 8192-bit 內全棧上工作緩衝區（stack_limbs[128], stack_chunks[136]），達成真 0-Heap 分配。
-    /// 搭配 100% 精準 digits10_u64 預留與 2-Digit LUT 倒序無分支格式化。
-    /// </summary>
-    /// <summary>
     /// 基底情況：將任意小於 10^(19 * count) 之大數透過 10^19 乘法求逆除法提取為 count 個 chunks。
     /// 不足 count 個 chunk 者高位自動補 0。
     /// </summary>
@@ -3456,6 +3592,37 @@ public:
 };
 
 } // namespace detail
+} // namespace numeric
+// --- End Section: include/numeric/detail/StringConversion.hpp ---
+
+// --- Begin Section: include/numeric/detail/BigIntCore.hpp ---
+// BigIntCore.hpp
+// Core arbitrary-precision integer algorithms and SBO storage layer for CPP-BigInt.
+// Zero external dependencies, downward compatible from C++23 to C++11.
+// Modularized into Intrinsics, Storage, Arithmetic, Bitwise, Multiplication, Division, and StringConversion.
+
+
+namespace numeric {
+namespace detail {
+
+/// <summary>
+/// BigInt 演算法核心類別，繼承自 BigIntStringConversion（具備完整算術、乘除、位元與字串轉換功能）。
+/// 提供 100% 向後相容之靜態方法與演算法入口。
+/// </summary>
+class BigIntCore : public BigIntStringConversion {
+public:
+    // 所有演算法與常數（如 KARATSUBA_THRESHOLD, TOOM3_THRESHOLD, BZ_THRESHOLD,
+    // FROM_STRING_DC_THRESHOLD, adc64, sbb64, clz64, mul64_wide, div128_64,
+    // add_unsigned, sub_unsigned, mul_signed, div_qr_signed, bitwise_*, to_string, from_string 等）
+    // 均透過公開繼承自 BigIntStringConversion -> BigIntDivision -> BigIntMultiplication
+    // -> BigIntBitwise -> BigIntArithmetic -> BigIntIntrinsics 完整提供，
+    // 維持 100% 原始 API 相容性且零額外執行期或二進位開銷。
+};
+
+} // namespace detail
+
+using BigIntCore = detail::BigIntCore;
+
 } // namespace numeric
 // --- End Section: include/numeric/detail/BigIntCore.hpp ---
 

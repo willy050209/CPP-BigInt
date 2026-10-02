@@ -78,7 +78,7 @@ target_link_libraries(your_target PRIVATE bigint)
 ```
 
 #### 2. 單一標頭檔引入 (Single Header)
-直接將 `dist/bigint.hpp` 複製至專案中引入即可：
+函式庫源碼已全面模組化為 `include/numeric/detail/` 子模組（`Intrinsics`, `Storage`, `Arithmetic`, `Bitwise`, `Multiplication`, `Division`, `StringConversion`），平時便於單元維護；發行時可直接使用自動拓撲去重打包之單一標頭檔 `dist/bigint.hpp`：
 ```cpp
 #include "dist/bigint.hpp"
 ```
@@ -86,6 +86,18 @@ target_link_libraries(your_target PRIVATE bigint)
 #### 3. C++20 模組引入 (C++20 Module)
 ```cpp
 import bigint;
+```
+
+#### 4. 單一檔案打包與檢查工具
+```powershell
+# 自動依拓撲排序打包為 dist/bigint.hpp 並濾除重複標頭
+python scripts/bundle_header.py
+
+# 匯出 C++20 Module Interface Unit dist/bigint.ixx
+python scripts/export_module.py
+
+# 完整打包檢查
+python scripts/test_packaging.py
 ```
 
 ---

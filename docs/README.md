@@ -14,6 +14,21 @@
 | `numeric` | `<numeric/Config.hpp>` | 編譯期環境檢測、屬性與相容性巨集定義。 |
 | `std` | `<numeric/BigInt.hpp>` | 標準庫特化：支援 `std::hash` 與 C++20 `std::formatter`。 |
 
+### 內部模組化架構 (`numeric::detail`)
+
+為了便於維護與高內聚管理，核心演算法庫拆分為獨立子模組，並透過單一標頭打包器 (`scripts/bundle_header.py`) 自動拓撲排序與重複去重：
+
+| 模組標頭檔 (Detail Header) | 基礎類別 (Class / Struct) | 職責與關鍵演算法 |
+| :--- | :--- | :--- |
+| `numeric/detail/Intrinsics.hpp` | `BigIntIntrinsics` | 硬體級原語：`adc64`, `sbb64`, `clz64`, `mul64_wide`, `div128_64`, 倒數除法加速 |
+| `numeric/detail/Storage.hpp` | `BigIntBase` | LLVM SmallVector 雙層解耦架構、SBO 指標管理、容量擴展與歸一化 |
+| `numeric/detail/Arithmetic.hpp` | `BigIntArithmetic` | 無符號與有符號加減法（對稱 SBO 快速路徑、一般性向量運算） |
+| `numeric/detail/Bitwise.hpp` | `BigIntBitwise` | 整肢移位、位元左移/右移、算術右移、位元 NOT/AND/OR/XOR |
+| `numeric/detail/Multiplication.hpp` | `BigIntMultiplication` | Schoolbook、Karatsuba、Toom-3 演算法與無鎖 `ScratchArena` 記憶體池 |
+| `numeric/detail/Division.hpp` | `BigIntDivision` | Knuth Algorithm D 原地長除法與 Burnikel-Ziegler $D_{2n,n} / D_{3n,2n}$ 分治除法 |
+| `numeric/detail/StringConversion.hpp` | `BigIntStringConversion` | 2-Digit LUT、分治十進位解析與格式化、`Pow10Cache` 冪次快取、constexpr 求值 |
+| `numeric/detail/BigIntCore.hpp` | `BigIntCore` | 核心匯聚類別，完整繼承各子模組，保證 100% 原始 API 相容性 |
+
 ---
 
 ## 文件導覽目錄 (Table of Contents)

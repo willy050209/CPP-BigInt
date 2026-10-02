@@ -6,7 +6,10 @@
 - **命名空間 (Namespace)**: `numeric`
 - **標頭檔 (Header)**: `<numeric/BigInt.hpp>`
 - **模組 (Module)**: `import bigint;` (C++20+)
-- **基礎架構**: 繼承自 `detail::BigIntConstants<>`
+- **基礎架構**: 
+  - 核心型別 `BasicBigInt<SboLimbs>` 繼承自 `detail::BigIntBase`
+  - 演算法層由 `numeric::detail` 子模組循序單向繼承：
+    `BigIntIntrinsics` $\to$ `BigIntArithmetic` $\to$ `BigIntBitwise` $\to$ `BigIntMultiplication` $\to$ `BigIntDivision` $\to$ `BigIntStringConversion` $\to$ `BigIntCore`
 
 ---
 
@@ -14,7 +17,13 @@
 
 ```cpp
 namespace numeric {
-    class bigint : public detail::BigIntConstants<>;
+    template <size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
+    class BasicBigInt;
+
+    using BigInt = BasicBigInt<NUMERIC_BIGINT_SBO_LIMBS>;
+    using bigint = BigInt;
+    using BigInt512 = BasicBigInt<8>;
+    using bigint512 = BigInt512;
 }
 ```
 

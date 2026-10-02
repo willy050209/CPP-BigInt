@@ -267,17 +267,30 @@ def emit_single_header(repo_root: Path, output_file: Path, verbose: bool = False
             output_lines.append(f"#include <{h}>")
         output_lines.append("")
 
+    seen_external_in_body = set(aggregated_external)
+
     for h in sorted_headers:
         rel_path = h.relative_to(repo_root).as_posix()
         output_lines.append(f"// --- Begin Section: {rel_path} ---")
         file_lines = parsed_data[h]["cleaned_lines"]
 
-        while file_lines and not file_lines[0].strip():
-            file_lines.pop(0)
-        while file_lines and not file_lines[-1].strip():
-            file_lines.pop()
+        filtered_file_lines: list[str] = []
+        for line in file_lines:
+            stripped = line.strip()
+            m_ext = RE_INCLUDE_EXTERNAL.match(stripped)
+            if m_ext:
+                header_name = m_ext.group(1)
+                # If header was already included unconditionally at the top, filter it out
+                if header_name in seen_external_in_body:
+                    continue
+            filtered_file_lines.append(line)
 
-        output_lines.extend(file_lines)
+        while filtered_file_lines and not filtered_file_lines[0].strip():
+            filtered_file_lines.pop(0)
+        while filtered_file_lines and not filtered_file_lines[-1].strip():
+            filtered_file_lines.pop()
+
+        output_lines.extend(filtered_file_lines)
         output_lines.append(f"// --- End Section: {rel_path} ---")
         output_lines.append("")
 
