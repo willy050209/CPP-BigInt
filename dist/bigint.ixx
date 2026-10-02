@@ -456,7 +456,7 @@ public:
         if (this != &other) {
             if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
                 reset_heap();
-                if (other.m_size > 0 && other.m_data != nullptr) {
+                if (other.m_size > 0) {
                     copy_limbs(m_inline_data, other.m_data, other.m_size);
                 }
                 if (m_sbo_capacity > other.m_size) {
@@ -493,7 +493,7 @@ public:
         if (this != &other) {
             reset_heap();
             if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
-                if (other.m_size > 0 && other.m_data != nullptr) {
+                if (other.m_size > 0) {
                     copy_limbs(m_inline_data, other.m_data, other.m_size);
                 }
                 if (m_sbo_capacity > other.m_size) {
@@ -552,7 +552,7 @@ public:
     NUMERIC_CONSTEXPR_20 void reserve(size_t new_cap) {
         if (new_cap <= m_capacity) return;
         uint64_t* new_heap = new uint64_t[new_cap];
-        if (m_size > 0 && m_data != nullptr) {
+        if (m_size > 0) {
             copy_limbs(new_heap, m_data, m_size);
         }
         if (!m_is_sbo && m_data != nullptr) {
