@@ -81,6 +81,13 @@ public:
     }
 
     /// <summary>
+    /// 檢查當前資料指標是否指向內聯 SBO 陣列。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_inline() const noexcept {
+        return m_is_sbo;
+    }
+
+    /// <summary>
     /// 取得 limbs 資料指標（可修改）。
     /// </summary>
     NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 uint64_t* data() noexcept {
@@ -168,7 +175,7 @@ public:
     /// 釋放堆積緩衝區並將內部指標重置回 SBO。
     /// </summary>
     NUMERIC_CONSTEXPR_20 void reset_heap() noexcept {
-        if (!m_is_sbo && m_data != nullptr) {
+        if (!m_is_sbo && m_data != nullptr && m_data != m_inline_data) {
             delete[] m_data;
         }
         m_data = m_inline_data;
@@ -193,8 +200,8 @@ public:
     /// 基底建構子：由衍生類別傳入 inline buffer 的位置與容量。
     /// </summary>
     NUMERIC_CONSTEXPR_20 BigIntBase(uint64_t* inline_ptr, uint32_t inline_cap) noexcept
-        : m_data(inline_ptr),
-          m_inline_data(inline_ptr),
+        : m_data(inline_cap > 0 ? inline_ptr : nullptr),
+          m_inline_data(inline_cap > 0 ? inline_ptr : nullptr),
           m_size(0),
           m_capacity(inline_cap),
           m_sbo_capacity(inline_cap),
@@ -236,7 +243,7 @@ public:
     /// 解構子：若已配置堆積記憶體則進行釋放。
     /// </summary>
     NUMERIC_CONSTEXPR_20 ~BigIntBase() noexcept {
-        if (!m_is_sbo && m_data != nullptr) {
+        if (!m_is_sbo && m_data != nullptr && m_data != m_inline_data) {
             delete[] m_data;
             m_data = nullptr;
         }
@@ -904,25 +911,41 @@ public:
         c = adc64(c, a3, b3, &r3);
 
         if (c == 0) {
-            if (res.sbo_capacity() >= 4) {
-                res.reset_heap();
-            } else if (res.capacity() < 4) {
-                res.reserve(4);
-            }
-            uint64_t* d = res.data();
-            d[0] = r0;
-            d[1] = r1;
-            d[2] = r2;
-            d[3] = r3;
             size_t s = 4;
-            while (s > 0 && d[s - 1] == 0) --s;
+            if (r3 == 0) {
+                if (r2 == 0) {
+                    if (r1 == 0) s = (r0 == 0) ? 0 : 1;
+                    else s = 2;
+                } else {
+                    s = 3;
+                }
+            }
+
+            if (s <= res.sbo_capacity()) {
+                if (!res.is_inline()) {
+                    res.reset_heap();
+                }
+            } else if (res.capacity() < s) {
+                res.reserve(s);
+            }
+
+            uint64_t* d = res.data();
+            switch (s) {
+            case 4: d[3] = r3; /* fallthrough */
+            case 3: d[2] = r2; /* fallthrough */
+            case 2: d[1] = r1; /* fallthrough */
+            case 1: d[0] = r0; break;
+            default: break;
+            }
+
             res.m_size = static_cast<uint32_t>(s);
             if (s == 0) {
                 res.m_sign = 0;
             }
-            res.shrink_to_sbo_if_possible();
         } else {
-            res.resize(5, 0);
+            if (res.capacity() < 5) {
+                res.reserve(5);
+            }
             uint64_t* d = res.data();
             d[0] = r0; d[1] = r1; d[2] = r2; d[3] = r3;
             d[4] = 1;
@@ -960,24 +983,37 @@ public:
         borrow = sbb64(borrow, a2, b2, &r2);
         borrow = sbb64(borrow, a3, b3, &r3);
 
-        if (res.sbo_capacity() >= 4) {
-            res.reset_heap();
-        } else if (res.capacity() < 4) {
-            res.reserve(4);
-        }
-        uint64_t* d = res.data();
-        d[0] = r0;
-        d[1] = r1;
-        d[2] = r2;
-        d[3] = r3;
-
         size_t s = 4;
-        while (s > 0 && d[s - 1] == 0) --s;
+        if (r3 == 0) {
+            if (r2 == 0) {
+                if (r1 == 0) s = (r0 == 0) ? 0 : 1;
+                else s = 2;
+            } else {
+                s = 3;
+            }
+        }
+
+        if (s <= res.sbo_capacity()) {
+            if (!res.is_inline()) {
+                res.reset_heap();
+            }
+        } else if (res.capacity() < s) {
+            res.reserve(s);
+        }
+
+        uint64_t* d = res.data();
+        switch (s) {
+        case 4: d[3] = r3; /* fallthrough */
+        case 3: d[2] = r2; /* fallthrough */
+        case 2: d[1] = r1; /* fallthrough */
+        case 1: d[0] = r0; break;
+        default: break;
+        }
+
         res.m_size = static_cast<uint32_t>(s);
         if (s == 0) {
             res.m_sign = 0;
         }
-        res.shrink_to_sbo_if_possible();
     }
 
     /// <summary>
