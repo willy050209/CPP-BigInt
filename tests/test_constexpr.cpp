@@ -16,7 +16,7 @@ namespace test_ce_bigint {
     static_assert(b0.is_sbo(), "bigint b0 must be SBO");
 
     constexpr numeric::bigint b_proxy_zero = numeric::bigint::zero;
-    constexpr numeric::bigint b_proxy_one = numeric::bigint::one();
+    constexpr numeric::bigint b_proxy_one = numeric::bigint::one;
     static_assert(b_proxy_zero == 0, "bigint::zero proxy check");
     static_assert(b_proxy_one == 1, "bigint::one proxy check");
 
@@ -52,36 +52,18 @@ namespace test_ce_bigint {
     static_assert(b_neg.sign() == -1, "b_neg sign must be -1");
 
     // 2. 算術運算
-    constexpr numeric::bigint sum = b42 + 8;
-    static_assert(sum == 50, "42 + 8 == 50");
-
-    constexpr numeric::bigint diff = b42 - 50;
-    static_assert(diff == -8, "42 - 50 == -8");
-
-    constexpr numeric::bigint prod = b42 * 2;
-    static_assert(prod == 84, "42 * 2 == 84");
-
-    constexpr numeric::bigint quot = b42 / 10;
-    static_assert(quot == 4, "42 / 10 == 4");
-
-    constexpr numeric::bigint rem = b42 % 10;
-    static_assert(rem == 2, "42 % 10 == 2");
+    static_assert(b42 + 8 == 50, "42 + 8 == 50");
+    static_assert(b42 - 50 == -8, "42 - 50 == -8");
+    static_assert(b42 * 2 == 84, "42 * 2 == 84");
+    static_assert(b42 / 10 == 4, "42 / 10 == 4");
+    static_assert(b42 % 10 == 2, "42 % 10 == 2");
 
     // 3. 位元運算與位移
-    constexpr numeric::bigint b_and = numeric::bigint(0b1100) & numeric::bigint(0b1010);
-    static_assert(b_and == 0b1000, "0b1100 & 0b1010 == 0b1000");
-
-    constexpr numeric::bigint b_or = numeric::bigint(0b1100) | numeric::bigint(0b1010);
-    static_assert(b_or == 0b1110, "0b1100 | 0b1010 == 0b1110");
-
-    constexpr numeric::bigint b_xor = numeric::bigint(0b1100) ^ numeric::bigint(0b1010);
-    static_assert(b_xor == 0b0110, "0b1100 ^ 0b1010 == 0b0110");
-
-    constexpr numeric::bigint b_shl = numeric::bigint(1) << 10;
-    static_assert(b_shl == 1024, "1 << 10 == 1024");
-
-    constexpr numeric::bigint b_shr = numeric::bigint(1024) >> 5;
-    static_assert(b_shr == 32, "1024 >> 5 == 32");
+    static_assert((numeric::bigint(0b1100) & numeric::bigint(0b1010)) == 0b1000, "0b1100 & 0b1010 == 0b1000");
+    static_assert((numeric::bigint(0b1100) | numeric::bigint(0b1010)) == 0b1110, "0b1100 | 0b1010 == 0b1110");
+    static_assert((numeric::bigint(0b1100) ^ numeric::bigint(0b1010)) == 0b0110, "0b1100 ^ 0b1010 == 0b0110");
+    static_assert((numeric::bigint(1) << 10) == 1024, "1 << 10 == 1024");
+    static_assert((numeric::bigint(1024) >> 5) == 32, "1024 >> 5 == 32");
 
     // 4. 比較運算與邏輯運算
     static_assert(b42 > 10, "42 > 10");
@@ -102,8 +84,7 @@ namespace test_ce_bigint {
         }
         return r;
     }
-    constexpr numeric::bigint fact10 = calc_factorial(10);
-    static_assert(fact10 == 3628800, "10! == 3628800");
+    static_assert(calc_factorial(10) == 3628800, "10! == 3628800");
 
     // 6. 字串解析
     constexpr numeric::bigint b_from_str("1234567890123456789");
@@ -116,15 +97,13 @@ namespace test_ce_bigint {
     static_assert(b_multi % 10 == 0, "multi-chunk parsed bigint % 10 == 0");
 
     // 7. abs
-    constexpr numeric::bigint bi_abs = numeric::abs(numeric::bigint(-42));
-    static_assert(bi_abs == 42, "abs(bigint(-42)) == 42");
+    static_assert(numeric::abs(numeric::bigint(-42)) == 42, "abs(bigint(-42)) == 42");
 
     // 8. SBO ADC / SBB 與 In-place 運算
     constexpr numeric::bigint c_a("18446744073709551615");
     constexpr numeric::bigint c_b("1");
-    constexpr numeric::bigint c_sum = c_a + c_b;
-    static_assert(c_sum == numeric::bigint("18446744073709551616"), "SBO carry addition in constexpr");
-    static_assert(c_sum - c_b == c_a, "SBO borrow subtraction in constexpr");
+    static_assert(c_a + c_b == numeric::bigint("18446744073709551616"), "SBO carry addition in constexpr");
+    static_assert((c_a + c_b) - c_b == c_a, "SBO borrow subtraction in constexpr");
 
     constexpr numeric::bigint test_in_place() {
         numeric::bigint x(100);
@@ -144,9 +123,9 @@ void run_test_constexpr() {
     std::cout << "[Testing Constexpr Evaluation (C++20+)]" << std::endl;
 
 #if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
-    TEST_ASSERT(test_ce_bigint::fact10 == 3628800);
+    TEST_ASSERT(test_ce_bigint::calc_factorial(10) == 3628800);
     TEST_ASSERT(test_ce_bigint::b_from_str > 0);
-    TEST_ASSERT(test_ce_bigint::bi_abs == 42);
+    TEST_ASSERT(numeric::abs(numeric::bigint(-42)) == 42);
     std::cout << "  -> Constexpr static_assert and runtime verification passed." << std::endl;
 #else
     std::cout << "  -> Skipped on C++ < 20 (standard does not support non-literal constexpr types)." << std::endl;
