@@ -451,6 +451,17 @@ class Program
             s_sink = sink;
             AddMetric("Neg", arithIters, nsNeg);
 
+            double nsNegIp = MeasureInPlaceNs(setup, () =>
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    aWork[i] = -aWork[i];
+                    sink += aWork[i].Sign;
+                }
+            }, arithIters);
+            s_sink = sink;
+            AddMetric("Neg_InPlace", arithIters, nsNegIp);
+
             double nsNot = MeasureNs(() =>
             {
                 for (int i = 0; i < N; i++)

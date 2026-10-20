@@ -292,6 +292,17 @@ public:
     /// <summary>
     /// 移動賦值輔助函式：若來源在 SBO 內則 memcpy，超出 SBO 則直接竊取 heap 指標。
     /// </summary>
+    /// <summary>
+    /// 複製並取負賦值輔助函式：深拷貝另一物件之 limbs 並將符號取負。
+    /// 若目前物件具備足夠容量則直接重用緩衝區，達成 0 次動態記憶體配置。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void assign_negated(const BigIntBase& other) {
+        assign_from(other);
+        if (m_size > 0 && m_sign != 0) {
+            m_sign = -m_sign;
+        }
+    }
+
     NUMERIC_CONSTEXPR_20 void move_from(BigIntBase&& other) noexcept {
         if (this != &other) {
             reset_heap();

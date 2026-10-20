@@ -252,6 +252,14 @@ void run_benchmarks_for_tier(
         }, arithmetic_iters);
         reporter.add_metric(tier, bits, "Neg", arithmetic_iters * N, elapsed_neg);
 
+        double elapsed_neg_ip = bench::measure_inplace_time_ns(setup, [&]() {
+            for (size_t i = 0; i < N; ++i) {
+                a_work[i].negate();
+                bench::do_not_optimize(a_work[i]);
+            }
+        }, arithmetic_iters);
+        reporter.add_metric(tier, bits, "Neg_InPlace", arithmetic_iters * N, elapsed_neg_ip);
+
         double elapsed_not = bench::measure_time_ns([&]() {
             for (size_t i = 0; i < N; ++i) {
                 numeric::bigint c = ~a_nums[i];

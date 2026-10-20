@@ -277,6 +277,52 @@ struct BigIntIntrinsics {
         rem = r;
         return q_est;
     }
+
+    /// <summary>
+    /// 雙字向左組合位移：將 high 向左移動 shift 位元，低位以 low 之高位補齊。
+    /// 要求 0 <= shift < 64。當 shift == 0 時直接回傳 high。
+    /// 等價於 ((high << 64 | low) << shift) 的高 64 位元。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE uint64_t shld64(
+        uint64_t high, uint64_t low, unsigned int shift) noexcept
+    {
+        assert(shift < 64);
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            return (shift == 0) ? high : ((high << shift) | (low >> (64 - shift)));
+        }
+#endif
+#if defined(_MSC_VER) && defined(_M_X64)
+        return (shift == 0) ? high : __shiftleft128(low, high, static_cast<unsigned char>(shift));
+#elif defined(__SIZEOF_INT128__)
+        return (shift == 0) ? high : ((high << shift) | (low >> (64 - shift)));
+#else
+        return (shift == 0) ? high : ((high << shift) | (low >> (64 - shift)));
+#endif
+    }
+
+    /// <summary>
+    /// 雙字向右組合位移：將 low 向右移動 shift 位元，高位以 high 之低位補齊。
+    /// 要求 0 <= shift < 64。當 shift == 0 時直接回傳 low。
+    /// 等價於 ((high << 64 | low) >> shift) 的低 64 位元。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE uint64_t shrd64(
+        uint64_t high, uint64_t low, unsigned int shift) noexcept
+    {
+        assert(shift < 64);
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            return (shift == 0) ? low : ((low >> shift) | (high << (64 - shift)));
+        }
+#endif
+#if defined(_MSC_VER) && defined(_M_X64)
+        return (shift == 0) ? low : __shiftright128(low, high, static_cast<unsigned char>(shift));
+#elif defined(__SIZEOF_INT128__)
+        return (shift == 0) ? low : ((low >> shift) | (high << (64 - shift)));
+#else
+        return (shift == 0) ? low : ((low >> shift) | (high << (64 - shift)));
+#endif
+    }
 };
 
 } // namespace detail

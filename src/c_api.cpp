@@ -376,9 +376,10 @@ bigint_status_t bigint_neg(bigint_t* out, const bigint_t* a) {
     if (!out || !a) return BIGINT_ERR_NULL_PTR;
     try {
         if (out != a) {
-            to_base(out).assign_from(to_base(a));
+            to_base(out).assign_negated(to_base(a));
+        } else {
+            to_base(out).negate();
         }
-        to_base(out).negate();
         return BIGINT_OK;
     } catch (...) {
         return BIGINT_ERR_OUT_OF_MEMORY;
@@ -467,11 +468,7 @@ bigint_status_t bigint_xor(bigint_t* out, const bigint_t* a, const bigint_t* b) 
 bigint_status_t bigint_not(bigint_t* out, const bigint_t* a) {
     if (!out || !a) return BIGINT_ERR_NULL_PTR;
     try {
-        numeric::bigint one(1);
-        numeric::bigint tmp;
-        numeric::detail::BigIntCore::add_signed(tmp, to_base(a), one);
-        tmp.negate();
-        to_base(out).move_from(std::move(tmp));
+        numeric::detail::BigIntCore::bitwise_not(to_base(out), to_base(a));
         return BIGINT_OK;
     } catch (...) {
         return BIGINT_ERR_OUT_OF_MEMORY;

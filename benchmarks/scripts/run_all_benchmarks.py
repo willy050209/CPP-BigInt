@@ -14,6 +14,9 @@ import json
 import math
 from collections import defaultdict
 
+os.environ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
+os.environ["DOTNET_NOLOGO"] = "1"
+
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BENCH_DIR = os.path.join(ROOT_DIR, "benchmarks")
 DATA_DIR = os.path.join(BENCH_DIR, "data")
@@ -82,17 +85,20 @@ def execute_benchmarks():
         ])
 
         # 6. .NET 10 (Native AOT)
-        aot_out_dir = os.path.join(BENCH_DIR, "dotnet", "bin", "aot")
-        print("\n[Orchestrator] Publishing .NET 10 with Native AOT (<PublishAot>true)...")
-        run_cmd([
-            "dotnet", "publish", dotnet_proj, "-c", "Release", "-r", "win-x64",
-            "/p:PublishAot=true", "-o", aot_out_dir
-        ])
-        aot_exe = os.path.join(aot_out_dir, "BenchmarkBigInt.exe")
-        if os.path.exists(aot_exe):
+        try:
+            aot_out_dir = os.path.join(BENCH_DIR, "dotnet", "bin", "aot")
+            print("\n[Orchestrator] Publishing .NET 10 with Native AOT (<PublishAot>true)...")
             run_cmd([
-                aot_exe, DATA_DIR, os.path.join(RESULTS_DIR, "results_dotnet_aot.json"), ".NET 10 (Native AOT)"
+                "dotnet", "publish", dotnet_proj, "-c", "Release", "-r", "win-x64",
+                "/p:PublishAot=true", "-o", aot_out_dir
             ])
+            aot_exe = os.path.join(aot_out_dir, "BenchmarkBigInt.exe")
+            if os.path.exists(aot_exe):
+                run_cmd([
+                    aot_exe, DATA_DIR, os.path.join(RESULTS_DIR, "results_dotnet_aot.json"), ".NET 10 (Native AOT)"
+                ])
+        except Exception as e:
+            print(f"[Orchestrator] Native AOT publish skipped (offline/sandbox): {e}")
 
     # 7. Python (Built-in int & gmpy2)
     python_bench = os.path.join(BENCH_DIR, "python", "bench_python.py")

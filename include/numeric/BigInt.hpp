@@ -685,6 +685,17 @@ public:
     }
 
     /// <summary>
+    /// 賦值並反轉正負號：將 other 拷貝至目前物件並取負。
+    /// 若目前物件已分配足夠容量，則直接重用緩衝區，達成 0 次動態記憶體配置。
+    /// </summary>
+    template <size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 BasicBigInt& assign_negated(const BasicBigInt<OtherLimbs>& other) {
+        this->assign_from(other);
+        this->negate();
+        return *this;
+    }
+
+    /// <summary>
     /// 前置遞增運算子：++a。
     /// </summary>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator++() {

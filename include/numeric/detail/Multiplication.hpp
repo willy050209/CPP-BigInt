@@ -17,7 +17,11 @@ namespace detail {
 /// </summary>
 struct BigIntMultiplication : public BigIntBitwise {
     static constexpr size_t KARATSUBA_THRESHOLD = 16;
-    static constexpr size_t TOOM3_THRESHOLD = 2048;
+#ifndef NUMERIC_TOOM3_THRESHOLD
+    static constexpr size_t TOOM3_THRESHOLD = 256;
+#else
+    static constexpr size_t TOOM3_THRESHOLD = NUMERIC_TOOM3_THRESHOLD;
+#endif
 
     /// <summary>
     /// 原生 Schoolbook 乘法：out = a * b。out 長度至少為 a_len + b_len。
