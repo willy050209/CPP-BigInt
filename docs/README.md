@@ -12,6 +12,7 @@
 | `numeric` / `std` | `<numeric/BigIntMath.hpp>` | 數論與高精度數學演算法函式庫（平方根、立方根、快速冪、GCD、LCM）。 |
 | `numeric` | `<numeric/Bitset.hpp>` | `bigint` 與任意寬度 `std::bitset<N>` 雙向互轉介面。 |
 | `numeric` | `<numeric/Config.hpp>` | 編譯期環境檢測、屬性與相容性巨集定義。 |
+| `numeric` / `C` | `<numeric/c_api.h>` / `dist/bigint_c.h` | C-ABI (`extern "C"`) 介面，供純 C、Python、Rust、.NET 等 FFI 呼叫。 |
 | `std` | `<numeric/BigInt.hpp>` | 標準庫特化：支援 `std::hash` 與 C++20 `std::formatter`。 |
 
 ### 內部模組化架構 (`numeric::detail`)
@@ -86,7 +87,10 @@
 ### 5. [編譯設定與巨集 (Configuration & Macros)](config.md)
 收錄於 `<numeric/Config.hpp>`，定義 C++ 版本條件編譯、`NUMERIC_CONSTEXPR_20_FORCEINLINE`、無例外 (`-fno-exceptions`) 安全回退機制、constexpr 支援等級及原生硬體加速檢測。
 
-### 6. [跨語言效能評測報告 (Benchmark Report)](../benchmarks/results/BENCHMARK_REPORT.md)
+### 6. [C-ABI 介面與跨語言 FFI (C-API)](c_api.md)
+收錄於 `<numeric/c_api.h>` 與 `dist/bigint_c.h`，提供 57 個標準 `extern "C"` 介面，支援 Opaque Handle 模式與 256/512 位元棧上零配置 SBO 模式，無縫對接 Python、Rust、.NET 10 (`[DllImport]`) 及 Go。
+
+### 7. [跨語言效能評測報告 (Benchmark Report)](../benchmarks/results/BENCHMARK_REPORT.md)
 收錄 `CPP-BigInt`、`C++ GMP (MPIR)`、`.NET 10`、`Python 3.13` 及 `gmpy2` 之 64 至 65,536 bits 完整對比矩陣與效能比值。
 
 ---

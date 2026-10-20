@@ -33,6 +33,9 @@
   - 位元運算：`&`, `|`, `^`, `~`, `<<`, `>>`（完整二補數 Two's Complement 語意，負數移位拋出 `std::invalid_argument`）。
   - 比較與邏輯：`==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `||`, `!`（支援 C 語言「非零即真」語意）。
   - 跨型別混算：無縫與所有原生整數型態（`int8_t` ~ `uint64_t`）混合運算與比較。
+- **標準 C-ABI (`extern "C"`) 與跨語言 FFI 支援**：
+  - 提供獨立動態庫 `bigint_c.dll` / `libbigint_c.so` 與標頭檔 `numeric/c_api.h`（發行版 `dist/bigint_c.h`）。
+  - 支援 **Opaque Handle 模式** 與 **零堆積 256/512 位元棧上 SBO 模式**，讓 Python (`ctypes`)、Rust (`bindgen`)、.NET 10 (`[DllImport]`) 能在 0 Bytes GC 與 0 堆積配置下享受極致微延遲（.NET 實測加法加速達 **11.73x**）。
 - **進階擴充支援**：
   - **整數數學函式 (`numeric/BigIntMath.hpp`)**：`abs`, `isqrt`, `sqrt`, `icbrt`, `cbrt`, `pow`, `gcd`, `lcm`（同時支援 `numeric::` 與 `std::` 命名空間）。
   - **位元集合互轉 (`numeric/Bitset.hpp`)**：支援任意寬度 `std::bitset<N>` 雙向轉換，負數嚴格遵循標準二補數延伸。
@@ -88,7 +91,10 @@ target_link_libraries(your_target PRIVATE bigint)
 import bigint;
 ```
 
-#### 4. 單一檔案打包與檢查工具
+#### 4. C-ABI 跨語言動態庫引入 (C / Python / Rust / .NET)
+CMake 建置時預設開啟 `-DBIGINT_BUILD_C_API=ON`，產出 `bigint_c.dll` / `libbigint_c.so`，並提供純 C 標頭檔 `dist/bigint_c.h`。
+
+#### 5. 單一檔案打包與檢查工具
 ```powershell
 # 自動依拓撲排序打包為 dist/bigint.hpp 並濾除重複標頭
 python scripts/bundle_header.py
@@ -169,6 +175,7 @@ API 技術參考手冊已收錄於 [docs/](docs/README.md)：
 - [std::bitset 泛型互轉 (`numeric/Bitset.hpp`)](docs/bitset.md)
 - [C++ 標準庫擴充特化 (std::hash, std::formatter)](docs/extensions.md)
 - [編譯設定與巨集環境 (`numeric/Config.hpp`)](docs/config.md)
+- [C-ABI 跨語言介面手冊 (Python, Rust, .NET 10 FFI)](docs/c_api.md)
 - [跨語言效能評測報告 (Benchmark Report)](benchmarks/results/BENCHMARK_REPORT.md)
 
 ---
