@@ -112,6 +112,38 @@ namespace test_ce_bigint {
         return x;
     }
     static_assert(test_in_place() == 120, "in-place arithmetic in constexpr");
+
+    // 9. addmul_1_raw 與 submul_1_raw 編譯期常數求值
+    constexpr bool test_addmul_submul_ce() {
+        uint64_t dst[4] = { 100, 200, 300, 400 };
+        const uint64_t src[4] = { 10, 20, 30, 40 };
+        uint64_t multiplier = 5;
+
+        // addmul_1_raw: dst += src * 5
+        uint64_t c = numeric::detail::BigIntIntrinsics::addmul_1_raw(dst, src, 4, multiplier);
+        if (c != 0) return false;
+        if (dst[0] != 150 || dst[1] != 300 || dst[2] != 450 || dst[3] != 600) return false;
+
+        // submul_1_raw: dst -= src * 5
+        uint64_t b = numeric::detail::BigIntIntrinsics::submul_1_raw(dst, src, 4, multiplier);
+        if (b != 0) return false;
+        if (dst[0] != 100 || dst[1] != 200 || dst[2] != 300 || dst[3] != 400) return false;
+
+        // 溢出進位測試
+        uint64_t dst2[2] = { 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL };
+        const uint64_t src2[2] = { 2, 0 };
+        uint64_t c2 = numeric::detail::BigIntIntrinsics::addmul_1_raw(dst2, src2, 2, 2);
+        if (c2 != 1 || dst2[0] != 3 || dst2[1] != 0) return false;
+
+        // 溢出借位測試
+        uint64_t dst3[2] = { 3, 0 };
+        const uint64_t src3[2] = { 2, 0 };
+        uint64_t b3 = numeric::detail::BigIntIntrinsics::submul_1_raw(dst3, src3, 2, 2);
+        if (b3 != 1 || dst3[0] != 0xFFFFFFFFFFFFFFFFULL || dst3[1] != 0xFFFFFFFFFFFFFFFFULL) return false;
+
+        return true;
+    }
+    static_assert(test_addmul_submul_ce(), "addmul_1_raw and submul_1_raw constexpr test");
 }
 
 #endif // NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20
@@ -126,6 +158,7 @@ void run_test_constexpr() {
     TEST_ASSERT(test_ce_bigint::calc_factorial(10) == 3628800);
     TEST_ASSERT(test_ce_bigint::b_from_str > 0);
     TEST_ASSERT(numeric::abs(numeric::bigint(-42)) == 42);
+    TEST_ASSERT(test_ce_bigint::test_addmul_submul_ce());
     std::cout << "  -> Constexpr static_assert and runtime verification passed." << std::endl;
 #else
     std::cout << "  -> Skipped on C++ < 20 (standard does not support non-literal constexpr types)." << std::endl;

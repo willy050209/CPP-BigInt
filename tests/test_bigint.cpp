@@ -499,5 +499,38 @@ void run_test_bigint() {
         TEST_ASSERT((-numeric::BasicBigInt<4>(100)) == -100);
     }
 
+    // 18. 原語測試：addmul_1_raw 與 submul_1_raw
+    {
+        using numeric::detail::BigIntIntrinsics;
+        uint64_t dummy = 123;
+        TEST_ASSERT(BigIntIntrinsics::addmul_1_raw(&dummy, &dummy, 0, 999) == 0);
+        TEST_ASSERT(BigIntIntrinsics::submul_1_raw(&dummy, &dummy, 0, 999) == 0);
+        TEST_ASSERT(dummy == 123);
+
+        uint64_t d2[3] = { 10, 20, 30 };
+        const uint64_t s2[3] = { 100, 200, 300 };
+        TEST_ASSERT(BigIntIntrinsics::addmul_1_raw(d2, s2, 3, 0) == 0);
+        TEST_ASSERT(d2[0] == 10 && d2[1] == 20 && d2[2] == 30);
+        TEST_ASSERT(BigIntIntrinsics::submul_1_raw(d2, s2, 3, 0) == 0);
+        TEST_ASSERT(d2[0] == 10 && d2[1] == 20 && d2[2] == 30);
+
+        uint64_t dst[4] = { 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL };
+        const uint64_t src[4] = { 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL };
+        uint64_t mult = 0xFFFFFFFFFFFFFFFFULL;
+        uint64_t carry = BigIntIntrinsics::addmul_1_raw(dst, src, 4, mult);
+        TEST_ASSERT(dst[0] == 0);
+        TEST_ASSERT(dst[1] == 0xFFFFFFFFFFFFFFFFULL);
+        TEST_ASSERT(dst[2] == 0xFFFFFFFFFFFFFFFFULL);
+        TEST_ASSERT(dst[3] == 0xFFFFFFFFFFFFFFFFULL);
+        TEST_ASSERT(carry == 0xFFFFFFFFFFFFFFFFULL);
+
+        uint64_t borrow = BigIntIntrinsics::submul_1_raw(dst, src, 4, mult);
+        TEST_ASSERT(dst[0] == 0xFFFFFFFFFFFFFFFFULL);
+        TEST_ASSERT(dst[1] == 0xFFFFFFFFFFFFFFFFULL);
+        TEST_ASSERT(dst[2] == 0xFFFFFFFFFFFFFFFFULL);
+        TEST_ASSERT(dst[3] == 0xFFFFFFFFFFFFFFFFULL);
+        TEST_ASSERT(borrow == 0xFFFFFFFFFFFFFFFFULL);
+    }
+
     std::cout << "--- BigInt Tests Completed Successfully ---" << std::endl;
 }

@@ -323,6 +323,86 @@ struct BigIntIntrinsics {
         return (shift == 0) ? low : ((low >> shift) | (high << (64 - shift)));
 #endif
     }
+
+    /// <summary>
+    /// 硬體友善無分支乘加原語：dst[0..n-1] += src[0..n-1] * multiplier。
+    /// 回傳最終高位溢出進位 (carry)。
+    /// 消除三元判斷分支，全面支援 C++20 constexpr 常數求值。
+    /// </summary>
+    /// <param name="dst">目標運算元與輸出緩衝區</param>
+    /// <param name="src">來源運算元陣列</param>
+    /// <param name="n">運算 limb 長度</param>
+    /// <param name="multiplier">64 位元單字乘數</param>
+    /// <returns>最終高位溢出進位</returns>
+    static NUMERIC_CONSTEXPR_20 uint64_t addmul_1_raw(
+        uint64_t* NUMERIC_RESTRICT dst,
+        const uint64_t* NUMERIC_RESTRICT src,
+        size_t n,
+        uint64_t multiplier) noexcept
+    {
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            uint64_t carry = 0;
+            for (size_t i = 0; i < n; ++i) {
+                uint64_t hi = 0;
+                uint64_t lo = mul64_wide(src[i], multiplier, hi);
+                uint8_t c1 = adc64(0, dst[i], lo, &dst[i]);
+                uint8_t c2 = adc64(0, dst[i], carry, &dst[i]);
+                carry = hi + c1 + c2;
+            }
+            return carry;
+        }
+#endif
+        uint64_t carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t hi = 0;
+            uint64_t lo = mul64_wide(src[i], multiplier, hi);
+            uint8_t c1 = adc64(0, dst[i], lo, &dst[i]);
+            uint8_t c2 = adc64(0, dst[i], carry, &dst[i]);
+            carry = hi + c1 + c2;
+        }
+        return carry;
+    }
+
+    /// <summary>
+    /// 硬體友善無分支乘減原語：dst[0..n-1] -= src[0..n-1] * multiplier。
+    /// 回傳最終高位溢出借位 (borrow)。
+    /// 消除三元判斷分支，全面支援 C++20 constexpr 常數求值。
+    /// </summary>
+    /// <param name="dst">目標運算元與輸出緩衝區</param>
+    /// <param name="src">來源運算元陣列</param>
+    /// <param name="n">運算 limb 長度</param>
+    /// <param name="multiplier">64 位元單字乘數</param>
+    /// <returns>最終高位溢出借位</returns>
+    static NUMERIC_CONSTEXPR_20 uint64_t submul_1_raw(
+        uint64_t* NUMERIC_RESTRICT dst,
+        const uint64_t* NUMERIC_RESTRICT src,
+        size_t n,
+        uint64_t multiplier) noexcept
+    {
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            uint64_t borrow = 0;
+            for (size_t i = 0; i < n; ++i) {
+                uint64_t hi = 0;
+                uint64_t lo = mul64_wide(src[i], multiplier, hi);
+                uint8_t b1 = sbb64(0, dst[i], lo, &dst[i]);
+                uint8_t b2 = sbb64(0, dst[i], borrow, &dst[i]);
+                borrow = hi + b1 + b2;
+            }
+            return borrow;
+        }
+#endif
+        uint64_t borrow = 0;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t hi = 0;
+            uint64_t lo = mul64_wide(src[i], multiplier, hi);
+            uint8_t b1 = sbb64(0, dst[i], lo, &dst[i]);
+            uint8_t b2 = sbb64(0, dst[i], borrow, &dst[i]);
+            borrow = hi + b1 + b2;
+        }
+        return borrow;
+    }
 };
 
 } // namespace detail

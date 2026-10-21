@@ -1,0 +1,21 @@
+# 2026-10-21 Orchestration Review & Benchmark Finalization Log
+
+## 執行摘要
+- Task 1: 完成 `addmul_1_raw` 與 `submul_1_raw` 無分支原語，Schoolbook 乘法重構。
+- Task 2: Knuth Algorithm D 採用 `submul_1_raw` 與 `add_to_raw`，直通輸出指標消除 stack buffer。
+- Task 3: Burnikel-Ziegler 除法改為指針切片 `bz_div3by2_raw` 與 `bz_div2by1_raw`。
+- Bugfix: 排除 `ScratchArena` 因 `std::vector::resize()` 導致在 65,536 bits 遞迴層觸發懸置指標的存取違規崩潰 (0xC0000005)，重構為分塊穩定架構 (Chunked Bump Allocator with pointer stability)。
+- Task 5: 執行 `run_all_benchmarks.py`，全套 Layer 1 ~ Layer 4 基準測試與跨語言評測（C++, GMP, .NET 10 JIT & Native AOT, Python）全數無錯誤通過，並成功產出 `BENCHMARK_REPORT.md`。
+
+## 核心亮點指標
+1. Layer 1 Pure Division Kernel (Zero Allocation):
+   - 65,536 bits: CPP-BigInt 146.5 µs vs GMP 211.96 µs (🚀 1.45x faster than GMP)
+   - 16,384 bits: CPP-BigInt 13.87 µs vs GMP 19.80 µs (🚀 1.43x faster than GMP)
+   - 4,096 bits: CPP-BigInt 1.57 µs vs GMP 2.02 µs (🚀 1.28x faster than GMP)
+2. Layer 1 Pure Multiplication Kernel (Zero Allocation):
+   - 65,536 bits: CPP-BigInt 221.5 µs vs GMP 361.2 µs (🚀 1.63x faster than GMP)
+   - 16,384 bits: CPP-BigInt 23.6 µs vs GMP 54.6 µs (🚀 2.31x faster than GMP)
+   - 4,096 bits: CPP-BigInt 2.36 µs vs GMP 5.25 µs (🚀 2.22x faster than GMP)
+3. Test Suites:
+   - BigInt Unit Tests: 1,223 / 1,223 assertions passed (100%)
+   - C-ABI Test Suite: 61 / 61 assertions passed (100%)

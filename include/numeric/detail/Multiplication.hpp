@@ -7,6 +7,8 @@
 
 #include "Bitwise.hpp"
 #include <vector>
+#include <memory>
+#include <algorithm>
 
 namespace numeric {
 namespace detail {
@@ -32,18 +34,7 @@ struct BigIntMultiplication : public BigIntBitwise {
         BigIntStorage::zero_limbs(out, a_len + b_len);
         for (size_t i = 0; i < a_len; ++i) {
             if (a[i] == 0) continue;
-            uint64_t carry = 0;
-            for (size_t j = 0; j < b_len; ++j) {
-                uint64_t hi = 0;
-                uint64_t lo = mul64_wide(a[i], b[j], hi);
-                uint64_t cur = out[i + j];
-                uint64_t sum = cur + lo;
-                uint64_t c1 = (sum < cur) ? 1 : 0;
-                sum += carry;
-                uint64_t c2 = (sum < carry) ? 1 : 0;
-                out[i + j] = sum;
-                carry = hi + c1 + c2;
-            }
+            uint64_t carry = addmul_1_raw(out + i, b, b_len, a[i]);
             out[i + b_len] += carry;
         }
     }
@@ -95,8 +86,9 @@ struct BigIntMultiplication : public BigIntBitwise {
     }
 
     /// <summary>
-    /// 線程局部暫存記憶體池（Bump Allocator Scratch Arena）。
-    /// 提供 Karatsuba 乘法與長整數運算無鎖、0 堆積重配置之 scratch 空間。
+    /// 線程局部暫存記憶體池（Bump Allocator with stable chunks）。
+    /// 提供長整數乘除法運算無鎖、0 堆積重配置之 scratch 空間。
+    /// 採用分塊 (Chunked) 策略，任何額外的分塊配置均不會導致先前分塊的指針失效 (Pointer Stability)。
     /// 支援 RAII Scope 機制，遞迴或巢狀調用時自動安全回滾偏移指標。
     /// </summary>
     class ScratchArena {
@@ -106,15 +98,20 @@ struct BigIntMultiplication : public BigIntBitwise {
             return arena;
         }
 
+        struct Marker {
+            size_t chunk_idx;
+            size_t offset;
+        };
+
         class Scope {
         public:
-            explicit NUMERIC_CONSTEXPR_20 Scope(ScratchArena& arena, bool active = true) noexcept
+            explicit Scope(ScratchArena& arena, bool active = true) noexcept
                 : m_arena(active ? &arena : nullptr),
-                  m_saved_offset(active ? arena.m_offset : 0) {}
+                  m_saved(active ? arena.get_marker() : Marker{0, 0}) {}
 
-            NUMERIC_CONSTEXPR_20 ~Scope() noexcept {
+            ~Scope() noexcept {
                 if (m_arena) {
-                    m_arena->m_offset = m_saved_offset;
+                    m_arena->restore_marker(m_saved);
                 }
             }
 
@@ -125,24 +122,67 @@ struct BigIntMultiplication : public BigIntBitwise {
 
         private:
             ScratchArena* m_arena;
-            size_t m_saved_offset;
+            Marker m_saved;
         };
 
+        Marker get_marker() const noexcept {
+            return { m_current_chunk, m_current_offset };
+        }
+
+        void restore_marker(Marker m) noexcept {
+            m_current_chunk = m.chunk_idx;
+            m_current_offset = m.offset;
+        }
+
         uint64_t* allocate(size_t count) {
-            if (m_offset + count > m_buffer.size()) {
-                size_t new_cap = (std::max)(m_buffer.size() * 2, m_offset + count);
-                new_cap = (std::max)(new_cap, static_cast<size_t>(4096));
-                m_buffer.resize(new_cap);
+            if (count == 0) count = 1;
+
+            if (m_current_chunk < m_chunks.size()) {
+                if (m_current_offset + count <= m_chunks[m_current_chunk].size) {
+                    uint64_t* ptr = m_chunks[m_current_chunk].buffer.get() + m_current_offset;
+                    m_current_offset += count;
+                    return ptr;
+                }
+                ++m_current_chunk;
+                m_current_offset = 0;
             }
-            uint64_t* ptr = m_buffer.data() + m_offset;
-            m_offset += count;
+
+            if (m_current_chunk < m_chunks.size()) {
+                if (m_chunks[m_current_chunk].size >= count) {
+                    uint64_t* ptr = m_chunks[m_current_chunk].buffer.get();
+                    m_current_offset = count;
+                    return ptr;
+                }
+                size_t new_cap = (std::max)(count, DEFAULT_CHUNK_SIZE);
+                m_chunks[m_current_chunk].buffer.reset(new uint64_t[new_cap]);
+                m_chunks[m_current_chunk].size = new_cap;
+                uint64_t* ptr = m_chunks[m_current_chunk].buffer.get();
+                m_current_offset = count;
+                return ptr;
+            }
+
+            size_t new_cap = (std::max)(count, DEFAULT_CHUNK_SIZE);
+            Chunk chunk;
+            chunk.buffer.reset(new uint64_t[new_cap]);
+            chunk.size = new_cap;
+            m_chunks.push_back(std::move(chunk));
+            uint64_t* ptr = m_chunks.back().buffer.get();
+            m_current_offset = count;
             return ptr;
         }
 
     private:
         ScratchArena() = default;
-        std::vector<uint64_t> m_buffer;
-        size_t m_offset = 0;
+        static constexpr size_t DEFAULT_CHUNK_SIZE = 65536;
+
+        struct Chunk {
+            std::unique_ptr<uint64_t[]> buffer;
+            size_t size = 0;
+        };
+
+        std::vector<Chunk> m_chunks;
+        size_t m_current_chunk = 0;
+        size_t m_current_offset = 0;
     };
 
     /// <summary>
