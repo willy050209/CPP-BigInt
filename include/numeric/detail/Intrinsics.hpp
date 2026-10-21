@@ -220,12 +220,18 @@ struct BigIntIntrinsics {
             return q;
         }
 #endif
-#if defined(__SIZEOF_INT128__)
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(_M_X64))
+        uint64_t q = 0;
+        uint64_t r = 0;
+        __asm__("divq %4" : "=a"(q), "=d"(r) : "d"(hi), "a"(lo), "rm"(d));
+        rem = r;
+        return q;
+#elif defined(_MSC_VER) && defined(_M_X64)
+        return _udiv128(hi, lo, d, &rem);
+#elif defined(__SIZEOF_INT128__)
         unsigned __int128 n = (static_cast<unsigned __int128>(hi) << 64) | lo;
         rem = static_cast<uint64_t>(n % d);
         return static_cast<uint64_t>(n / d);
-#elif defined(_MSC_VER) && defined(_M_X64)
-        return _udiv128(hi, lo, d, &rem);
 #else
         uint64_t q = 0;
         uint64_t r = hi;

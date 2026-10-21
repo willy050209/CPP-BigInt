@@ -105,11 +105,11 @@ struct BigIntMultiplication : public BigIntBitwise {
 
         class Scope {
         public:
-            explicit Scope(ScratchArena& arena, bool active = true) noexcept
+            explicit NUMERIC_CONSTEXPR_20 Scope(ScratchArena& arena, bool active = true) noexcept
                 : m_arena(active ? &arena : nullptr),
                   m_saved(active ? arena.get_marker() : Marker{0, 0}) {}
 
-            ~Scope() noexcept {
+            NUMERIC_CONSTEXPR_20 ~Scope() noexcept {
                 if (m_arena) {
                     m_arena->restore_marker(m_saved);
                 }
@@ -125,11 +125,11 @@ struct BigIntMultiplication : public BigIntBitwise {
             Marker m_saved;
         };
 
-        Marker get_marker() const noexcept {
+        NUMERIC_CONSTEXPR_20 Marker get_marker() const noexcept {
             return { m_current_chunk, m_current_offset };
         }
 
-        void restore_marker(Marker m) noexcept {
+        NUMERIC_CONSTEXPR_20 void restore_marker(Marker m) noexcept {
             m_current_chunk = m.chunk_idx;
             m_current_offset = m.offset;
         }
@@ -619,9 +619,9 @@ struct BigIntMultiplication : public BigIntBitwise {
         }
         if (carry > 0) {
             res.data()[n] = carry;
-            res.m_size = n + 1;
+            res.m_size = static_cast<uint32_t>(n + 1);
         } else {
-            res.m_size = n;
+            res.m_size = static_cast<uint32_t>(n);
         }
         res.m_sign = sign;
     }

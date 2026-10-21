@@ -21,3 +21,4 @@ benchmarks/dotnet/bin/
 benchmarks/dotnet/obj/
 benchmarks/results/*.json
 *.exe
+*.obj
