@@ -18,11 +18,11 @@ namespace detail {
 /// 支援單肢段快除、Knuth Algorithm D 長除法與 Burnikel-Ziegler 分治除法。
 /// </summary>
 struct BigIntDivision : public BigIntMultiplication {
-    static constexpr size_t BZ_THRESHOLD = 128; // Tuned threshold for Burnikel-Ziegler division
+    static constexpr size_t BZ_THRESHOLD = 64; // Tuned threshold for Burnikel-Ziegler division (4096-bit)
 
     /// <summary>
     /// 乘法分段輔助函式：out = a * b。out 容量至少為 a_len + b_len。
-    /// 依運算元大小自動派發至 Schoolbook, Karatsuba 或 Toom-3，並從 arena 配置暫存空間。
+    /// 依運算元大小自動派發至 Schoolbook, Block Karatsuba, Karatsuba 或 Toom-3，並從 arena 配置暫存空間。
     /// </summary>
     static void mul_slice_helper(
         uint64_t* NUMERIC_RESTRICT out,
@@ -35,16 +35,9 @@ struct BigIntDivision : public BigIntMultiplication {
             BigIntStorage::zero_limbs(out, a_len + b_len);
             return;
         }
-        if (n < KARATSUBA_THRESHOLD || a_len < 4 || b_len < 4 ||
-            a_len >= 2 * b_len || b_len >= 2 * a_len) {
-            mul_schoolbook_raw(out, a, a_len, b, b_len);
-        } else if (n < TOOM3_THRESHOLD) {
-            uint64_t* scratch = arena.allocate(8 * n + 128);
-            mul_karatsuba_raw(out, a, a_len, b, b_len, scratch);
-        } else {
-            uint64_t* scratch = arena.allocate(48 * n + 2048);
-            mul_toom3_raw(out, a, a_len, b, b_len, scratch);
-        }
+        size_t scratch_sz = (n >= TOOM3_THRESHOLD) ? (48 * n + 2048) : (8 * n + 256);
+        uint64_t* scratch = arena.allocate(scratch_sz);
+        mul_dispatch_raw(out, a, a_len, b, b_len, scratch);
     }
 
     /// <summary>

@@ -51,15 +51,41 @@ struct BigIntBitwise : public BigIntArithmetic {
             res = a;
             return;
         }
-        if (&res == &a) {
-            BigIntStorage tmp;
-            shift_left(tmp, a, shift);
-            res = std::move(tmp);
-            return;
-        }
         size_t limb_shift = shift / 64;
         size_t bit_shift = shift % 64;
-        size_t new_size = a.m_size + limb_shift + 1;
+        bool overflow = (bit_shift != 0) && ((a.data()[a.m_size - 1] >> (64 - bit_shift)) != 0);
+        size_t new_size = a.m_size + limb_shift + (overflow ? 1 : 0);
+
+        if (&res == &a) {
+            const size_t old_size = a.m_size;
+            if (res.m_capacity < new_size) {
+                res.reserve(new_size);
+            }
+            res.m_size = static_cast<uint32_t>(new_size);
+            if (bit_shift == 0) {
+                for (size_t i = old_size; i > 0; --i) {
+                    res.data()[i - 1 + limb_shift] = res.data()[i - 1];
+                }
+                if (limb_shift > 0) {
+                    BigIntStorage::zero_limbs(res.data(), limb_shift);
+                }
+            } else {
+                if (overflow) {
+                    res.data()[old_size + limb_shift] = res.data()[old_size - 1] >> (64 - bit_shift);
+                }
+                for (size_t i = old_size; i > 0; --i) {
+                    uint64_t cur = res.data()[i - 1];
+                    uint64_t prev = (i > 1) ? res.data()[i - 2] : 0;
+                    res.data()[i - 1 + limb_shift] = shld64(cur, prev, static_cast<unsigned int>(bit_shift));
+                }
+                if (limb_shift > 0) {
+                    BigIntStorage::zero_limbs(res.data(), limb_shift);
+                }
+            }
+            res.normalize();
+            return;
+        }
+
         res.resize(new_size, 0);
 
         if (bit_shift == 0) {
@@ -77,7 +103,9 @@ struct BigIntBitwise : public BigIntArithmetic {
                 res.data()[i + limb_shift] = shld64(cur, prev, static_cast<unsigned int>(bit_shift));
                 prev = cur;
             }
-            res.data()[a.m_size + limb_shift] = prev >> (64 - bit_shift);
+            if (overflow) {
+                res.data()[a.m_size + limb_shift] = prev >> (64 - bit_shift);
+            }
         }
         res.m_sign = a.m_sign;
         res.normalize();
@@ -154,30 +182,55 @@ struct BigIntBitwise : public BigIntArithmetic {
             res.set_uint64(1, -1);
             return;
         }
-        if (&res == &a) {
-            BigIntStorage tmp;
-            bitwise_not(tmp, a);
-            res = std::move(tmp);
-            return;
-        }
         if (a.m_sign > 0) {
             // a > 0: ~a = -(a + 1)
-            res.resize(a.m_size + 1, 0);
+            bool all_ones = true;
+            for (size_t i = 0; i < a.m_size; ++i) {
+                if (a.data()[i] != 0xFFFFFFFFFFFFFFFFULL) {
+                    all_ones = false;
+                    break;
+                }
+            }
+            size_t new_size = all_ones ? (a.m_size + 1) : a.m_size;
+            if (&res == &a) {
+                const size_t old_size = a.m_size;
+                if (res.m_capacity < new_size) {
+                    res.reserve(new_size);
+                }
+                uint8_t carry = 1;
+                for (size_t i = 0; i < old_size; ++i) {
+                    carry = adc64(carry, res.data()[i], 0, &res.data()[i]);
+                }
+                if (all_ones) {
+                    res.data()[old_size] = carry;
+                }
+                res.m_size = static_cast<uint32_t>(new_size);
+                res.m_sign = -1;
+                res.normalize();
+                return;
+            }
+            res.resize(new_size, 0);
             uint8_t carry = 1;
             for (size_t i = 0; i < a.m_size; ++i) {
                 carry = adc64(carry, a.data()[i], 0, &res.data()[i]);
             }
-            if (carry != 0) {
+            if (all_ones) {
                 res.data()[a.m_size] = carry;
-                res.m_size = a.m_size + 1;
-            } else {
-                res.m_size = a.m_size;
             }
             res.m_sign = -1;
             res.normalize();
             return;
         }
         // a < 0: a = -U => ~a = U - 1
+        if (&res == &a) {
+            uint8_t borrow = 1;
+            for (size_t i = 0; i < a.m_size; ++i) {
+                borrow = sbb64(borrow, res.data()[i], 0, &res.data()[i]);
+            }
+            res.m_sign = 1;
+            res.normalize();
+            return;
+        }
         res.resize(a.m_size, 0);
         uint8_t borrow = 1;
         for (size_t i = 0; i < a.m_size; ++i) {
@@ -200,13 +253,25 @@ struct BigIntBitwise : public BigIntArithmetic {
             return;
         }
         if (a.m_sign > 0 && b.m_sign > 0) {
-            if (&res == &a || &res == &b) {
-                BigIntStorage tmp;
-                bitwise_and(tmp, a, b);
-                res = std::move(tmp);
+            size_t min_len = (a.m_size < b.m_size) ? a.m_size : b.m_size;
+            if (&res == &a) {
+                for (size_t i = 0; i < min_len; ++i) {
+                    res.data()[i] &= b.data()[i];
+                }
+                res.m_size = static_cast<uint32_t>(min_len);
+                res.m_sign = 1;
+                res.normalize();
                 return;
             }
-            size_t min_len = (a.m_size < b.m_size) ? a.m_size : b.m_size;
+            if (&res == &b) {
+                for (size_t i = 0; i < min_len; ++i) {
+                    res.data()[i] &= a.data()[i];
+                }
+                res.m_size = static_cast<uint32_t>(min_len);
+                res.m_sign = 1;
+                res.normalize();
+                return;
+            }
             res.resize(min_len, 0);
             for (size_t i = 0; i < min_len; ++i) {
                 res.data()[i] = a.data()[i] & b.data()[i];
@@ -260,14 +325,38 @@ struct BigIntBitwise : public BigIntArithmetic {
         if (a.m_sign == 0) { res = b; return; }
         if (b.m_sign == 0) { res = a; return; }
         if (a.m_sign > 0 && b.m_sign > 0) {
-            if (&res == &a || &res == &b) {
-                BigIntStorage tmp;
-                bitwise_or(tmp, a, b);
-                res = std::move(tmp);
-                return;
-            }
             size_t min_len = (a.m_size < b.m_size) ? a.m_size : b.m_size;
             size_t max_len = (a.m_size > b.m_size) ? a.m_size : b.m_size;
+            if (&res == &a) {
+                if (res.m_capacity < max_len) {
+                    res.reserve(max_len);
+                }
+                for (size_t i = 0; i < min_len; ++i) {
+                    res.data()[i] |= b.data()[i];
+                }
+                if (b.m_size > a.m_size) {
+                    BigIntStorage::copy_limbs(res.data() + min_len, b.data() + min_len, b.m_size - min_len);
+                }
+                res.m_size = static_cast<uint32_t>(max_len);
+                res.m_sign = 1;
+                res.normalize();
+                return;
+            }
+            if (&res == &b) {
+                if (res.m_capacity < max_len) {
+                    res.reserve(max_len);
+                }
+                for (size_t i = 0; i < min_len; ++i) {
+                    res.data()[i] |= a.data()[i];
+                }
+                if (a.m_size > b.m_size) {
+                    BigIntStorage::copy_limbs(res.data() + min_len, a.data() + min_len, a.m_size - min_len);
+                }
+                res.m_size = static_cast<uint32_t>(max_len);
+                res.m_sign = 1;
+                res.normalize();
+                return;
+            }
             res.resize(max_len, 0);
             for (size_t i = 0; i < min_len; ++i) {
                 res.data()[i] = a.data()[i] | b.data()[i];
@@ -300,14 +389,38 @@ struct BigIntBitwise : public BigIntArithmetic {
         if (a.m_sign == 0) { res = b; return; }
         if (b.m_sign == 0) { res = a; return; }
         if (a.m_sign > 0 && b.m_sign > 0) {
-            if (&res == &a || &res == &b) {
-                BigIntStorage tmp;
-                bitwise_xor(tmp, a, b);
-                res = std::move(tmp);
-                return;
-            }
             size_t min_len = (a.m_size < b.m_size) ? a.m_size : b.m_size;
             size_t max_len = (a.m_size > b.m_size) ? a.m_size : b.m_size;
+            if (&res == &a) {
+                if (res.m_capacity < max_len) {
+                    res.reserve(max_len);
+                }
+                for (size_t i = 0; i < min_len; ++i) {
+                    res.data()[i] ^= b.data()[i];
+                }
+                if (b.m_size > a.m_size) {
+                    BigIntStorage::copy_limbs(res.data() + min_len, b.data() + min_len, b.m_size - min_len);
+                }
+                res.m_size = static_cast<uint32_t>(max_len);
+                res.m_sign = 1;
+                res.normalize();
+                return;
+            }
+            if (&res == &b) {
+                if (res.m_capacity < max_len) {
+                    res.reserve(max_len);
+                }
+                for (size_t i = 0; i < min_len; ++i) {
+                    res.data()[i] ^= a.data()[i];
+                }
+                if (a.m_size > b.m_size) {
+                    BigIntStorage::copy_limbs(res.data() + min_len, a.data() + min_len, a.m_size - min_len);
+                }
+                res.m_size = static_cast<uint32_t>(max_len);
+                res.m_sign = 1;
+                res.normalize();
+                return;
+            }
             res.resize(max_len, 0);
             for (size_t i = 0; i < min_len; ++i) {
                 res.data()[i] = a.data()[i] ^ b.data()[i];

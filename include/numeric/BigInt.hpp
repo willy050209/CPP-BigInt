@@ -826,9 +826,7 @@ public:
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator&=(const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt tmp;
-        detail::BigIntCore::bitwise_and(tmp, *this, rhs);
-        *this = std::move(tmp);
+        detail::BigIntCore::bitwise_and(*this, *this, rhs);
         return *this;
     }
 
@@ -843,9 +841,7 @@ public:
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator|=(const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt tmp;
-        detail::BigIntCore::bitwise_or(tmp, *this, rhs);
-        *this = std::move(tmp);
+        detail::BigIntCore::bitwise_or(*this, *this, rhs);
         return *this;
     }
 
@@ -860,9 +856,7 @@ public:
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator^=(const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt tmp;
-        detail::BigIntCore::bitwise_xor(tmp, *this, rhs);
-        *this = std::move(tmp);
+        detail::BigIntCore::bitwise_xor(*this, *this, rhs);
         return *this;
     }
 

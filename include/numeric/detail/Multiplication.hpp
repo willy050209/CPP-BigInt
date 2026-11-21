@@ -20,7 +20,7 @@ namespace detail {
 struct BigIntMultiplication : public BigIntBitwise {
     static constexpr size_t KARATSUBA_THRESHOLD = 16;
 #ifndef NUMERIC_TOOM3_THRESHOLD
-    static constexpr size_t TOOM3_THRESHOLD = 256;
+    static constexpr size_t TOOM3_THRESHOLD = 64; // Tuned threshold for zero-heap Toom-3 (4096-bit)
 #else
     static constexpr size_t TOOM3_THRESHOLD = NUMERIC_TOOM3_THRESHOLD;
 #endif
@@ -81,6 +81,75 @@ struct BigIntMultiplication : public BigIntBitwise {
         size_t len = a_len;
         while (len > 0 && out[len - 1] == 0) {
             --len;
+        }
+        return len;
+    }
+
+    /// <summary>
+    /// 原生加法：dst = a + b。回傳正規化長度。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 size_t add_limbs_raw(uint64_t* dst, const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
+        size_t max_len = (a_len > b_len) ? a_len : b_len;
+        size_t min_len = (a_len < b_len) ? a_len : b_len;
+        const uint64_t* longer = (a_len >= b_len) ? a : b;
+        uint8_t carry = 0;
+        for (size_t i = 0; i < min_len; ++i) {
+            carry = adc64(carry, a[i], b[i], &dst[i]);
+        }
+        for (size_t i = min_len; i < max_len; ++i) {
+            carry = adc64(carry, longer[i], 0, &dst[i]);
+        }
+        if (carry != 0) {
+            dst[max_len] = carry;
+            return max_len + 1;
+        }
+        size_t r_len = max_len;
+        while (r_len > 0 && dst[r_len - 1] == 0) --r_len;
+        return r_len;
+    }
+
+    /// <summary>
+    /// 原生減法：dst = a - b (要求 a >= b)。回傳正規化長度。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 size_t sub_limbs_raw(uint64_t* dst, const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
+        uint8_t borrow = 0;
+        for (size_t i = 0; i < b_len; ++i) {
+            borrow = sbb64(borrow, a[i], b[i], &dst[i]);
+        }
+        for (size_t i = b_len; i < a_len; ++i) {
+            borrow = sbb64(borrow, a[i], 0, &dst[i]);
+        }
+        size_t r_len = a_len;
+        while (r_len > 0 && dst[r_len - 1] == 0) --r_len;
+        return r_len;
+    }
+
+    /// <summary>
+    /// 原生右移 1 位 (原地運算)：buf = buf >> 1。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void shift_right_1_raw(uint64_t* buf, size_t len) noexcept {
+        uint64_t carry = 0;
+        for (size_t i = len; i > 0; --i) {
+            uint64_t cur = buf[i - 1];
+            buf[i - 1] = (cur >> 1) | carry;
+            carry = cur << 63;
+        }
+    }
+
+    /// <summary>
+    /// 原生左移 bits 位：dst = src << shift (shift < 64)。回傳新長度。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 size_t shift_left_bits_raw(uint64_t* dst, const uint64_t* src, size_t len, unsigned int shift) noexcept {
+        if (len == 0) return 0;
+        uint64_t carry = 0;
+        for (size_t i = 0; i < len; ++i) {
+            uint64_t cur = src[i];
+            dst[i] = (cur << shift) | carry;
+            carry = cur >> (64 - shift);
+        }
+        if (carry != 0) {
+            dst[len] = carry;
+            return len + 1;
         }
         return len;
     }
@@ -311,7 +380,56 @@ struct BigIntMultiplication : public BigIntBitwise {
     }
 
     /// <summary>
-    /// 乘法內部遞迴派發：依據運算元規模派發至 Schoolbook, Karatsuba 或 Toom-3。
+    /// 非平衡乘法分塊演算法 (Block Karatsuba)：
+    /// 當 a_len >= 2 * b_len (或反向) 時，將長乘數以短乘數長度為基準進行切塊乘加，
+    /// 將時間複雜度由 O(N * M) 降低至 O(N * M^0.585)。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void mul_block_karatsuba_raw(
+        uint64_t* NUMERIC_RESTRICT out,
+        const uint64_t* a, size_t a_len,
+        const uint64_t* b, size_t b_len,
+        uint64_t* scratch) noexcept
+    {
+        if (b_len > a_len) {
+            mul_block_karatsuba_raw(out, b, b_len, a, a_len, scratch);
+            return;
+        }
+        BigIntStorage::zero_limbs(out, a_len + b_len);
+        if (b_len < KARATSUBA_THRESHOLD || b_len < 4) {
+            mul_schoolbook_raw(out, a, a_len, b, b_len);
+            return;
+        }
+
+        size_t block_sz = b_len;
+        size_t num_blocks = a_len / block_sz;
+        size_t rem = a_len % block_sz;
+
+        uint64_t* prod_buf = scratch;
+        uint64_t* next_scratch = scratch + 2 * block_sz + 8;
+
+        for (size_t i = 0; i < num_blocks; ++i) {
+            const uint64_t* a_block = a + i * block_sz;
+            mul_dispatch_raw(prod_buf, a_block, block_sz, b, b_len, next_scratch);
+            size_t out_offset = i * block_sz;
+            size_t max_out = (a_len + b_len) - out_offset;
+            add_to_raw(out + out_offset, max_out, prod_buf, 2 * block_sz);
+        }
+
+        if (rem > 0) {
+            const uint64_t* a_block = a + num_blocks * block_sz;
+            if (rem < 4) {
+                mul_schoolbook_raw(prod_buf, a_block, rem, b, b_len);
+            } else {
+                mul_dispatch_raw(prod_buf, a_block, rem, b, b_len, next_scratch);
+            }
+            size_t out_offset = num_blocks * block_sz;
+            size_t max_out = (a_len + b_len) - out_offset;
+            add_to_raw(out + out_offset, max_out, prod_buf, rem + b_len);
+        }
+    }
+
+    /// <summary>
+    /// 乘法內部遞迴派發：依據運算元規模派發至 Schoolbook, Block Karatsuba, Karatsuba 或 Toom-3。
     /// </summary>
     static NUMERIC_CONSTEXPR_20 void mul_dispatch_raw(
         uint64_t* NUMERIC_RESTRICT out,
@@ -324,9 +442,10 @@ struct BigIntMultiplication : public BigIntBitwise {
             BigIntStorage::zero_limbs(out, a_len + b_len);
             return;
         }
-        if (n < KARATSUBA_THRESHOLD || a_len < 4 || b_len < 4 ||
-            a_len >= 2 * b_len || b_len >= 2 * a_len) {
+        if (n < KARATSUBA_THRESHOLD || a_len < 4 || b_len < 4) {
             mul_schoolbook_raw(out, a, a_len, b, b_len);
+        } else if (a_len >= 2 * b_len || b_len >= 2 * a_len) {
+            mul_block_karatsuba_raw(out, a, a_len, b, b_len, scratch);
         } else if (n < TOOM3_THRESHOLD) {
             mul_karatsuba_raw(out, a, a_len, b, b_len, scratch);
         } else {
@@ -488,72 +607,90 @@ struct BigIntMultiplication : public BigIntBitwise {
             mul_dispatch_raw(v2, p2, p2_len, q2, q2_len, next_scratch);
         }
 
-        BigIntStorage st_v0, st_vinf, st_v1, st_vm1, st_v2;
-        st_v0.resize(2 * m);
-        BigIntStorage::copy_limbs(st_v0.data(), out, 2 * m);
-        st_v0.m_sign = 1;
-        st_v0.normalize();
+        // 5. 補間多項式重構 (Zero-Heap Raw Limb Interpolation)
+        // 劃分 scratch 緩衝區，杜絕任何 BigIntStorage 堆積物件配置
+        size_t sz = pr_sz + 4;
+        uint64_t* t1 = next_scratch;
+        uint64_t* t2 = t1 + sz;
+        uint64_t* c2 = t2 + sz;
+        uint64_t* v2_step = c2 + sz;
+        uint64_t* v2_step2 = v2_step + sz;
+        uint64_t* eight_v_inf = v2_step2 + sz;
+        uint64_t* two_c2 = eight_v_inf + sz;
+        uint64_t* c3 = two_c2 + sz;
+        uint64_t* c1 = c3 + sz;
+        BigIntStorage::zero_limbs(next_scratch, 9 * sz);
 
-        size_t vinf_sz = (a_len + b_len > 4 * m) ? (a_len + b_len - 4 * m) : 0;
-        st_vinf.resize(vinf_sz);
-        if (vinf_sz > 0) {
-            BigIntStorage::copy_limbs(st_vinf.data(), v_inf, vinf_sz);
+        size_t v0_len = 2 * m;
+        while (v0_len > 0 && out[v0_len - 1] == 0) --v0_len;
+
+        size_t vinf_len = (a_len + b_len > 4 * m) ? (a_len + b_len - 4 * m) : 0;
+        while (vinf_len > 0 && v_inf[vinf_len - 1] == 0) --vinf_len;
+
+        size_t v1_len = pr_sz;
+        while (v1_len > 0 && v1[v1_len - 1] == 0) --v1_len;
+
+        size_t vm1_len = pr_sz;
+        while (vm1_len > 0 && v_m1[vm1_len - 1] == 0) --vm1_len;
+
+        size_t v2_len = pr_sz;
+        while (v2_len > 0 && v2[v2_len - 1] == 0) --v2_len;
+
+        size_t t1_len = 0;
+        size_t t2_len = 0;
+        if (s_vm1 >= 0) {
+            t1_len = add_limbs_raw(t1, v1, v1_len, v_m1, vm1_len);
+            shift_right_1_raw(t1, t1_len);
+            while (t1_len > 0 && t1[t1_len - 1] == 0) --t1_len;
+
+            t2_len = sub_limbs_raw(t2, v1, v1_len, v_m1, vm1_len);
+            shift_right_1_raw(t2, t2_len);
+            while (t2_len > 0 && t2[t2_len - 1] == 0) --t2_len;
+        } else {
+            t1_len = sub_limbs_raw(t1, v1, v1_len, v_m1, vm1_len);
+            shift_right_1_raw(t1, t1_len);
+            while (t1_len > 0 && t1[t1_len - 1] == 0) --t1_len;
+
+            t2_len = add_limbs_raw(t2, v1, v1_len, v_m1, vm1_len);
+            shift_right_1_raw(t2, t2_len);
+            while (t2_len > 0 && t2[t2_len - 1] == 0) --t2_len;
         }
-        st_vinf.m_sign = 1;
-        st_vinf.normalize();
 
-        st_v1.resize(pr_sz);
-        BigIntStorage::copy_limbs(st_v1.data(), v1, pr_sz);
-        st_v1.m_sign = 1;
-        st_v1.normalize();
+        // c2 = t1 - v0 - v_inf
+        size_t c2_len = sub_limbs_raw(c2, t1, t1_len, out, v0_len);
+        sub_from_raw(c2, c2_len, v_inf, vinf_len);
+        while (c2_len > 0 && c2[c2_len - 1] == 0) --c2_len;
 
-        st_vm1.resize(pr_sz);
-        BigIntStorage::copy_limbs(st_vm1.data(), v_m1, pr_sz);
-        st_vm1.m_sign = s_vm1;
-        st_vm1.normalize();
+        // v2_step = (v2 - v0) / 2
+        size_t v2_step_len = sub_limbs_raw(v2_step, v2, v2_len, out, v0_len);
+        shift_right_1_raw(v2_step, v2_step_len);
+        while (v2_step_len > 0 && v2_step[v2_step_len - 1] == 0) --v2_step_len;
 
-        st_v2.resize(pr_sz);
-        BigIntStorage::copy_limbs(st_v2.data(), v2, pr_sz);
-        st_v2.m_sign = 1;
-        st_v2.normalize();
+        // v2_step2 = v2_step - t2
+        size_t v2_step2_len = sub_limbs_raw(v2_step2, v2_step, v2_step_len, t2, t2_len);
 
-        BigIntStorage sum_v1_vm1, t1;
-        add_signed(sum_v1_vm1, st_v1, st_vm1);
-        shift_right(t1, sum_v1_vm1, 1);
+        // eight_v_inf = v_inf << 3
+        size_t eight_vinf_len = shift_left_bits_raw(eight_v_inf, v_inf, vinf_len, 3);
+        sub_from_raw(v2_step2, v2_step2_len, eight_v_inf, eight_vinf_len);
+        size_t v2_step3_len = v2_step2_len;
+        while (v2_step3_len > 0 && v2_step2[v2_step3_len - 1] == 0) --v2_step3_len;
 
-        BigIntStorage diff_v1_vm1, t2;
-        sub_signed(diff_v1_vm1, st_v1, st_vm1);
-        shift_right(t2, diff_v1_vm1, 1);
+        // two_c2 = c2 << 1
+        size_t two_c2_len = shift_left_bits_raw(two_c2, c2, c2_len, 1);
+        // three_c3 = v2_step3 - two_c2
+        size_t three_c3_len = sub_limbs_raw(c3, v2_step2, v2_step3_len, two_c2, two_c2_len);
 
-        BigIntStorage c2_step1, c2;
-        sub_signed(c2_step1, t1, st_v0);
-        sub_signed(c2, c2_step1, st_vinf);
+        // c3 = three_c3 / 3
+        div_exact_3_raw(c3, three_c3_len);
+        size_t c3_len = three_c3_len;
+        while (c3_len > 0 && c3[c3_len - 1] == 0) --c3_len;
 
-        BigIntStorage v2_minus_v0, v2_step;
-        sub_signed(v2_minus_v0, st_v2, st_v0);
-        shift_right(v2_step, v2_minus_v0, 1);
+        // c1 = t2 - c3
+        size_t c1_len = sub_limbs_raw(c1, t2, t2_len, c3, c3_len);
 
-        BigIntStorage v2_step2;
-        sub_signed(v2_step2, v2_step, t2);
-
-        BigIntStorage eight_v_inf, v2_step3;
-        shift_left(eight_v_inf, st_vinf, 3);
-        sub_signed(v2_step3, v2_step2, eight_v_inf);
-
-        BigIntStorage two_c2, three_c3;
-        shift_left(two_c2, c2, 1);
-        sub_signed(three_c3, v2_step3, two_c2);
-
-        BigIntStorage c3 = three_c3;
-        div_exact_3_raw(c3.data(), c3.m_size);
-        c3.normalize();
-
-        BigIntStorage c1;
-        sub_signed(c1, t2, c3);
-
-        if (c1.m_size > 0) add_to_raw(out + m, (a_len + b_len) - m, c1.data(), c1.m_size);
-        if (c2.m_size > 0) add_to_raw(out + 2 * m, (a_len + b_len) - 2 * m, c2.data(), c2.m_size);
-        if (c3.m_size > 0) add_to_raw(out + 3 * m, (a_len + b_len) - 3 * m, c3.data(), c3.m_size);
+        if (c1_len > 0) add_to_raw(out + m, (a_len + b_len) - m, c1, c1_len);
+        if (c2_len > 0) add_to_raw(out + 2 * m, (a_len + b_len) - 2 * m, c2, c2_len);
+        if (c3_len > 0) add_to_raw(out + 3 * m, (a_len + b_len) - 3 * m, c3, c3_len);
     }
 
     /// <summary>
@@ -742,9 +879,32 @@ struct BigIntMultiplication : public BigIntBitwise {
     /// <param name="b">乘數 b</param>
     static NUMERIC_CONSTEXPR_20 void mul_core(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
         size_t n = (a.m_size > b.m_size) ? a.m_size : b.m_size;
-        if (a.m_size < KARATSUBA_THRESHOLD || b.m_size < KARATSUBA_THRESHOLD ||
-            a.m_size >= 2 * b.m_size || b.m_size >= 2 * a.m_size) {
+        if (a.m_size < KARATSUBA_THRESHOLD || b.m_size < KARATSUBA_THRESHOLD) {
             mul_schoolbook(res, a, b);
+        } else if (a.m_size >= 2 * b.m_size || b.m_size >= 2 * a.m_size) {
+            if (&res == &a || &res == &b) {
+                BigIntStorage tmp;
+                mul_core(tmp, a, b);
+                res = std::move(tmp);
+                return;
+            }
+            res.resize(a.m_size + b.m_size, 0);
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+            if (std::is_constant_evaluated()) {
+                size_t scratch_sz = 8 * n + 256;
+                std::vector<uint64_t> heap_scratch(scratch_sz);
+                mul_block_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, heap_scratch.data());
+                res.m_sign = 1;
+                res.normalize();
+                return;
+            }
+#endif
+            auto& arena = ScratchArena::instance();
+            ScratchArena::Scope scope(arena);
+            uint64_t* scratch = arena.allocate(8 * n + 256);
+            mul_block_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, scratch);
+            res.m_sign = 1;
+            res.normalize();
         } else if (n < TOOM3_THRESHOLD) {
             mul_karatsuba(res, a, b);
         } else {
