@@ -62,48 +62,58 @@ struct BigIntBitwise : public BigIntArithmetic {
                 res.reserve(new_size);
             }
             res.m_size = static_cast<uint32_t>(new_size);
+            uint64_t* d = res.data();
             if (limb_shift == 0) {
                 if (old_size == 1) {
-                    uint64_t v0 = res.data()[0];
-                    if (overflow) res.data()[1] = v0 >> (64 - bit_shift);
-                    res.data()[0] = v0 << bit_shift;
+                    uint64_t v0 = d[0];
+                    if (overflow) d[1] = v0 >> (64 - bit_shift);
+                    d[0] = v0 << bit_shift;
                     return;
                 }
                 if (old_size == 2) {
-                    uint64_t v0 = res.data()[0], v1 = res.data()[1];
-                    if (overflow) res.data()[2] = v1 >> (64 - bit_shift);
-                    res.data()[1] = shld64(v1, v0, static_cast<unsigned int>(bit_shift));
-                    res.data()[0] = v0 << bit_shift;
+                    uint64_t v0 = d[0], v1 = d[1];
+                    if (overflow) d[2] = v1 >> (64 - bit_shift);
+                    d[1] = shld64(v1, v0, static_cast<unsigned int>(bit_shift));
+                    d[0] = v0 << bit_shift;
                     return;
                 }
                 if (old_size == 4) {
-                    uint64_t v0 = res.data()[0], v1 = res.data()[1], v2 = res.data()[2], v3 = res.data()[3];
-                    if (overflow) res.data()[4] = v3 >> (64 - bit_shift);
-                    res.data()[3] = shld64(v3, v2, static_cast<unsigned int>(bit_shift));
-                    res.data()[2] = shld64(v2, v1, static_cast<unsigned int>(bit_shift));
-                    res.data()[1] = shld64(v1, v0, static_cast<unsigned int>(bit_shift));
-                    res.data()[0] = v0 << bit_shift;
+                    uint64_t v0 = d[0], v1 = d[1], v2 = d[2], v3 = d[3];
+                    if (overflow) d[4] = v3 >> (64 - bit_shift);
+                    d[3] = shld64(v3, v2, static_cast<unsigned int>(bit_shift));
+                    d[2] = shld64(v2, v1, static_cast<unsigned int>(bit_shift));
+                    d[1] = shld64(v1, v0, static_cast<unsigned int>(bit_shift));
+                    d[0] = v0 << bit_shift;
                     return;
                 }
+                const unsigned int bshift = static_cast<unsigned int>(bit_shift);
+                if (overflow) {
+                    d[old_size] = d[old_size - 1] >> (64 - bit_shift);
+                }
+                for (size_t i = old_size - 1; i > 0; --i) {
+                    d[i] = shld64(d[i], d[i - 1], bshift);
+                }
+                d[0] <<= bshift;
+                return;
             }
             if (bit_shift == 0) {
                 for (size_t i = old_size; i > 0; --i) {
-                    res.data()[i - 1 + limb_shift] = res.data()[i - 1];
+                    d[i - 1 + limb_shift] = d[i - 1];
                 }
                 if (limb_shift > 0) {
-                    BigIntStorage::zero_limbs(res.data(), limb_shift);
+                    BigIntStorage::zero_limbs(d, limb_shift);
                 }
             } else {
+                const unsigned int bshift = static_cast<unsigned int>(bit_shift);
                 if (overflow) {
-                    res.data()[old_size + limb_shift] = res.data()[old_size - 1] >> (64 - bit_shift);
+                    d[old_size + limb_shift] = d[old_size - 1] >> (64 - bit_shift);
                 }
-                for (size_t i = old_size; i > 0; --i) {
-                    uint64_t cur = res.data()[i - 1];
-                    uint64_t prev = (i > 1) ? res.data()[i - 2] : 0;
-                    res.data()[i - 1 + limb_shift] = shld64(cur, prev, static_cast<unsigned int>(bit_shift));
+                for (size_t i = old_size - 1; i > 0; --i) {
+                    d[i + limb_shift] = shld64(d[i], d[i - 1], bshift);
                 }
+                d[limb_shift] = d[0] << bshift;
                 if (limb_shift > 0) {
-                    BigIntStorage::zero_limbs(res.data(), limb_shift);
+                    BigIntStorage::zero_limbs(d, limb_shift);
                 }
             }
             return;
@@ -176,31 +186,32 @@ struct BigIntBitwise : public BigIntArithmetic {
         size_t new_size = old_size - limb_shift;
 
         if (&res == &a) {
+            uint64_t* d = res.data();
             if (limb_shift == 0) {
                 if (old_size == 1) {
-                    res.data()[0] >>= bit_shift;
-                    res.m_size = (res.data()[0] != 0) ? 1 : 0;
+                    d[0] >>= bit_shift;
+                    res.m_size = (d[0] != 0) ? 1 : 0;
                     if (res.m_size == 0) res.m_sign = 0;
                     return;
                 }
                 if (old_size == 2) {
-                    uint64_t v0 = res.data()[0], v1 = res.data()[1];
-                    res.data()[0] = shrd64(v1, v0, static_cast<unsigned int>(bit_shift));
+                    uint64_t v0 = d[0], v1 = d[1];
+                    d[0] = shrd64(v1, v0, static_cast<unsigned int>(bit_shift));
                     uint64_t top = v1 >> bit_shift;
-                    res.data()[1] = top;
-                    res.m_size = (top != 0) ? 2 : ((res.data()[0] != 0) ? 1 : 0);
+                    d[1] = top;
+                    res.m_size = (top != 0) ? 2 : ((d[0] != 0) ? 1 : 0);
                     if (res.m_size == 0) res.m_sign = 0;
                     return;
                 }
                 if (old_size == 4) {
-                    uint64_t v0 = res.data()[0], v1 = res.data()[1], v2 = res.data()[2], v3 = res.data()[3];
-                    res.data()[0] = shrd64(v1, v0, static_cast<unsigned int>(bit_shift));
-                    res.data()[1] = shrd64(v2, v1, static_cast<unsigned int>(bit_shift));
-                    res.data()[2] = shrd64(v3, v2, static_cast<unsigned int>(bit_shift));
+                    uint64_t v0 = d[0], v1 = d[1], v2 = d[2], v3 = d[3];
+                    d[0] = shrd64(v1, v0, static_cast<unsigned int>(bit_shift));
+                    d[1] = shrd64(v2, v1, static_cast<unsigned int>(bit_shift));
+                    d[2] = shrd64(v3, v2, static_cast<unsigned int>(bit_shift));
                     uint64_t top = v3 >> bit_shift;
-                    res.data()[3] = top;
+                    d[3] = top;
                     size_t sz = 4;
-                    while (sz > 0 && res.data()[sz - 1] == 0) --sz;
+                    while (sz > 0 && d[sz - 1] == 0) --sz;
                     res.m_size = static_cast<uint32_t>(sz);
                     if (sz == 0) res.m_sign = 0;
                     return;
@@ -209,18 +220,24 @@ struct BigIntBitwise : public BigIntArithmetic {
             if (bit_shift == 0) {
                 if (limb_shift > 0) {
                     for (size_t i = 0; i < new_size; ++i) {
-                        res.data()[i] = res.data()[i + limb_shift];
+                        d[i] = d[i + limb_shift];
                     }
                 }
             } else {
-                const uint64_t* src = res.data() + limb_shift;
+                const uint64_t* src = d + limb_shift;
                 for (size_t i = 0; i + 1 < new_size; ++i) {
-                    res.data()[i] = shrd64(src[i + 1], src[i], static_cast<unsigned int>(bit_shift));
+                    d[i] = shrd64(src[i + 1], src[i], static_cast<unsigned int>(bit_shift));
                 }
-                res.data()[new_size - 1] = src[new_size - 1] >> bit_shift;
+                d[new_size - 1] = src[new_size - 1] >> bit_shift;
+            }
+            if (new_size > 0 && d[new_size - 1] == 0) {
+                --new_size;
             }
             res.m_size = static_cast<uint32_t>(new_size);
-            res.normalize();
+            if (new_size == 0) {
+                res.m_sign = 0;
+            }
+            res.shrink_to_sbo_if_possible();
             return;
         }
 

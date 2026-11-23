@@ -950,9 +950,53 @@ public:
 
     /// <summary>
     /// 位元及複合賦值運算子。
+    /// In-place bitwise AND compound operator.
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator&=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_sign > 0 && rhs.m_sign > 0) {
+            size_t min_len = (this->m_size < rhs.m_size) ? this->m_size : rhs.m_size;
+            if (min_len == 1) {
+                this->m_data[0] &= rhs.m_data[0];
+                this->m_size = (this->m_data[0] != 0) ? 1 : 0;
+                this->m_sign = (this->m_size != 0) ? 1 : 0;
+                return *this;
+            }
+            if (min_len == 2) {
+                this->m_data[0] &= rhs.m_data[0];
+                this->m_data[1] &= rhs.m_data[1];
+                this->m_size = (this->m_data[1] != 0) ? 2 : ((this->m_data[0] != 0) ? 1 : 0);
+                this->m_sign = (this->m_size != 0) ? 1 : 0;
+                return *this;
+            }
+            if (min_len == 4) {
+                this->m_data[0] &= rhs.m_data[0];
+                this->m_data[1] &= rhs.m_data[1];
+                this->m_data[2] &= rhs.m_data[2];
+                this->m_data[3] &= rhs.m_data[3];
+                size_t sz = 4;
+                while (sz > 0 && this->m_data[sz - 1] == 0) --sz;
+                this->m_size = static_cast<uint32_t>(sz);
+                this->m_sign = (sz != 0) ? 1 : 0;
+                return *this;
+            }
+            uint64_t* NUMERIC_RESTRICT d = this->m_data;
+            const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
+            size_t i = 0;
+            for (; i + 3 < min_len; i += 4) {
+                d[i] &= s[i];
+                d[i + 1] &= s[i + 1];
+                d[i + 2] &= s[i + 2];
+                d[i + 3] &= s[i + 3];
+            }
+            for (; i < min_len; ++i) {
+                d[i] &= s[i];
+            }
+            while (min_len > 0 && d[min_len - 1] == 0) --min_len;
+            this->m_size = static_cast<uint32_t>(min_len);
+            this->m_sign = (min_len != 0) ? 1 : 0;
+            return *this;
+        }
         detail::BigIntCore::bitwise_and(*this, *this, rhs);
         return *this;
     }
@@ -965,9 +1009,71 @@ public:
 
     /// <summary>
     /// 位元或複合賦值運算子。
+    /// In-place bitwise OR compound operator.
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator|=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_sign == 0) {
+            *this = rhs;
+            return *this;
+        }
+        if (rhs.m_sign == 0) {
+            return *this;
+        }
+        if (this->m_sign > 0 && rhs.m_sign > 0) {
+            if (this->m_size >= rhs.m_size) {
+                if (rhs.m_size == 1) {
+                    this->m_data[0] |= rhs.m_data[0];
+                    return *this;
+                }
+                if (rhs.m_size == 2) {
+                    this->m_data[0] |= rhs.m_data[0];
+                    this->m_data[1] |= rhs.m_data[1];
+                    return *this;
+                }
+                if (rhs.m_size == 4) {
+                    this->m_data[0] |= rhs.m_data[0];
+                    this->m_data[1] |= rhs.m_data[1];
+                    this->m_data[2] |= rhs.m_data[2];
+                    this->m_data[3] |= rhs.m_data[3];
+                    return *this;
+                }
+                uint64_t* NUMERIC_RESTRICT d = this->m_data;
+                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
+                size_t i = 0;
+                for (; i + 3 < rhs.m_size; i += 4) {
+                    d[i] |= s[i];
+                    d[i + 1] |= s[i + 1];
+                    d[i + 2] |= s[i + 2];
+                    d[i + 3] |= s[i + 3];
+                }
+                for (; i < rhs.m_size; ++i) {
+                    d[i] |= s[i];
+                }
+                return *this;
+            } else {
+                size_t old_size = this->m_size;
+                size_t new_size = rhs.m_size;
+                if (this->m_capacity < new_size) {
+                    this->reserve(new_size);
+                }
+                uint64_t* NUMERIC_RESTRICT d = this->m_data;
+                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
+                size_t i = 0;
+                for (; i + 3 < old_size; i += 4) {
+                    d[i] |= s[i];
+                    d[i + 1] |= s[i + 1];
+                    d[i + 2] |= s[i + 2];
+                    d[i + 3] |= s[i + 3];
+                }
+                for (; i < old_size; ++i) {
+                    d[i] |= s[i];
+                }
+                detail::BigIntStorage::copy_limbs(d + old_size, s + old_size, new_size - old_size);
+                this->m_size = static_cast<uint32_t>(new_size);
+                return *this;
+            }
+        }
         detail::BigIntCore::bitwise_or(*this, *this, rhs);
         return *this;
     }
@@ -980,9 +1086,97 @@ public:
 
     /// <summary>
     /// 位元互斥或複合賦值運算子。
+    /// In-place bitwise XOR compound operator.
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator^=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_sign == 0) {
+            *this = rhs;
+            return *this;
+        }
+        if (rhs.m_sign == 0) {
+            return *this;
+        }
+        if (this->m_sign > 0 && rhs.m_sign > 0) {
+            if (this->m_size == rhs.m_size) {
+                if (this->m_size == 1) {
+                    this->m_data[0] ^= rhs.m_data[0];
+                    this->m_size = (this->m_data[0] != 0) ? 1 : 0;
+                    this->m_sign = (this->m_size != 0) ? 1 : 0;
+                    return *this;
+                }
+                if (this->m_size == 2) {
+                    this->m_data[0] ^= rhs.m_data[0];
+                    this->m_data[1] ^= rhs.m_data[1];
+                    this->m_size = (this->m_data[1] != 0) ? 2 : ((this->m_data[0] != 0) ? 1 : 0);
+                    this->m_sign = (this->m_size != 0) ? 1 : 0;
+                    return *this;
+                }
+                if (this->m_size == 4) {
+                    this->m_data[0] ^= rhs.m_data[0];
+                    this->m_data[1] ^= rhs.m_data[1];
+                    this->m_data[2] ^= rhs.m_data[2];
+                    this->m_data[3] ^= rhs.m_data[3];
+                    size_t sz = 4;
+                    while (sz > 0 && this->m_data[sz - 1] == 0) --sz;
+                    this->m_size = static_cast<uint32_t>(sz);
+                    this->m_sign = (sz != 0) ? 1 : 0;
+                    return *this;
+                }
+                uint64_t* NUMERIC_RESTRICT d = this->m_data;
+                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
+                size_t i = 0;
+                for (; i + 3 < this->m_size; i += 4) {
+                    d[i] ^= s[i];
+                    d[i + 1] ^= s[i + 1];
+                    d[i + 2] ^= s[i + 2];
+                    d[i + 3] ^= s[i + 3];
+                }
+                for (; i < this->m_size; ++i) {
+                    d[i] ^= s[i];
+                }
+                size_t sz = this->m_size;
+                while (sz > 0 && d[sz - 1] == 0) --sz;
+                this->m_size = static_cast<uint32_t>(sz);
+                this->m_sign = (sz != 0) ? 1 : 0;
+                return *this;
+            } else if (this->m_size > rhs.m_size) {
+                uint64_t* NUMERIC_RESTRICT d = this->m_data;
+                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
+                size_t i = 0;
+                for (; i + 3 < rhs.m_size; i += 4) {
+                    d[i] ^= s[i];
+                    d[i + 1] ^= s[i + 1];
+                    d[i + 2] ^= s[i + 2];
+                    d[i + 3] ^= s[i + 3];
+                }
+                for (; i < rhs.m_size; ++i) {
+                    d[i] ^= s[i];
+                }
+                return *this;
+            } else {
+                size_t old_size = this->m_size;
+                size_t new_size = rhs.m_size;
+                if (this->m_capacity < new_size) {
+                    this->reserve(new_size);
+                }
+                uint64_t* NUMERIC_RESTRICT d = this->m_data;
+                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
+                size_t i = 0;
+                for (; i + 3 < old_size; i += 4) {
+                    d[i] ^= s[i];
+                    d[i + 1] ^= s[i + 1];
+                    d[i + 2] ^= s[i + 2];
+                    d[i + 3] ^= s[i + 3];
+                }
+                for (; i < old_size; ++i) {
+                    d[i] ^= s[i];
+                }
+                detail::BigIntStorage::copy_limbs(d + old_size, s + old_size, new_size - old_size);
+                this->m_size = static_cast<uint32_t>(new_size);
+                return *this;
+            }
+        }
         detail::BigIntCore::bitwise_xor(*this, *this, rhs);
         return *this;
     }
@@ -1278,6 +1472,12 @@ public:
         if (lhs.m_sign != rhs.m_sign) return false;
         if (lhs.m_size != rhs.m_size) return false;
         if (lhs.m_size == 0) return true;
+        if (lhs.m_size == 1) return lhs.m_data[0] == rhs.m_data[0];
+        if (lhs.m_size == 2) return lhs.m_data[0] == rhs.m_data[0] && lhs.m_data[1] == rhs.m_data[1];
+        if (lhs.m_size == 4) {
+            return lhs.m_data[0] == rhs.m_data[0] && lhs.m_data[1] == rhs.m_data[1] &&
+                   lhs.m_data[2] == rhs.m_data[2] && lhs.m_data[3] == rhs.m_data[3];
+        }
         for (size_t i = 0; i < lhs.m_size; ++i) {
             if (lhs.m_data[i] != rhs.m_data[i]) return false;
         }
@@ -1311,20 +1511,59 @@ public:
 
     template <size_t OtherLimbs>
     friend NUMERIC_CONSTEXPR_20 bool operator<(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept {
-        if (lhs.m_sign < rhs.m_sign) return true;
-        if (lhs.m_sign > rhs.m_sign) return false;
+        if (lhs.m_sign != rhs.m_sign) {
+            return lhs.m_sign < rhs.m_sign;
+        }
         if (lhs.m_sign == 0) return false;
         if (lhs.m_sign > 0) {
-            if (lhs.m_size < rhs.m_size) return true;
-            if (lhs.m_size > rhs.m_size) return false;
+            if (lhs.m_size != rhs.m_size) {
+                return lhs.m_size < rhs.m_size;
+            }
+            const size_t sz = lhs.m_size;
+            if (sz == 1) {
+                return lhs.m_data[0] < rhs.m_data[0];
+            }
+            if (sz == 2) {
+                if (lhs.m_data[1] != rhs.m_data[1]) return lhs.m_data[1] < rhs.m_data[1];
+                return lhs.m_data[0] < rhs.m_data[0];
+            }
+            if (sz == 4) {
+                if (lhs.m_data[3] != rhs.m_data[3]) return lhs.m_data[3] < rhs.m_data[3];
+                if (lhs.m_data[2] != rhs.m_data[2]) return lhs.m_data[2] < rhs.m_data[2];
+                if (lhs.m_data[1] != rhs.m_data[1]) return lhs.m_data[1] < rhs.m_data[1];
+                return lhs.m_data[0] < rhs.m_data[0];
+            }
+            const uint64_t* a = lhs.m_data;
+            const uint64_t* b = rhs.m_data;
+            for (size_t i = sz; i > 0; --i) {
+                if (a[i - 1] != b[i - 1]) return a[i - 1] < b[i - 1];
+            }
+            return false;
         } else {
-            if (lhs.m_size > rhs.m_size) return true;
-            if (lhs.m_size < rhs.m_size) return false;
+            if (lhs.m_size != rhs.m_size) {
+                return lhs.m_size > rhs.m_size;
+            }
+            const size_t sz = lhs.m_size;
+            if (sz == 1) {
+                return lhs.m_data[0] > rhs.m_data[0];
+            }
+            if (sz == 2) {
+                if (lhs.m_data[1] != rhs.m_data[1]) return lhs.m_data[1] > rhs.m_data[1];
+                return lhs.m_data[0] > rhs.m_data[0];
+            }
+            if (sz == 4) {
+                if (lhs.m_data[3] != rhs.m_data[3]) return lhs.m_data[3] > rhs.m_data[3];
+                if (lhs.m_data[2] != rhs.m_data[2]) return lhs.m_data[2] > rhs.m_data[2];
+                if (lhs.m_data[1] != rhs.m_data[1]) return lhs.m_data[1] > rhs.m_data[1];
+                return lhs.m_data[0] > rhs.m_data[0];
+            }
+            const uint64_t* a = lhs.m_data;
+            const uint64_t* b = rhs.m_data;
+            for (size_t i = sz; i > 0; --i) {
+                if (a[i - 1] != b[i - 1]) return a[i - 1] > b[i - 1];
+            }
+            return false;
         }
-        int cmp = detail::BigIntCore::compare_unsigned(
-            lhs.m_data, lhs.m_size,
-            rhs.m_data, rhs.m_size);
-        return (lhs.m_sign > 0) ? (cmp < 0) : (cmp > 0);
     }
 
     template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>

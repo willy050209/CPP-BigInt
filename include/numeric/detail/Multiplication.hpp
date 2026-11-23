@@ -92,11 +92,14 @@ struct BigIntMultiplication : public BigIntBitwise {
     /// <summary>
     /// 原生相減差值絕對值：out = a - b (要求 a >= b)。回傳正規化長度。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 size_t sub_limbs_diff_raw(uint64_t* out, const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
+    static NUMERIC_CONSTEXPR_20 size_t sub_limbs_diff_raw(uint64_t* NUMERIC_RESTRICT out, const uint64_t* NUMERIC_RESTRICT a, size_t a_len, const uint64_t* NUMERIC_RESTRICT b, size_t b_len) noexcept {
         uint8_t borrow = 0;
-        for (size_t i = 0; i < a_len; ++i) {
-            uint64_t bv = (i < b_len) ? b[i] : 0;
-            borrow = sbb64(borrow, a[i], bv, &out[i]);
+        size_t min_len = (a_len < b_len) ? a_len : b_len;
+        for (size_t i = 0; i < min_len; ++i) {
+            borrow = sbb64(borrow, a[i], b[i], &out[i]);
+        }
+        for (size_t i = min_len; i < a_len; ++i) {
+            borrow = sbb64(borrow, a[i], 0, &out[i]);
         }
         size_t len = a_len;
         while (len > 0 && out[len - 1] == 0) {
