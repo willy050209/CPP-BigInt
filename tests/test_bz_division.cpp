@@ -45,8 +45,8 @@ void run_test_bz_division() {
 
     std::mt19937_64 rng(123456789ULL);
 
-    // 1. 邊界 Limbs 測試 (63, 64, 65 limbs; 127, 128, 129 limbs)
-    const size_t test_limbs[] = { 63, 64, 65, 127, 128, 129 };
+    // 1. 邊界 Limbs 測試 (31, 32, 33 limbs; 63, 64, 65 limbs; 127, 128, 129 limbs)
+    const size_t test_limbs[] = { 31, 32, 33, 63, 64, 65, 127, 128, 129 };
     for (size_t v_limbs : test_limbs) {
         std::cout << "  Testing v_limbs = " << v_limbs << std::endl;
         // 最高 bit 為 1（norm shift = 0）

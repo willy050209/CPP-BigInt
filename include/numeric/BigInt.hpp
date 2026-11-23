@@ -772,9 +772,48 @@ public:
 
     /// <summary>
     /// 乘法複合賦值運算子。
+    /// In-place multiplication compound operator.
+    /// 單肢段與小數值乘法採堆疊暫存直接寫回，消除動態配置並保持緩衝區容量。
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator*=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_size == 0 || this->m_sign == 0) {
+            return *this;
+        }
+        if (rhs.m_size == 0 || rhs.m_sign == 0) {
+            this->m_size = 0;
+            this->m_sign = 0;
+            return *this;
+        }
+        if (rhs.m_size == 1) {
+            uint64_t mult = rhs.m_data[0];
+            int8_t new_sign = static_cast<int8_t>(this->m_sign * rhs.m_sign);
+            if (this->m_capacity < this->m_size + 1) {
+                this->reserve(this->m_size + 1);
+            }
+            uint64_t carry = detail::BigIntCore::mul_1_raw(this->data(), this->data(), this->m_size, mult);
+            if (carry != 0) {
+                this->data()[this->m_size] = carry;
+                this->m_size += 1;
+            }
+            this->m_sign = new_sign;
+            this->normalize();
+            return *this;
+        }
+        size_t total_len = this->m_size + rhs.m_size;
+        if (total_len <= 16) {
+            uint64_t stack_buf[16];
+            detail::BigIntCore::mul_schoolbook_raw(stack_buf, this->data(), this->m_size, rhs.data(), rhs.m_size);
+            int8_t new_sign = static_cast<int8_t>(this->m_sign * rhs.m_sign);
+            if (this->m_capacity < total_len) {
+                this->reserve(total_len);
+            }
+            BigIntBase::copy_limbs(this->data(), stack_buf, total_len);
+            this->m_size = static_cast<uint32_t>(total_len);
+            this->m_sign = new_sign;
+            this->normalize();
+            return *this;
+        }
         BasicBigInt tmp;
         detail::BigIntCore::mul_signed(tmp, *this, rhs);
         *this = std::move(tmp);
@@ -789,12 +828,29 @@ public:
 
     /// <summary>
     /// 除法複合賦值運算子。
+    /// In-place division compound operator.
+    /// 單肢段除數採原地暫存除法直寫商數，消除物件建構開銷。
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator/=(const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt q;
-        detail::BigIntCore::div_q_signed(q, *this, rhs);
-        *this = std::move(q);
+        if (rhs.m_size == 0) {
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("division by zero"));
+        }
+        if (this->m_size == 0) return *this;
+        if (rhs.m_size == 1) {
+            uint64_t divisor = rhs.m_data[0];
+            int8_t new_sign = static_cast<int8_t>(this->m_sign * rhs.m_sign);
+            uint64_t rem = 0;
+            for (size_t i = this->m_size; i > 0; --i) {
+                uint64_t next_rem = 0;
+                this->m_data[i - 1] = detail::BigIntCore::div128_64(rem, this->m_data[i - 1], divisor, next_rem);
+                rem = next_rem;
+            }
+            this->m_sign = (this->m_size > 0) ? new_sign : 0;
+            this->normalize();
+            return *this;
+        }
+        detail::BigIntCore::div_q_signed(*this, *this, rhs);
         return *this;
     }
 
@@ -806,12 +862,33 @@ public:
 
     /// <summary>
     /// 取模複合賦值運算子。
+    /// In-place modulo compound operator.
+    /// 單肢段除數採原地暫存除法直寫餘數，消除物件建構開銷。
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator%=(const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt r;
-        detail::BigIntCore::div_r_signed(r, *this, rhs);
-        *this = std::move(r);
+        if (rhs.m_size == 0) {
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("division by zero"));
+        }
+        if (this->m_size == 0) return *this;
+        if (rhs.m_size == 1) {
+            uint64_t divisor = rhs.m_data[0];
+            int8_t orig_sign = this->m_sign;
+            uint64_t rem = 0;
+            for (size_t i = this->m_size; i > 0; --i) {
+                uint64_t next_rem = 0;
+                detail::BigIntCore::div128_64(rem, this->m_data[i - 1], divisor, next_rem);
+                rem = next_rem;
+            }
+            if (rem == 0) {
+                this->m_size = 0;
+                this->m_sign = 0;
+            } else {
+                this->set_uint64(rem, orig_sign);
+            }
+            return *this;
+        }
+        detail::BigIntCore::div_r_signed(*this, *this, rhs);
         return *this;
     }
 
@@ -868,29 +945,29 @@ public:
 
     /// <summary>
     /// 位元左移複合賦值運算子。
+    /// In-place bitwise left shift compound operator.
+    /// 直接於目前物件緩衝區就地執行位元左移，消除暫存物件與動態配置開銷。
     /// </summary>
     template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator<<=(T shift) {
         if (shift < 0) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
         }
-        BasicBigInt tmp;
-        detail::BigIntCore::shift_left(tmp, *this, static_cast<size_t>(shift));
-        *this = std::move(tmp);
+        detail::BigIntCore::shift_left(*this, *this, static_cast<size_t>(shift));
         return *this;
     }
 
     /// <summary>
     /// 位元右移複合賦值運算子。
+    /// In-place bitwise right shift compound operator.
+    /// 直接於目前物件緩衝區就地執行位元右移，消除暫存物件與動態配置開銷。
     /// </summary>
     template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator>>=(T shift) {
         if (shift < 0) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
         }
-        BasicBigInt tmp;
-        detail::BigIntCore::shift_right(tmp, *this, static_cast<size_t>(shift));
-        *this = std::move(tmp);
+        detail::BigIntCore::shift_right(*this, *this, static_cast<size_t>(shift));
         return *this;
     }
 
@@ -1187,6 +1264,13 @@ public:
         if (lhs.m_sign < rhs.m_sign) return true;
         if (lhs.m_sign > rhs.m_sign) return false;
         if (lhs.m_sign == 0) return false;
+        if (lhs.m_sign > 0) {
+            if (lhs.m_size < rhs.m_size) return true;
+            if (lhs.m_size > rhs.m_size) return false;
+        } else {
+            if (lhs.m_size > rhs.m_size) return true;
+            if (lhs.m_size < rhs.m_size) return false;
+        }
         int cmp = detail::BigIntCore::compare_unsigned(
             lhs.m_data, lhs.m_size,
             rhs.m_data, rhs.m_size);

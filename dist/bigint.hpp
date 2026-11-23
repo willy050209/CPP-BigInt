@@ -18,6 +18,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -409,12 +410,18 @@ struct BigIntIntrinsics {
             return q;
         }
 #endif
-#if defined(__SIZEOF_INT128__)
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(_M_X64))
+        uint64_t q = 0;
+        uint64_t r = 0;
+        __asm__("divq %4" : "=a"(q), "=d"(r) : "d"(hi), "a"(lo), "rm"(d));
+        rem = r;
+        return q;
+#elif defined(_MSC_VER) && defined(_M_X64)
+        return _udiv128(hi, lo, d, &rem);
+#elif defined(__SIZEOF_INT128__)
         unsigned __int128 n = (static_cast<unsigned __int128>(hi) << 64) | lo;
         rem = static_cast<uint64_t>(n % d);
         return static_cast<uint64_t>(n / d);
-#elif defined(_MSC_VER) && defined(_M_X64)
-        return _udiv128(hi, lo, d, &rem);
 #else
         uint64_t q = 0;
         uint64_t r = hi;
@@ -465,6 +472,237 @@ struct BigIntIntrinsics {
         }
         rem = r;
         return q_est;
+    }
+
+    /// <summary>
+    /// 雙字向左組合位移：將 high 向左移動 shift 位元，低位以 low 之高位補齊。
+    /// 要求 0 <= shift < 64。當 shift == 0 時直接回傳 high。
+    /// 等價於 ((high << 64 | low) << shift) 的高 64 位元。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE uint64_t shld64(
+        uint64_t high, uint64_t low, unsigned int shift) noexcept
+    {
+        assert(shift < 64);
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            return (shift == 0) ? high : ((high << shift) | (low >> (64 - shift)));
+        }
+#endif
+#if defined(_MSC_VER) && defined(_M_X64)
+        return (shift == 0) ? high : __shiftleft128(low, high, static_cast<unsigned char>(shift));
+#elif defined(__SIZEOF_INT128__)
+        return (shift == 0) ? high : ((high << shift) | (low >> (64 - shift)));
+#else
+        return (shift == 0) ? high : ((high << shift) | (low >> (64 - shift)));
+#endif
+    }
+
+    /// <summary>
+    /// 雙字向右組合位移：將 low 向右移動 shift 位元，高位以 high 之低位補齊。
+    /// 要求 0 <= shift < 64。當 shift == 0 時直接回傳 low。
+    /// 等價於 ((high << 64 | low) >> shift) 的低 64 位元。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE uint64_t shrd64(
+        uint64_t high, uint64_t low, unsigned int shift) noexcept
+    {
+        assert(shift < 64);
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            return (shift == 0) ? low : ((low >> shift) | (high << (64 - shift)));
+        }
+#endif
+#if defined(_MSC_VER) && defined(_M_X64)
+        return (shift == 0) ? low : __shiftright128(low, high, static_cast<unsigned char>(shift));
+#elif defined(__SIZEOF_INT128__)
+        return (shift == 0) ? low : ((low >> shift) | (high << (64 - shift)));
+#else
+        return (shift == 0) ? low : ((low >> shift) | (high << (64 - shift)));
+#endif
+    }
+
+    /// <summary>
+    /// 硬體友善無分支單肢段乘法原語：dst[0..n-1] = src[0..n-1] * multiplier。
+    /// Multiply primitive: dst[0..n-1] = src[0..n-1] * multiplier.
+    /// 回傳最終高位溢出進位 (carry)。
+    /// 依據編譯器能力自動分派至 __int128 或 _umul128 / _addcarry_u64 硬體指令管線。
+    /// </summary>
+    /// <param name="dst">目標輸出緩衝區 / Destination buffer</param>
+    /// <param name="src">來源運算元陣列 / Source limb array</param>
+    /// <param name="n">運算 limb 長度 / Limb count</param>
+    /// <param name="multiplier">64 位元單字乘數 / 64-bit word multiplier</param>
+    /// <returns>最終高位溢出進位 / Final high overflow carry</returns>
+    static NUMERIC_CONSTEXPR_20 uint64_t mul_1_raw(
+        uint64_t* NUMERIC_RESTRICT dst,
+        const uint64_t* NUMERIC_RESTRICT src,
+        size_t n,
+        uint64_t multiplier) noexcept
+    {
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            uint64_t carry = 0;
+            for (size_t i = 0; i < n; ++i) {
+                uint64_t hi = 0;
+                uint64_t lo = mul64_wide(src[i], multiplier, hi);
+                uint8_t c = adc64(0, lo, carry, &dst[i]);
+                carry = hi + c;
+            }
+            return carry;
+        }
+#endif
+#if defined(__SIZEOF_INT128__)
+        unsigned __int128 carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            unsigned __int128 prod = static_cast<unsigned __int128>(src[i]) * multiplier + carry;
+            dst[i] = static_cast<uint64_t>(prod);
+            carry = prod >> 64;
+        }
+        return static_cast<uint64_t>(carry);
+#elif defined(_MSC_VER) && defined(_M_X64)
+        uint64_t carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t hi = 0;
+            uint64_t lo = _umul128(src[i], multiplier, &hi);
+            unsigned char c = _addcarry_u64(0, lo, carry, reinterpret_cast<unsigned __int64*>(&dst[i]));
+            carry = hi + c;
+        }
+        return carry;
+#else
+        uint64_t carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t hi = 0;
+            uint64_t lo = mul64_wide(src[i], multiplier, hi);
+            uint8_t c = adc64(0, lo, carry, &dst[i]);
+            carry = hi + c;
+        }
+        return carry;
+#endif
+    }
+
+    /// <summary>
+    /// 硬體友善無分支乘加原語：dst[0..n-1] += src[0..n-1] * multiplier。
+    /// Multiply-accumulate primitive: dst[0..n-1] += src[0..n-1] * multiplier.
+    /// 回傳最終高位溢出進位 (carry)。
+    /// 依據編譯器能力自動分派至 __int128 或 _umul128 / _addcarry_u64 硬體指令管線。
+    /// </summary>
+    /// <param name="dst">目標運算元與輸出緩衝區 / Target and destination buffer</param>
+    /// <param name="src">來源運算元陣列 / Source limb array</param>
+    /// <param name="n">運算 limb 長度 / Limb count</param>
+    /// <param name="multiplier">64 位元單字乘數 / 64-bit word multiplier</param>
+    /// <returns>最終高位溢出進位 / Final high overflow carry</returns>
+    static NUMERIC_CONSTEXPR_20 uint64_t addmul_1_raw(
+        uint64_t* NUMERIC_RESTRICT dst,
+        const uint64_t* NUMERIC_RESTRICT src,
+        size_t n,
+        uint64_t multiplier) noexcept
+    {
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            uint64_t carry = 0;
+            for (size_t i = 0; i < n; ++i) {
+                uint64_t hi = 0;
+                uint64_t lo = mul64_wide(src[i], multiplier, hi);
+                uint8_t c1 = adc64(0, dst[i], lo, &dst[i]);
+                uint8_t c2 = adc64(0, dst[i], carry, &dst[i]);
+                carry = hi + c1 + c2;
+            }
+            return carry;
+        }
+#endif
+#if defined(__SIZEOF_INT128__)
+        unsigned __int128 carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            unsigned __int128 prod = static_cast<unsigned __int128>(src[i]) * multiplier + dst[i] + carry;
+            dst[i] = static_cast<uint64_t>(prod);
+            carry = prod >> 64;
+        }
+        return static_cast<uint64_t>(carry);
+#elif defined(_MSC_VER) && defined(_M_X64)
+        uint64_t carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t hi = 0;
+            uint64_t lo = _umul128(src[i], multiplier, &hi);
+            unsigned char c1 = _addcarry_u64(0, lo, carry, &lo);
+            hi += c1;
+            unsigned char c2 = _addcarry_u64(0, dst[i], lo, reinterpret_cast<unsigned __int64*>(&dst[i]));
+            carry = hi + c2;
+        }
+        return carry;
+#else
+        uint64_t carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t hi = 0;
+            uint64_t lo = mul64_wide(src[i], multiplier, hi);
+            uint8_t c1 = adc64(0, dst[i], lo, &dst[i]);
+            uint8_t c2 = adc64(0, dst[i], carry, &dst[i]);
+            carry = hi + c1 + c2;
+        }
+        return carry;
+#endif
+    }
+
+    /// <summary>
+    /// 硬體友善無分支乘減原語：dst[0..n-1] -= src[0..n-1] * multiplier。
+    /// Multiply-subtract primitive: dst[0..n-1] -= src[0..n-1] * multiplier.
+    /// 回傳最終高位溢出借位 (borrow)。
+    /// 依據編譯器能力自動分派至 __int128 或 _umul128 / _subborrow_u64 硬體指令管線。
+    /// </summary>
+    /// <param name="dst">目標運算元與輸出緩衝區 / Target and destination buffer</param>
+    /// <param name="src">來源運算元陣列 / Source limb array</param>
+    /// <param name="n">運算 limb 長度 / Limb count</param>
+    /// <param name="multiplier">64 位元單字乘數 / 64-bit word multiplier</param>
+    /// <returns>最終高位溢出借位 / Final high overflow borrow</returns>
+    static NUMERIC_CONSTEXPR_20 uint64_t submul_1_raw(
+        uint64_t* NUMERIC_RESTRICT dst,
+        const uint64_t* NUMERIC_RESTRICT src,
+        size_t n,
+        uint64_t multiplier) noexcept
+    {
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            uint64_t borrow = 0;
+            for (size_t i = 0; i < n; ++i) {
+                uint64_t hi = 0;
+                uint64_t lo = mul64_wide(src[i], multiplier, hi);
+                uint8_t b1 = sbb64(0, dst[i], lo, &dst[i]);
+                uint8_t b2 = sbb64(0, dst[i], borrow, &dst[i]);
+                borrow = hi + b1 + b2;
+            }
+            return borrow;
+        }
+#endif
+#if defined(__SIZEOF_INT128__)
+        uint64_t borrow = 0;
+        for (size_t i = 0; i < n; ++i) {
+            unsigned __int128 prod = static_cast<unsigned __int128>(src[i]) * multiplier + borrow;
+            uint64_t lo = static_cast<uint64_t>(prod);
+            uint64_t hi = static_cast<uint64_t>(prod >> 64);
+            uint64_t cur = dst[i];
+            dst[i] = cur - lo;
+            borrow = hi + (cur < lo ? 1 : 0);
+        }
+        return borrow;
+#elif defined(_MSC_VER) && defined(_M_X64)
+        uint64_t borrow = 0;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t hi = 0;
+            uint64_t lo = _umul128(src[i], multiplier, &hi);
+            unsigned char c = _addcarry_u64(0, lo, borrow, &lo);
+            hi += c;
+            unsigned char b = _subborrow_u64(0, dst[i], lo, reinterpret_cast<unsigned __int64*>(&dst[i]));
+            borrow = hi + b;
+        }
+        return borrow;
+#else
+        uint64_t borrow = 0;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t hi = 0;
+            uint64_t lo = mul64_wide(src[i], multiplier, hi);
+            uint8_t b1 = sbb64(0, dst[i], lo, &dst[i]);
+            uint8_t b2 = sbb64(0, dst[i], borrow, &dst[i]);
+            borrow = hi + b1 + b2;
+        }
+        return borrow;
+#endif
     }
 };
 
@@ -725,7 +963,16 @@ public:
     /// </summary>
     NUMERIC_CONSTEXPR_20 void assign_from(const BigIntBase& other) {
         if (this != &other) {
-            if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
+            if (m_capacity >= other.m_size && m_data != nullptr) {
+                // 原有緩衝區容量充足，直接重用以消除記憶體重新配置與釋放開銷
+                if (other.m_size > 0) {
+                    copy_limbs(m_data, other.m_data, other.m_size);
+                }
+                if (m_is_sbo && m_sbo_capacity > other.m_size) {
+                    zero_limbs(m_data + other.m_size, m_sbo_capacity - other.m_size);
+                }
+            } else if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
+                // 原緩衝區不足，但符合 SBO 內聯容量
                 reset_heap();
                 if (other.m_size > 0) {
                     copy_limbs(m_inline_data, other.m_data, other.m_size);
@@ -737,19 +984,16 @@ public:
                 m_capacity = m_sbo_capacity;
                 m_is_sbo = true;
             } else {
+                // 必須於堆積重新配置
                 size_t needed = (other.m_capacity > other.m_size) ? other.m_capacity : other.m_size;
                 if (needed == 0) needed = 1;
+                uint64_t* new_heap = new uint64_t[needed];
+                reset_heap();
+                m_data = new_heap;
+                m_capacity = static_cast<uint32_t>(needed);
+                m_is_sbo = false;
                 if (other.m_size > 0) {
-                    if (m_capacity < other.m_size || m_is_sbo || m_data == nullptr) {
-                        uint64_t* new_heap = new uint64_t[needed];
-                        reset_heap();
-                        m_data = new_heap;
-                        m_capacity = static_cast<uint32_t>(needed);
-                        m_is_sbo = false;
-                    }
                     copy_limbs(m_data, other.m_data, other.m_size);
-                } else {
-                    reset_heap();
                 }
             }
             m_size = other.m_size;
@@ -760,6 +1004,17 @@ public:
     /// <summary>
     /// 移動賦值輔助函式：若來源在 SBO 內則 memcpy，超出 SBO 則直接竊取 heap 指標。
     /// </summary>
+    /// <summary>
+    /// 複製並取負賦值輔助函式：深拷貝另一物件之 limbs 並將符號取負。
+    /// 若目前物件具備足夠容量則直接重用緩衝區，達成 0 次動態記憶體配置。
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void assign_negated(const BigIntBase& other) {
+        assign_from(other);
+        if (m_size > 0 && m_sign != 0) {
+            m_sign = -m_sign;
+        }
+    }
+
     NUMERIC_CONSTEXPR_20 void move_from(BigIntBase&& other) noexcept {
         if (this != &other) {
             reset_heap();
@@ -867,6 +1122,14 @@ public:
     }
 
     /// <summary>
+    /// 釋放未使用的緩衝區容量；若 limbs 數量小於等於 SBO 容量則縮回 SBO。
+    /// Shrink unused buffer capacity; retracts to inline SBO if limbs fit.
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void shrink_to_fit() noexcept {
+        shrink_to_sbo_if_possible();
+    }
+
+    /// <summary>
     /// 當 limbs 數量小於等於 SBO 容量且當前為堆積配置時，縮回 SBO。
     /// </summary>
     NUMERIC_CONSTEXPR_20 void shrink_to_sbo_if_possible() noexcept {
@@ -954,6 +1217,29 @@ struct BigIntArithmetic : public BigIntIntrinsics {
     static NUMERIC_CONSTEXPR_20 int compare_unsigned(const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
         if (a_len > b_len) return 1;
         if (a_len < b_len) return -1;
+        if (a_len == 1) {
+            if (a[0] > b[0]) return 1;
+            if (a[0] < b[0]) return -1;
+            return 0;
+        }
+        if (a_len == 2) {
+            if (a[1] > b[1]) return 1;
+            if (a[1] < b[1]) return -1;
+            if (a[0] > b[0]) return 1;
+            if (a[0] < b[0]) return -1;
+            return 0;
+        }
+        if (a_len == 4) {
+            if (a[3] > b[3]) return 1;
+            if (a[3] < b[3]) return -1;
+            if (a[2] > b[2]) return 1;
+            if (a[2] < b[2]) return -1;
+            if (a[1] > b[1]) return 1;
+            if (a[1] < b[1]) return -1;
+            if (a[0] > b[0]) return 1;
+            if (a[0] < b[0]) return -1;
+            return 0;
+        }
         for (size_t i = a_len; i > 0; --i) {
             if (a[i - 1] > b[i - 1]) return 1;
             if (a[i - 1] < b[i - 1]) return -1;
@@ -1344,7 +1630,7 @@ namespace detail {
 /// </summary>
 struct BigIntBitwise : public BigIntArithmetic {
     /// <summary>
-    /// limbs 級別的高效整區塊左移：res = a &lt;&lt; (limbs * 64)。
+    /// limbs 級別的高效整區塊左移：res = a << (limbs * 64)。
     /// </summary>
     /// <param name="res">輸出結果</param>
     /// <param name="a">輸入數值</param>
@@ -1369,7 +1655,8 @@ struct BigIntBitwise : public BigIntArithmetic {
     }
 
     /// <summary>
-    /// 位元左移運算：res = a &lt;&lt; shift。
+    /// 位元左移運算：res = a << shift。
+    /// 透過 shld64 硬體指令消除迴圈內分支與多餘運算。
     /// </summary>
     /// <param name="res">輸出結果</param>
     /// <param name="a">運算元</param>
@@ -1379,15 +1666,64 @@ struct BigIntBitwise : public BigIntArithmetic {
             res = a;
             return;
         }
-        if (&res == &a) {
-            BigIntStorage tmp;
-            shift_left(tmp, a, shift);
-            res = std::move(tmp);
-            return;
-        }
         size_t limb_shift = shift / 64;
         size_t bit_shift = shift % 64;
-        size_t new_size = a.m_size + limb_shift + 1;
+        bool overflow = (bit_shift != 0) && ((a.data()[a.m_size - 1] >> (64 - bit_shift)) != 0);
+        size_t new_size = a.m_size + limb_shift + (overflow ? 1 : 0);
+
+        if (&res == &a) {
+            const size_t old_size = a.m_size;
+            if (res.m_capacity < new_size) {
+                res.reserve(new_size);
+            }
+            res.m_size = static_cast<uint32_t>(new_size);
+            if (limb_shift == 0) {
+                if (old_size == 1) {
+                    uint64_t v0 = res.data()[0];
+                    if (overflow) res.data()[1] = v0 >> (64 - bit_shift);
+                    res.data()[0] = v0 << bit_shift;
+                    return;
+                }
+                if (old_size == 2) {
+                    uint64_t v0 = res.data()[0], v1 = res.data()[1];
+                    if (overflow) res.data()[2] = v1 >> (64 - bit_shift);
+                    res.data()[1] = shld64(v1, v0, static_cast<unsigned int>(bit_shift));
+                    res.data()[0] = v0 << bit_shift;
+                    return;
+                }
+                if (old_size == 4) {
+                    uint64_t v0 = res.data()[0], v1 = res.data()[1], v2 = res.data()[2], v3 = res.data()[3];
+                    if (overflow) res.data()[4] = v3 >> (64 - bit_shift);
+                    res.data()[3] = shld64(v3, v2, static_cast<unsigned int>(bit_shift));
+                    res.data()[2] = shld64(v2, v1, static_cast<unsigned int>(bit_shift));
+                    res.data()[1] = shld64(v1, v0, static_cast<unsigned int>(bit_shift));
+                    res.data()[0] = v0 << bit_shift;
+                    return;
+                }
+            }
+            if (bit_shift == 0) {
+                for (size_t i = old_size; i > 0; --i) {
+                    res.data()[i - 1 + limb_shift] = res.data()[i - 1];
+                }
+                if (limb_shift > 0) {
+                    BigIntStorage::zero_limbs(res.data(), limb_shift);
+                }
+            } else {
+                if (overflow) {
+                    res.data()[old_size + limb_shift] = res.data()[old_size - 1] >> (64 - bit_shift);
+                }
+                for (size_t i = old_size; i > 0; --i) {
+                    uint64_t cur = res.data()[i - 1];
+                    uint64_t prev = (i > 1) ? res.data()[i - 2] : 0;
+                    res.data()[i - 1 + limb_shift] = shld64(cur, prev, static_cast<unsigned int>(bit_shift));
+                }
+                if (limb_shift > 0) {
+                    BigIntStorage::zero_limbs(res.data(), limb_shift);
+                }
+            }
+            return;
+        }
+
         res.resize(new_size, 0);
 
         if (bit_shift == 0) {
@@ -1399,20 +1735,22 @@ struct BigIntBitwise : public BigIntArithmetic {
             if (limb_shift > 0) {
                 BigIntStorage::zero_limbs(res.data(), limb_shift);
             }
-            uint64_t carry = 0;
+            uint64_t prev = 0;
             for (size_t i = 0; i < a.m_size; ++i) {
                 uint64_t cur = a.data()[i];
-                res.data()[i + limb_shift] = (cur << bit_shift) | carry;
-                carry = cur >> (64 - bit_shift);
+                res.data()[i + limb_shift] = shld64(cur, prev, static_cast<unsigned int>(bit_shift));
+                prev = cur;
             }
-            res.data()[a.m_size + limb_shift] = carry;
+            if (overflow) {
+                res.data()[a.m_size + limb_shift] = prev >> (64 - bit_shift);
+            }
         }
         res.m_sign = a.m_sign;
         res.normalize();
     }
 
     /// <summary>
-    /// 位元右移運算：res = a &gt;&gt; shift（支援負數算術右移語意）。
+    /// 位元右移運算：res = a >> shift（支援負數算術右移語意）。
     /// </summary>
     /// <param name="res">輸出結果</param>
     /// <param name="a">運算元</param>
@@ -1423,20 +1761,11 @@ struct BigIntBitwise : public BigIntArithmetic {
             return;
         }
         if (a.m_sign < 0) {
-            // 負數算術右移：a >> shift = ~((~a) >> shift) = - ((-a - 1) >> shift) - 1
-            BigIntStorage u;
-            BigIntStorage one_st; one_st.set_uint64(1, 1);
-            BigIntStorage abs_a = a; abs_a.m_sign = 1;
-            sub_signed(u, abs_a, one_st);
-
-            BigIntStorage shifted_u;
+            // 負數算術右移：a >> shift = ~((~a) >> shift)
+            BigIntStorage u, shifted_u;
+            bitwise_not(u, a);
             shift_right_positive(shifted_u, u, shift);
-
-            BigIntStorage final_res;
-            add_signed(final_res, shifted_u, one_st);
-            final_res.m_sign = -1;
-            final_res.normalize();
-            res = std::move(final_res);
+            bitwise_not(res, shifted_u);
             return;
         }
         shift_right_positive(res, a, shift);
@@ -1444,56 +1773,175 @@ struct BigIntBitwise : public BigIntArithmetic {
 
     /// <summary>
     /// 正整數無符號位元右移運算。
+    /// In-place unsigned bitwise right shift operation.
+    /// 透過 shrd64 硬體指令與原地前向搬移消除迴圈內分支與暫存物件配置。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">運算元</param>
-    /// <param name="shift">位移位元數</param>
+    /// <param name="res">輸出結果 / Output result</param>
+    /// <param name="a">運算元 / Operand a</param>
+    /// <param name="shift">位移位元數 / Bit shift count</param>
     static NUMERIC_CONSTEXPR_20 void shift_right_positive(BigIntStorage& res, const BigIntStorage& a, size_t shift) {
-        if (&res == &a) {
-            BigIntStorage tmp;
-            shift_right_positive(tmp, a, shift);
-            res = std::move(tmp);
-            return;
-        }
         size_t limb_shift = shift / 64;
         size_t bit_shift = shift % 64;
-        if (limb_shift >= a.m_size) {
+        const size_t old_size = a.m_size;
+        if (limb_shift >= old_size) {
             res.m_size = 0;
             res.m_sign = 0;
             return;
         }
-        size_t new_size = a.m_size - limb_shift;
-        res.resize(new_size, 0);
+        size_t new_size = old_size - limb_shift;
 
+        if (&res == &a) {
+            if (limb_shift == 0) {
+                if (old_size == 1) {
+                    res.data()[0] >>= bit_shift;
+                    res.m_size = (res.data()[0] != 0) ? 1 : 0;
+                    if (res.m_size == 0) res.m_sign = 0;
+                    return;
+                }
+                if (old_size == 2) {
+                    uint64_t v0 = res.data()[0], v1 = res.data()[1];
+                    res.data()[0] = shrd64(v1, v0, static_cast<unsigned int>(bit_shift));
+                    uint64_t top = v1 >> bit_shift;
+                    res.data()[1] = top;
+                    res.m_size = (top != 0) ? 2 : ((res.data()[0] != 0) ? 1 : 0);
+                    if (res.m_size == 0) res.m_sign = 0;
+                    return;
+                }
+                if (old_size == 4) {
+                    uint64_t v0 = res.data()[0], v1 = res.data()[1], v2 = res.data()[2], v3 = res.data()[3];
+                    res.data()[0] = shrd64(v1, v0, static_cast<unsigned int>(bit_shift));
+                    res.data()[1] = shrd64(v2, v1, static_cast<unsigned int>(bit_shift));
+                    res.data()[2] = shrd64(v3, v2, static_cast<unsigned int>(bit_shift));
+                    uint64_t top = v3 >> bit_shift;
+                    res.data()[3] = top;
+                    size_t sz = 4;
+                    while (sz > 0 && res.data()[sz - 1] == 0) --sz;
+                    res.m_size = static_cast<uint32_t>(sz);
+                    if (sz == 0) res.m_sign = 0;
+                    return;
+                }
+            }
+            if (bit_shift == 0) {
+                if (limb_shift > 0) {
+                    for (size_t i = 0; i < new_size; ++i) {
+                        res.data()[i] = res.data()[i + limb_shift];
+                    }
+                }
+            } else {
+                const uint64_t* src = res.data() + limb_shift;
+                for (size_t i = 0; i + 1 < new_size; ++i) {
+                    res.data()[i] = shrd64(src[i + 1], src[i], static_cast<unsigned int>(bit_shift));
+                }
+                res.data()[new_size - 1] = src[new_size - 1] >> bit_shift;
+            }
+            res.m_size = static_cast<uint32_t>(new_size);
+            res.normalize();
+            return;
+        }
+
+        res.resize(new_size, 0);
         if (bit_shift == 0) {
             BigIntStorage::copy_limbs(res.data(), a.data() + limb_shift, new_size);
         } else {
-            for (size_t i = 0; i < new_size; ++i) {
-                uint64_t cur = a.data()[i + limb_shift];
-                uint64_t next = (i + limb_shift + 1 < a.m_size) ? a.data()[i + limb_shift + 1] : 0;
-                res.data()[i] = (cur >> bit_shift) | (next << (64 - bit_shift));
+            const uint64_t* src = a.data() + limb_shift;
+            for (size_t i = 0; i + 1 < new_size; ++i) {
+                res.data()[i] = shrd64(src[i + 1], src[i], static_cast<unsigned int>(bit_shift));
             }
+            res.data()[new_size - 1] = src[new_size - 1] >> bit_shift;
         }
-        res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
+        res.m_sign = (new_size > 0) ? a.m_sign : 0;
         res.normalize();
     }
 
     /// <summary>
     /// 位元非運算：~a = -a - 1。
+    /// Bitwise NOT: ~a = -a - 1.
+    /// 採快速進位/借位截斷技術，首個非溢位肢段後直接區塊拷貝，消除 $O(N)$ 逐肢段算術迴圈。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">輸入數值</param>
+    /// <param name="res">輸出結果 / Output result</param>
+    /// <param name="a">輸入數值 / Input operand a</param>
     static NUMERIC_CONSTEXPR_20 void bitwise_not(BigIntStorage& res, const BigIntStorage& a) {
-        BigIntStorage one_st; one_st.set_uint64(1, 1);
-        BigIntStorage tmp;
-        add_signed(tmp, a, one_st);
-        tmp.m_sign = -tmp.m_sign;
-        tmp.normalize();
-        res = std::move(tmp);
+        if (a.m_size == 0 || a.m_sign == 0) {
+            // ~0 = -1
+            res.set_uint64(1, -1);
+            return;
+        }
+        if (a.m_sign > 0) {
+            // a > 0: ~a = -(a + 1)
+            size_t k = 0;
+            while (k < a.m_size && a.data()[k] == 0xFFFFFFFFFFFFFFFFULL) {
+                ++k;
+            }
+            size_t new_size = (k == a.m_size) ? (a.m_size + 1) : a.m_size;
+
+            if (&res == &a) {
+                if (res.m_capacity < new_size) {
+                    res.reserve(new_size);
+                }
+                for (size_t i = 0; i < k; ++i) {
+                    res.data()[i] = 0;
+                }
+                if (k < a.m_size) {
+                    res.data()[k] += 1;
+                } else {
+                    res.data()[a.m_size] = 1;
+                }
+                res.m_size = static_cast<uint32_t>(new_size);
+                res.m_sign = -1;
+                res.normalize();
+                return;
+            }
+
+            res.resize(new_size, 0);
+            for (size_t i = 0; i < k; ++i) {
+                res.data()[i] = 0;
+            }
+            if (k < a.m_size) {
+                res.data()[k] = a.data()[k] + 1;
+                if (a.m_size > k + 1) {
+                    BigIntStorage::copy_limbs(res.data() + k + 1, a.data() + k + 1, a.m_size - (k + 1));
+                }
+            } else {
+                res.data()[a.m_size] = 1;
+            }
+            res.m_sign = -1;
+            res.normalize();
+            return;
+        }
+
+        // a < 0: a = -U => ~a = U - 1
+        size_t k = 0;
+        while (k < a.m_size && a.data()[k] == 0) {
+            ++k;
+        }
+        if (&res == &a) {
+            for (size_t i = 0; i < k; ++i) {
+                res.data()[i] = 0xFFFFFFFFFFFFFFFFULL;
+            }
+            if (k < a.m_size) {
+                res.data()[k] -= 1;
+            }
+            res.m_sign = 1;
+            res.normalize();
+            return;
+        }
+
+        res.resize(a.m_size, 0);
+        for (size_t i = 0; i < k; ++i) {
+            res.data()[i] = 0xFFFFFFFFFFFFFFFFULL;
+        }
+        if (k < a.m_size) {
+            res.data()[k] = a.data()[k] - 1;
+            if (a.m_size > k + 1) {
+                BigIntStorage::copy_limbs(res.data() + k + 1, a.data() + k + 1, a.m_size - (k + 1));
+            }
+        }
+        res.m_sign = 1;
+        res.normalize();
     }
 
     /// <summary>
-    /// 位元及運算：res = a &amp; b。
+    /// 位元及運算：res = a & b。
     /// </summary>
     /// <param name="res">輸出結果</param>
     /// <param name="a">運算元 a</param>
@@ -1506,6 +1954,48 @@ struct BigIntBitwise : public BigIntArithmetic {
         }
         if (a.m_sign > 0 && b.m_sign > 0) {
             size_t min_len = (a.m_size < b.m_size) ? a.m_size : b.m_size;
+            if (&res == &a) {
+                if (min_len == 1) {
+                    res.data()[0] &= b.data()[0];
+                    res.m_size = (res.data()[0] != 0) ? 1 : 0;
+                    res.m_sign = (res.m_size != 0) ? 1 : 0;
+                    return;
+                }
+                if (min_len == 2) {
+                    res.data()[0] &= b.data()[0];
+                    res.data()[1] &= b.data()[1];
+                    res.m_size = (res.data()[1] != 0) ? 2 : ((res.data()[0] != 0) ? 1 : 0);
+                    res.m_sign = (res.m_size != 0) ? 1 : 0;
+                    return;
+                }
+                if (min_len == 4) {
+                    res.data()[0] &= b.data()[0];
+                    res.data()[1] &= b.data()[1];
+                    res.data()[2] &= b.data()[2];
+                    res.data()[3] &= b.data()[3];
+                    size_t sz = 4;
+                    while (sz > 0 && res.data()[sz - 1] == 0) --sz;
+                    res.m_size = static_cast<uint32_t>(sz);
+                    res.m_sign = (sz != 0) ? 1 : 0;
+                    return;
+                }
+                for (size_t i = 0; i < min_len; ++i) {
+                    res.data()[i] &= b.data()[i];
+                }
+                res.m_size = static_cast<uint32_t>(min_len);
+                res.m_sign = 1;
+                res.normalize();
+                return;
+            }
+            if (&res == &b) {
+                for (size_t i = 0; i < min_len; ++i) {
+                    res.data()[i] &= a.data()[i];
+                }
+                res.m_size = static_cast<uint32_t>(min_len);
+                res.m_sign = 1;
+                res.normalize();
+                return;
+            }
             res.resize(min_len, 0);
             for (size_t i = 0; i < min_len; ++i) {
                 res.data()[i] = a.data()[i] & b.data()[i];
@@ -1518,10 +2008,19 @@ struct BigIntBitwise : public BigIntArithmetic {
             // a & b = a & ~(~b) = a & ~u
             BigIntStorage not_b;
             bitwise_not(not_b, b);
+            if (&res == &a || &res == &b) {
+                BigIntStorage tmp;
+                bitwise_and(tmp, a, b);
+                res = std::move(tmp);
+                return;
+            }
             res.resize(a.m_size, 0);
-            for (size_t i = 0; i < a.m_size; ++i) {
-                uint64_t nu = (i < not_b.m_size) ? not_b.data()[i] : 0;
-                res.data()[i] = a.data()[i] & (~nu);
+            size_t min_len = (a.m_size < not_b.m_size) ? a.m_size : not_b.m_size;
+            for (size_t i = 0; i < min_len; ++i) {
+                res.data()[i] = a.data()[i] & (~not_b.data()[i]);
+            }
+            if (a.m_size > min_len) {
+                BigIntStorage::copy_limbs(res.data() + min_len, a.data() + min_len, a.m_size - min_len);
             }
             res.m_sign = 1;
             res.normalize();
@@ -1531,7 +2030,7 @@ struct BigIntBitwise : public BigIntArithmetic {
             bitwise_and(res, b, a);
             return;
         }
-        // a < 0 && b < 0: ~(a & b) = (~a) | (~b)
+        // a < 0 && b < 0: ~(a & b) = (~a) | (~b) => a & b = ~( (~a) | (~b) )
         BigIntStorage not_a, not_b, or_res;
         bitwise_not(not_a, a);
         bitwise_not(not_b, b);
@@ -1541,6 +2040,7 @@ struct BigIntBitwise : public BigIntArithmetic {
 
     /// <summary>
     /// 位元或運算：res = a | b。
+    /// 採重疊區間無分支向量化 + 長餘肢段區塊拷貝兩階段架構。
     /// </summary>
     /// <param name="res">輸出結果</param>
     /// <param name="a">運算元 a</param>
@@ -1549,18 +2049,76 @@ struct BigIntBitwise : public BigIntArithmetic {
         if (a.m_sign == 0) { res = b; return; }
         if (b.m_sign == 0) { res = a; return; }
         if (a.m_sign > 0 && b.m_sign > 0) {
+            size_t min_len = (a.m_size < b.m_size) ? a.m_size : b.m_size;
             size_t max_len = (a.m_size > b.m_size) ? a.m_size : b.m_size;
+            if (&res == &a) {
+                if (a.m_size == b.m_size) {
+                    if (min_len == 1) {
+                        res.data()[0] |= b.data()[0];
+                        res.m_size = (res.data()[0] != 0) ? 1 : 0;
+                        res.m_sign = (res.m_size != 0) ? 1 : 0;
+                        return;
+                    }
+                    if (min_len == 2) {
+                        res.data()[0] |= b.data()[0];
+                        res.data()[1] |= b.data()[1];
+                        res.m_size = (res.data()[1] != 0) ? 2 : ((res.data()[0] != 0) ? 1 : 0);
+                        res.m_sign = (res.m_size != 0) ? 1 : 0;
+                        return;
+                    }
+                    if (min_len == 4) {
+                        res.data()[0] |= b.data()[0];
+                        res.data()[1] |= b.data()[1];
+                        res.data()[2] |= b.data()[2];
+                        res.data()[3] |= b.data()[3];
+                        res.m_size = 4;
+                        res.m_sign = 1;
+                        return;
+                    }
+                }
+                if (res.m_capacity < max_len) {
+                    res.reserve(max_len);
+                }
+                for (size_t i = 0; i < min_len; ++i) {
+                    res.data()[i] |= b.data()[i];
+                }
+                if (b.m_size > a.m_size) {
+                    BigIntStorage::copy_limbs(res.data() + min_len, b.data() + min_len, b.m_size - min_len);
+                }
+                res.m_size = static_cast<uint32_t>(max_len);
+                res.m_sign = 1;
+                res.normalize();
+                return;
+            }
+            if (&res == &b) {
+                if (res.m_capacity < max_len) {
+                    res.reserve(max_len);
+                }
+                for (size_t i = 0; i < min_len; ++i) {
+                    res.data()[i] |= a.data()[i];
+                }
+                if (a.m_size > b.m_size) {
+                    BigIntStorage::copy_limbs(res.data() + min_len, a.data() + min_len, a.m_size - min_len);
+                }
+                res.m_size = static_cast<uint32_t>(max_len);
+                res.m_sign = 1;
+                res.normalize();
+                return;
+            }
             res.resize(max_len, 0);
-            for (size_t i = 0; i < max_len; ++i) {
-                uint64_t av = (i < a.m_size) ? a.data()[i] : 0;
-                uint64_t bv = (i < b.m_size) ? b.data()[i] : 0;
-                res.data()[i] = av | bv;
+            for (size_t i = 0; i < min_len; ++i) {
+                res.data()[i] = a.data()[i] | b.data()[i];
+            }
+            if (a.m_size > min_len) {
+                BigIntStorage::copy_limbs(res.data() + min_len, a.data() + min_len, a.m_size - min_len);
+            } else if (b.m_size > min_len) {
+                BigIntStorage::copy_limbs(res.data() + min_len, b.data() + min_len, b.m_size - min_len);
             }
             res.m_sign = 1;
             res.normalize();
             return;
         }
-        // De Morgan: ~(a | b) = (~a) & (~b)
+        // De Morgan: ~(a | b) = (~a) & (~b) => a | b = ~( (~a) & (~b) )
         BigIntStorage not_a, not_b, and_res;
         bitwise_not(not_a, a);
         bitwise_not(not_b, b);
@@ -1570,6 +2128,7 @@ struct BigIntBitwise : public BigIntArithmetic {
 
     /// <summary>
     /// 位元互斥或運算：res = a ^ b。
+    /// 採重疊區間無分支向量化 + 長餘肢段區塊拷貝兩階段架構。
     /// </summary>
     /// <param name="res">輸出結果</param>
     /// <param name="a">運算元 a</param>
@@ -1578,12 +2137,72 @@ struct BigIntBitwise : public BigIntArithmetic {
         if (a.m_sign == 0) { res = b; return; }
         if (b.m_sign == 0) { res = a; return; }
         if (a.m_sign > 0 && b.m_sign > 0) {
+            size_t min_len = (a.m_size < b.m_size) ? a.m_size : b.m_size;
             size_t max_len = (a.m_size > b.m_size) ? a.m_size : b.m_size;
+            if (&res == &a) {
+                if (a.m_size == b.m_size) {
+                    if (min_len == 1) {
+                        res.data()[0] ^= b.data()[0];
+                        res.m_size = (res.data()[0] != 0) ? 1 : 0;
+                        res.m_sign = (res.m_size != 0) ? 1 : 0;
+                        return;
+                    }
+                    if (min_len == 2) {
+                        res.data()[0] ^= b.data()[0];
+                        res.data()[1] ^= b.data()[1];
+                        res.m_size = (res.data()[1] != 0) ? 2 : ((res.data()[0] != 0) ? 1 : 0);
+                        res.m_sign = (res.m_size != 0) ? 1 : 0;
+                        return;
+                    }
+                    if (min_len == 4) {
+                        res.data()[0] ^= b.data()[0];
+                        res.data()[1] ^= b.data()[1];
+                        res.data()[2] ^= b.data()[2];
+                        res.data()[3] ^= b.data()[3];
+                        size_t sz = 4;
+                        while (sz > 0 && res.data()[sz - 1] == 0) --sz;
+                        res.m_size = static_cast<uint32_t>(sz);
+                        res.m_sign = (sz != 0) ? 1 : 0;
+                        return;
+                    }
+                }
+                if (res.m_capacity < max_len) {
+                    res.reserve(max_len);
+                }
+                for (size_t i = 0; i < min_len; ++i) {
+                    res.data()[i] ^= b.data()[i];
+                }
+                if (b.m_size > a.m_size) {
+                    BigIntStorage::copy_limbs(res.data() + min_len, b.data() + min_len, b.m_size - min_len);
+                }
+                res.m_size = static_cast<uint32_t>(max_len);
+                res.m_sign = 1;
+                res.normalize();
+                return;
+            }
+            if (&res == &b) {
+                if (res.m_capacity < max_len) {
+                    res.reserve(max_len);
+                }
+                for (size_t i = 0; i < min_len; ++i) {
+                    res.data()[i] ^= a.data()[i];
+                }
+                if (a.m_size > b.m_size) {
+                    BigIntStorage::copy_limbs(res.data() + min_len, a.data() + min_len, a.m_size - min_len);
+                }
+                res.m_size = static_cast<uint32_t>(max_len);
+                res.m_sign = 1;
+                res.normalize();
+                return;
+            }
             res.resize(max_len, 0);
-            for (size_t i = 0; i < max_len; ++i) {
-                uint64_t av = (i < a.m_size) ? a.data()[i] : 0;
-                uint64_t bv = (i < b.m_size) ? b.data()[i] : 0;
-                res.data()[i] = av ^ bv;
+            for (size_t i = 0; i < min_len; ++i) {
+                res.data()[i] = a.data()[i] ^ b.data()[i];
+            }
+            if (a.m_size > min_len) {
+                BigIntStorage::copy_limbs(res.data() + min_len, a.data() + min_len, a.m_size - min_len);
+            } else if (b.m_size > min_len) {
+                BigIntStorage::copy_limbs(res.data() + min_len, b.data() + min_len, b.m_size - min_len);
             }
             res.m_sign = 1;
             res.normalize();
@@ -1629,30 +2248,43 @@ namespace detail {
 /// </summary>
 struct BigIntMultiplication : public BigIntBitwise {
     static constexpr size_t KARATSUBA_THRESHOLD = 16;
-    static constexpr size_t TOOM3_THRESHOLD = 2048;
+#ifndef NUMERIC_TOOM3_THRESHOLD
+    static constexpr size_t TOOM3_THRESHOLD = 64; // Tuned threshold for zero-heap Toom-3 (4096-bit)
+#else
+    static constexpr size_t TOOM3_THRESHOLD = NUMERIC_TOOM3_THRESHOLD;
+#endif
 
     /// <summary>
     /// 原生 Schoolbook 乘法：out = a * b。out 長度至少為 a_len + b_len。
+    /// Raw Schoolbook multiplication: out = a * b. out capacity must be >= a_len + b_len.
+    /// 首趟採用 mul_1_raw 直寫輸出，消除零填充與無效累加；外層對齊較短運算元消除迴圈開銷。
     /// </summary>
     static NUMERIC_CONSTEXPR_20 void mul_schoolbook_raw(uint64_t* NUMERIC_RESTRICT out,
                                                         const uint64_t* a, size_t a_len,
                                                         const uint64_t* b, size_t b_len) noexcept {
-        BigIntStorage::zero_limbs(out, a_len + b_len);
-        for (size_t i = 0; i < a_len; ++i) {
-            if (a[i] == 0) continue;
-            uint64_t carry = 0;
-            for (size_t j = 0; j < b_len; ++j) {
-                uint64_t hi = 0;
-                uint64_t lo = mul64_wide(a[i], b[j], hi);
-                uint64_t cur = out[i + j];
-                uint64_t sum = cur + lo;
-                uint64_t c1 = (sum < cur) ? 1 : 0;
-                sum += carry;
-                uint64_t c2 = (sum < carry) ? 1 : 0;
-                out[i + j] = sum;
-                carry = hi + c1 + c2;
+        if (a_len == 0 || b_len == 0) {
+            BigIntStorage::zero_limbs(out, a_len + b_len);
+            return;
+        }
+        if (a_len == 1 && b_len == 1) {
+            out[0] = mul64_wide(a[0], b[0], out[1]);
+            return;
+        }
+        // 確保外層迴圈遍歷較短之運算元以減少累加輪數
+        if (a_len > b_len) {
+            const uint64_t* tmp_ptr = a; a = b; b = tmp_ptr;
+            size_t tmp_len = a_len; a_len = b_len; b_len = tmp_len;
+        }
+
+        // 首趟單肢段乘法直寫 out[0..b_len]，消除全域歸零與讀取零值累加
+        out[b_len] = mul_1_raw(out, b, b_len, a[0]);
+        if (a_len > 1) {
+            BigIntStorage::zero_limbs(out + b_len + 1, a_len - 1);
+            for (size_t i = 1; i < a_len; ++i) {
+                if (a[i] == 0) continue;
+                uint64_t carry = addmul_1_raw(out + i, b, b_len, a[i]);
+                out[i + b_len] += carry;
             }
-            out[i + b_len] += carry;
         }
     }
 
@@ -1703,8 +2335,78 @@ struct BigIntMultiplication : public BigIntBitwise {
     }
 
     /// <summary>
-    /// 線程局部暫存記憶體池（Bump Allocator Scratch Arena）。
-    /// 提供 Karatsuba 乘法與長整數運算無鎖、0 堆積重配置之 scratch 空間。
+    /// 原生加法：dst = a + b。回傳正規化長度。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 size_t add_limbs_raw(uint64_t* dst, const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
+        size_t max_len = (a_len > b_len) ? a_len : b_len;
+        size_t min_len = (a_len < b_len) ? a_len : b_len;
+        const uint64_t* longer = (a_len >= b_len) ? a : b;
+        uint8_t carry = 0;
+        for (size_t i = 0; i < min_len; ++i) {
+            carry = adc64(carry, a[i], b[i], &dst[i]);
+        }
+        for (size_t i = min_len; i < max_len; ++i) {
+            carry = adc64(carry, longer[i], 0, &dst[i]);
+        }
+        if (carry != 0) {
+            dst[max_len] = carry;
+            return max_len + 1;
+        }
+        size_t r_len = max_len;
+        while (r_len > 0 && dst[r_len - 1] == 0) --r_len;
+        return r_len;
+    }
+
+    /// <summary>
+    /// 原生減法：dst = a - b (要求 a >= b)。回傳正規化長度。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 size_t sub_limbs_raw(uint64_t* dst, const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
+        uint8_t borrow = 0;
+        for (size_t i = 0; i < b_len; ++i) {
+            borrow = sbb64(borrow, a[i], b[i], &dst[i]);
+        }
+        for (size_t i = b_len; i < a_len; ++i) {
+            borrow = sbb64(borrow, a[i], 0, &dst[i]);
+        }
+        size_t r_len = a_len;
+        while (r_len > 0 && dst[r_len - 1] == 0) --r_len;
+        return r_len;
+    }
+
+    /// <summary>
+    /// 原生右移 1 位 (原地運算)：buf = buf >> 1。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void shift_right_1_raw(uint64_t* buf, size_t len) noexcept {
+        uint64_t carry = 0;
+        for (size_t i = len; i > 0; --i) {
+            uint64_t cur = buf[i - 1];
+            buf[i - 1] = (cur >> 1) | carry;
+            carry = cur << 63;
+        }
+    }
+
+    /// <summary>
+    /// 原生左移 bits 位：dst = src << shift (shift < 64)。回傳新長度。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 size_t shift_left_bits_raw(uint64_t* dst, const uint64_t* src, size_t len, unsigned int shift) noexcept {
+        if (len == 0) return 0;
+        uint64_t carry = 0;
+        for (size_t i = 0; i < len; ++i) {
+            uint64_t cur = src[i];
+            dst[i] = (cur << shift) | carry;
+            carry = cur >> (64 - shift);
+        }
+        if (carry != 0) {
+            dst[len] = carry;
+            return len + 1;
+        }
+        return len;
+    }
+
+    /// <summary>
+    /// 線程局部暫存記憶體池（Bump Allocator with stable chunks）。
+    /// 提供長整數乘除法運算無鎖、0 堆積重配置之 scratch 空間。
+    /// 採用分塊 (Chunked) 策略，任何額外的分塊配置均不會導致先前分塊的指針失效 (Pointer Stability)。
     /// 支援 RAII Scope 機制，遞迴或巢狀調用時自動安全回滾偏移指標。
     /// </summary>
     class ScratchArena {
@@ -1714,15 +2416,20 @@ struct BigIntMultiplication : public BigIntBitwise {
             return arena;
         }
 
+        struct Marker {
+            size_t chunk_idx;
+            size_t offset;
+        };
+
         class Scope {
         public:
             explicit NUMERIC_CONSTEXPR_20 Scope(ScratchArena& arena, bool active = true) noexcept
                 : m_arena(active ? &arena : nullptr),
-                  m_saved_offset(active ? arena.m_offset : 0) {}
+                  m_saved(active ? arena.get_marker() : Marker{0, 0}) {}
 
             NUMERIC_CONSTEXPR_20 ~Scope() noexcept {
                 if (m_arena) {
-                    m_arena->m_offset = m_saved_offset;
+                    m_arena->restore_marker(m_saved);
                 }
             }
 
@@ -1733,24 +2440,67 @@ struct BigIntMultiplication : public BigIntBitwise {
 
         private:
             ScratchArena* m_arena;
-            size_t m_saved_offset;
+            Marker m_saved;
         };
 
+        NUMERIC_CONSTEXPR_20 Marker get_marker() const noexcept {
+            return { m_current_chunk, m_current_offset };
+        }
+
+        NUMERIC_CONSTEXPR_20 void restore_marker(Marker m) noexcept {
+            m_current_chunk = m.chunk_idx;
+            m_current_offset = m.offset;
+        }
+
         uint64_t* allocate(size_t count) {
-            if (m_offset + count > m_buffer.size()) {
-                size_t new_cap = (std::max)(m_buffer.size() * 2, m_offset + count);
-                new_cap = (std::max)(new_cap, static_cast<size_t>(4096));
-                m_buffer.resize(new_cap);
+            if (count == 0) count = 1;
+
+            if (m_current_chunk < m_chunks.size()) {
+                if (m_current_offset + count <= m_chunks[m_current_chunk].size) {
+                    uint64_t* ptr = m_chunks[m_current_chunk].buffer.get() + m_current_offset;
+                    m_current_offset += count;
+                    return ptr;
+                }
+                ++m_current_chunk;
+                m_current_offset = 0;
             }
-            uint64_t* ptr = m_buffer.data() + m_offset;
-            m_offset += count;
+
+            if (m_current_chunk < m_chunks.size()) {
+                if (m_chunks[m_current_chunk].size >= count) {
+                    uint64_t* ptr = m_chunks[m_current_chunk].buffer.get();
+                    m_current_offset = count;
+                    return ptr;
+                }
+                size_t new_cap = (std::max)(count, DEFAULT_CHUNK_SIZE);
+                m_chunks[m_current_chunk].buffer.reset(new uint64_t[new_cap]);
+                m_chunks[m_current_chunk].size = new_cap;
+                uint64_t* ptr = m_chunks[m_current_chunk].buffer.get();
+                m_current_offset = count;
+                return ptr;
+            }
+
+            size_t new_cap = (std::max)(count, DEFAULT_CHUNK_SIZE);
+            Chunk chunk;
+            chunk.buffer.reset(new uint64_t[new_cap]);
+            chunk.size = new_cap;
+            m_chunks.push_back(std::move(chunk));
+            uint64_t* ptr = m_chunks.back().buffer.get();
+            m_current_offset = count;
             return ptr;
         }
 
     private:
         ScratchArena() = default;
-        std::vector<uint64_t> m_buffer;
-        size_t m_offset = 0;
+        static constexpr size_t DEFAULT_CHUNK_SIZE = 65536;
+
+        struct Chunk {
+            std::unique_ptr<uint64_t[]> buffer;
+            size_t size = 0;
+        };
+
+        std::vector<Chunk> m_chunks;
+        size_t m_current_chunk = 0;
+        size_t m_current_offset = 0;
     };
 
     /// <summary>
@@ -1879,7 +2629,56 @@ struct BigIntMultiplication : public BigIntBitwise {
     }
 
     /// <summary>
-    /// 乘法內部遞迴派發：依據運算元規模派發至 Schoolbook, Karatsuba 或 Toom-3。
+    /// 非平衡乘法分塊演算法 (Block Karatsuba)：
+    /// 當 a_len >= 2 * b_len (或反向) 時，將長乘數以短乘數長度為基準進行切塊乘加，
+    /// 將時間複雜度由 O(N * M) 降低至 O(N * M^0.585)。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void mul_block_karatsuba_raw(
+        uint64_t* NUMERIC_RESTRICT out,
+        const uint64_t* a, size_t a_len,
+        const uint64_t* b, size_t b_len,
+        uint64_t* scratch) noexcept
+    {
+        if (b_len > a_len) {
+            mul_block_karatsuba_raw(out, b, b_len, a, a_len, scratch);
+            return;
+        }
+        BigIntStorage::zero_limbs(out, a_len + b_len);
+        if (b_len < KARATSUBA_THRESHOLD || b_len < 4) {
+            mul_schoolbook_raw(out, a, a_len, b, b_len);
+            return;
+        }
+
+        size_t block_sz = b_len;
+        size_t num_blocks = a_len / block_sz;
+        size_t rem = a_len % block_sz;
+
+        uint64_t* prod_buf = scratch;
+        uint64_t* next_scratch = scratch + 2 * block_sz + 8;
+
+        for (size_t i = 0; i < num_blocks; ++i) {
+            const uint64_t* a_block = a + i * block_sz;
+            mul_dispatch_raw(prod_buf, a_block, block_sz, b, b_len, next_scratch);
+            size_t out_offset = i * block_sz;
+            size_t max_out = (a_len + b_len) - out_offset;
+            add_to_raw(out + out_offset, max_out, prod_buf, 2 * block_sz);
+        }
+
+        if (rem > 0) {
+            const uint64_t* a_block = a + num_blocks * block_sz;
+            if (rem < 4) {
+                mul_schoolbook_raw(prod_buf, a_block, rem, b, b_len);
+            } else {
+                mul_dispatch_raw(prod_buf, a_block, rem, b, b_len, next_scratch);
+            }
+            size_t out_offset = num_blocks * block_sz;
+            size_t max_out = (a_len + b_len) - out_offset;
+            add_to_raw(out + out_offset, max_out, prod_buf, rem + b_len);
+        }
+    }
+
+    /// <summary>
+    /// 乘法內部遞迴派發：依據運算元規模派發至 Schoolbook, Block Karatsuba, Karatsuba 或 Toom-3。
     /// </summary>
     static NUMERIC_CONSTEXPR_20 void mul_dispatch_raw(
         uint64_t* NUMERIC_RESTRICT out,
@@ -1892,9 +2691,10 @@ struct BigIntMultiplication : public BigIntBitwise {
             BigIntStorage::zero_limbs(out, a_len + b_len);
             return;
         }
-        if (n < KARATSUBA_THRESHOLD || a_len < 4 || b_len < 4 ||
-            a_len >= 2 * b_len || b_len >= 2 * a_len) {
+        if (n < KARATSUBA_THRESHOLD || a_len < 4 || b_len < 4) {
             mul_schoolbook_raw(out, a, a_len, b, b_len);
+        } else if (a_len >= 2 * b_len || b_len >= 2 * a_len) {
+            mul_block_karatsuba_raw(out, a, a_len, b, b_len, scratch);
         } else if (n < TOOM3_THRESHOLD) {
             mul_karatsuba_raw(out, a, a_len, b, b_len, scratch);
         } else {
@@ -2056,72 +2856,90 @@ struct BigIntMultiplication : public BigIntBitwise {
             mul_dispatch_raw(v2, p2, p2_len, q2, q2_len, next_scratch);
         }
 
-        BigIntStorage st_v0, st_vinf, st_v1, st_vm1, st_v2;
-        st_v0.resize(2 * m);
-        BigIntStorage::copy_limbs(st_v0.data(), out, 2 * m);
-        st_v0.m_sign = 1;
-        st_v0.normalize();
+        // 5. 補間多項式重構 (Zero-Heap Raw Limb Interpolation)
+        // 劃分 scratch 緩衝區，杜絕任何 BigIntStorage 堆積物件配置
+        size_t sz = pr_sz + 4;
+        uint64_t* t1 = next_scratch;
+        uint64_t* t2 = t1 + sz;
+        uint64_t* c2 = t2 + sz;
+        uint64_t* v2_step = c2 + sz;
+        uint64_t* v2_step2 = v2_step + sz;
+        uint64_t* eight_v_inf = v2_step2 + sz;
+        uint64_t* two_c2 = eight_v_inf + sz;
+        uint64_t* c3 = two_c2 + sz;
+        uint64_t* c1 = c3 + sz;
+        BigIntStorage::zero_limbs(next_scratch, 9 * sz);
 
-        size_t vinf_sz = (a_len + b_len > 4 * m) ? (a_len + b_len - 4 * m) : 0;
-        st_vinf.resize(vinf_sz);
-        if (vinf_sz > 0) {
-            BigIntStorage::copy_limbs(st_vinf.data(), v_inf, vinf_sz);
+        size_t v0_len = 2 * m;
+        while (v0_len > 0 && out[v0_len - 1] == 0) --v0_len;
+
+        size_t vinf_len = (a_len + b_len > 4 * m) ? (a_len + b_len - 4 * m) : 0;
+        while (vinf_len > 0 && v_inf[vinf_len - 1] == 0) --vinf_len;
+
+        size_t v1_len = pr_sz;
+        while (v1_len > 0 && v1[v1_len - 1] == 0) --v1_len;
+
+        size_t vm1_len = pr_sz;
+        while (vm1_len > 0 && v_m1[vm1_len - 1] == 0) --vm1_len;
+
+        size_t v2_len = pr_sz;
+        while (v2_len > 0 && v2[v2_len - 1] == 0) --v2_len;
+
+        size_t t1_len = 0;
+        size_t t2_len = 0;
+        if (s_vm1 >= 0) {
+            t1_len = add_limbs_raw(t1, v1, v1_len, v_m1, vm1_len);
+            shift_right_1_raw(t1, t1_len);
+            while (t1_len > 0 && t1[t1_len - 1] == 0) --t1_len;
+
+            t2_len = sub_limbs_raw(t2, v1, v1_len, v_m1, vm1_len);
+            shift_right_1_raw(t2, t2_len);
+            while (t2_len > 0 && t2[t2_len - 1] == 0) --t2_len;
+        } else {
+            t1_len = sub_limbs_raw(t1, v1, v1_len, v_m1, vm1_len);
+            shift_right_1_raw(t1, t1_len);
+            while (t1_len > 0 && t1[t1_len - 1] == 0) --t1_len;
+
+            t2_len = add_limbs_raw(t2, v1, v1_len, v_m1, vm1_len);
+            shift_right_1_raw(t2, t2_len);
+            while (t2_len > 0 && t2[t2_len - 1] == 0) --t2_len;
         }
-        st_vinf.m_sign = 1;
-        st_vinf.normalize();
 
-        st_v1.resize(pr_sz);
-        BigIntStorage::copy_limbs(st_v1.data(), v1, pr_sz);
-        st_v1.m_sign = 1;
-        st_v1.normalize();
+        // c2 = t1 - v0 - v_inf
+        size_t c2_len = sub_limbs_raw(c2, t1, t1_len, out, v0_len);
+        sub_from_raw(c2, c2_len, v_inf, vinf_len);
+        while (c2_len > 0 && c2[c2_len - 1] == 0) --c2_len;
 
-        st_vm1.resize(pr_sz);
-        BigIntStorage::copy_limbs(st_vm1.data(), v_m1, pr_sz);
-        st_vm1.m_sign = s_vm1;
-        st_vm1.normalize();
+        // v2_step = (v2 - v0) / 2
+        size_t v2_step_len = sub_limbs_raw(v2_step, v2, v2_len, out, v0_len);
+        shift_right_1_raw(v2_step, v2_step_len);
+        while (v2_step_len > 0 && v2_step[v2_step_len - 1] == 0) --v2_step_len;
 
-        st_v2.resize(pr_sz);
-        BigIntStorage::copy_limbs(st_v2.data(), v2, pr_sz);
-        st_v2.m_sign = 1;
-        st_v2.normalize();
+        // v2_step2 = v2_step - t2
+        size_t v2_step2_len = sub_limbs_raw(v2_step2, v2_step, v2_step_len, t2, t2_len);
 
-        BigIntStorage sum_v1_vm1, t1;
-        add_signed(sum_v1_vm1, st_v1, st_vm1);
-        shift_right(t1, sum_v1_vm1, 1);
+        // eight_v_inf = v_inf << 3
+        size_t eight_vinf_len = shift_left_bits_raw(eight_v_inf, v_inf, vinf_len, 3);
+        sub_from_raw(v2_step2, v2_step2_len, eight_v_inf, eight_vinf_len);
+        size_t v2_step3_len = v2_step2_len;
+        while (v2_step3_len > 0 && v2_step2[v2_step3_len - 1] == 0) --v2_step3_len;
 
-        BigIntStorage diff_v1_vm1, t2;
-        sub_signed(diff_v1_vm1, st_v1, st_vm1);
-        shift_right(t2, diff_v1_vm1, 1);
+        // two_c2 = c2 << 1
+        size_t two_c2_len = shift_left_bits_raw(two_c2, c2, c2_len, 1);
+        // three_c3 = v2_step3 - two_c2
+        size_t three_c3_len = sub_limbs_raw(c3, v2_step2, v2_step3_len, two_c2, two_c2_len);
 
-        BigIntStorage c2_step1, c2;
-        sub_signed(c2_step1, t1, st_v0);
-        sub_signed(c2, c2_step1, st_vinf);
+        // c3 = three_c3 / 3
+        div_exact_3_raw(c3, three_c3_len);
+        size_t c3_len = three_c3_len;
+        while (c3_len > 0 && c3[c3_len - 1] == 0) --c3_len;
 
-        BigIntStorage v2_minus_v0, v2_step;
-        sub_signed(v2_minus_v0, st_v2, st_v0);
-        shift_right(v2_step, v2_minus_v0, 1);
+        // c1 = t2 - c3
+        size_t c1_len = sub_limbs_raw(c1, t2, t2_len, c3, c3_len);
 
-        BigIntStorage v2_step2;
-        sub_signed(v2_step2, v2_step, t2);
-
-        BigIntStorage eight_v_inf, v2_step3;
-        shift_left(eight_v_inf, st_vinf, 3);
-        sub_signed(v2_step3, v2_step2, eight_v_inf);
-
-        BigIntStorage two_c2, three_c3;
-        shift_left(two_c2, c2, 1);
-        sub_signed(three_c3, v2_step3, two_c2);
-
-        BigIntStorage c3 = three_c3;
-        div_exact_3_raw(c3.data(), c3.m_size);
-        c3.normalize();
-
-        BigIntStorage c1;
-        sub_signed(c1, t2, c3);
-
-        if (c1.m_size > 0) add_to_raw(out + m, (a_len + b_len) - m, c1.data(), c1.m_size);
-        if (c2.m_size > 0) add_to_raw(out + 2 * m, (a_len + b_len) - 2 * m, c2.data(), c2.m_size);
-        if (c3.m_size > 0) add_to_raw(out + 3 * m, (a_len + b_len) - 3 * m, c3.data(), c3.m_size);
+        if (c1_len > 0) add_to_raw(out + m, (a_len + b_len) - m, c1, c1_len);
+        if (c2_len > 0) add_to_raw(out + 2 * m, (a_len + b_len) - 2 * m, c2, c2_len);
+        if (c3_len > 0) add_to_raw(out + 3 * m, (a_len + b_len) - 3 * m, c3, c3_len);
     }
 
     /// <summary>
@@ -2187,9 +3005,9 @@ struct BigIntMultiplication : public BigIntBitwise {
         }
         if (carry > 0) {
             res.data()[n] = carry;
-            res.m_size = n + 1;
+            res.m_size = static_cast<uint32_t>(n + 1);
         } else {
-            res.m_size = n;
+            res.m_size = static_cast<uint32_t>(n);
         }
         res.m_sign = sign;
     }
@@ -2310,9 +3128,32 @@ struct BigIntMultiplication : public BigIntBitwise {
     /// <param name="b">乘數 b</param>
     static NUMERIC_CONSTEXPR_20 void mul_core(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
         size_t n = (a.m_size > b.m_size) ? a.m_size : b.m_size;
-        if (a.m_size < KARATSUBA_THRESHOLD || b.m_size < KARATSUBA_THRESHOLD ||
-            a.m_size >= 2 * b.m_size || b.m_size >= 2 * a.m_size) {
+        if (a.m_size < KARATSUBA_THRESHOLD || b.m_size < KARATSUBA_THRESHOLD) {
             mul_schoolbook(res, a, b);
+        } else if (a.m_size >= 2 * b.m_size || b.m_size >= 2 * a.m_size) {
+            if (&res == &a || &res == &b) {
+                BigIntStorage tmp;
+                mul_core(tmp, a, b);
+                res = std::move(tmp);
+                return;
+            }
+            res.resize(a.m_size + b.m_size, 0);
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+            if (std::is_constant_evaluated()) {
+                size_t scratch_sz = 8 * n + 256;
+                std::vector<uint64_t> heap_scratch(scratch_sz);
+                mul_block_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, heap_scratch.data());
+                res.m_sign = 1;
+                res.normalize();
+                return;
+            }
+#endif
+            auto& arena = ScratchArena::instance();
+            ScratchArena::Scope scope(arena);
+            uint64_t* scratch = arena.allocate(8 * n + 256);
+            mul_block_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, scratch);
+            res.m_sign = 1;
+            res.normalize();
         } else if (n < TOOM3_THRESHOLD) {
             mul_karatsuba(res, a, b);
         } else {
@@ -2388,7 +3229,220 @@ namespace detail {
 /// 支援單肢段快除、Knuth Algorithm D 長除法與 Burnikel-Ziegler 分治除法。
 /// </summary>
 struct BigIntDivision : public BigIntMultiplication {
-    static constexpr size_t BZ_THRESHOLD = 128; // Tuned threshold for Burnikel-Ziegler division
+    static constexpr size_t BZ_THRESHOLD = 32; // Tuned threshold for Burnikel-Ziegler division (2048-bit)
+
+    /// <summary>
+    /// 乘法分段輔助函式：out = a * b。out 容量至少為 a_len + b_len。
+    /// 依運算元大小自動派發至 Schoolbook, Block Karatsuba, Karatsuba 或 Toom-3，並從 arena 配置暫存空間。
+    /// </summary>
+    static void mul_slice_helper(
+        uint64_t* NUMERIC_RESTRICT out,
+        const uint64_t* a, size_t a_len,
+        const uint64_t* b, size_t b_len,
+        ScratchArena& arena) noexcept
+    {
+        size_t n = (a_len > b_len) ? a_len : b_len;
+        if (a_len == 0 || b_len == 0) {
+            BigIntStorage::zero_limbs(out, a_len + b_len);
+            return;
+        }
+        size_t scratch_sz = (n >= TOOM3_THRESHOLD) ? (48 * n + 2048) : (8 * n + 256);
+        uint64_t* scratch = arena.allocate(scratch_sz);
+        mul_dispatch_raw(out, a, a_len, b, b_len, scratch);
+    }
+
+    /// <summary>
+    /// Knuth Algorithm D 原地長除法底層 Raw 介面。
+    /// 依據 q_out 與 r_out 是否為空，完全消除不必要的商或餘數陣列存取與正規化開銷。
+    /// scratch 必須至少具備 (v_len + 1) + (u_len + 2) 之容量。
+    /// </summary>
+    static NUMERIC_CONSTEXPR_20 void div_knuth_raw(
+        uint64_t* q_out, size_t* q_len,
+        uint64_t* r_out, size_t* r_len,
+        const uint64_t* u, size_t u_len,
+        const uint64_t* v, size_t v_len,
+        uint64_t* scratch) noexcept
+    {
+        if (v_len == 0) {
+            return;
+        }
+        if (u_len == 0 || u_len < v_len) {
+            if (q_len) *q_len = 0;
+            if (r_out && u_len > 0) {
+                BigIntStorage::copy_limbs(r_out, u, u_len);
+            }
+            if (r_len) *r_len = u_len;
+            return;
+        }
+
+        int cmp = compare_unsigned(u, u_len, v, v_len);
+        if (cmp < 0) {
+            if (q_len) *q_len = 0;
+            if (r_out && u_len > 0) {
+                BigIntStorage::copy_limbs(r_out, u, u_len);
+            }
+            if (r_len) *r_len = u_len;
+            return;
+        }
+        if (cmp == 0) {
+            if (q_out) q_out[0] = 1;
+            if (q_len) *q_len = 1;
+            if (r_len) *r_len = 0;
+            return;
+        }
+
+        if (v_len == 1) {
+            uint64_t divisor = v[0];
+            uint64_t rem = 0;
+            if (q_out) {
+                for (size_t i = u_len; i > 0; --i) {
+                    uint64_t next_rem = 0;
+                    q_out[i - 1] = div128_64(rem, u[i - 1], divisor, next_rem);
+                    rem = next_rem;
+                }
+                size_t ql = u_len;
+                while (ql > 0 && q_out[ql - 1] == 0) --ql;
+                if (q_len) *q_len = ql;
+            } else {
+                for (size_t i = u_len; i > 0; --i) {
+                    uint64_t next_rem = 0;
+                    div128_64(rem, u[i - 1], divisor, next_rem);
+                    rem = next_rem;
+                }
+                if (q_len) *q_len = 0;
+            }
+            if (r_out) {
+                r_out[0] = rem;
+                if (r_len) *r_len = (rem != 0 ? 1 : 0);
+            } else if (r_len) {
+                *r_len = (rem != 0 ? 1 : 0);
+            }
+            return;
+        }
+
+        size_t n = v_len;
+        size_t m = u_len - n;
+
+        // D1: 正規化 (shift left by s bits)
+        int s = clz64(v[n - 1]);
+        uint64_t* vn = scratch;
+        uint64_t* un = scratch + (n + 1);
+
+        if (s == 0) {
+            BigIntStorage::copy_limbs(vn, v, n);
+            BigIntStorage::copy_limbs(un, u, u_len);
+            un[u_len] = 0;
+            un[u_len + 1] = 0;
+        } else {
+            uint64_t carry = 0;
+            for (size_t i = 0; i < n; ++i) {
+                uint64_t cur = v[i];
+                vn[i] = (cur << s) | carry;
+                carry = cur >> (64 - s);
+            }
+            vn[n] = carry;
+
+            carry = 0;
+            for (size_t i = 0; i < u_len; ++i) {
+                uint64_t cur = u[i];
+                un[i] = (cur << s) | carry;
+                carry = cur >> (64 - s);
+            }
+            un[u_len] = carry;
+            un[u_len + 1] = 0;
+        }
+
+        uint64_t v_hi = vn[n - 1];
+        uint64_t v_lo = vn[n - 2];
+
+        // D2~D7: 主迴圈
+        for (size_t k_idx = m + 1; k_idx > 0; --k_idx) {
+            size_t j = k_idx - 1;
+            uint64_t u_hi = un[j + n];
+            uint64_t u_mid = un[j + n - 1];
+            uint64_t u_lo = (j + n >= 2) ? un[j + n - 2] : 0;
+
+            uint64_t q_hat = 0;
+            uint64_t r_hat = 0;
+
+            if (u_hi == v_hi) {
+                q_hat = 0xFFFFFFFFFFFFFFFFULL;
+                r_hat = u_mid + v_hi;
+                if (r_hat >= v_hi) {
+                    uint64_t p_hi = 0;
+                    uint64_t p_lo = mul64_wide(q_hat, v_lo, p_hi);
+                    if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
+                        --q_hat;
+                        r_hat += v_hi;
+                        if (r_hat >= v_hi) {
+                            p_lo = mul64_wide(q_hat, v_lo, p_hi);
+                            if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
+                                --q_hat;
+                            }
+                        }
+                    }
+                }
+            } else {
+                q_hat = div128_64(u_hi, u_mid, v_hi, r_hat);
+                uint64_t p_hi = 0;
+                uint64_t p_lo = mul64_wide(q_hat, v_lo, p_hi);
+                if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
+                    --q_hat;
+                    r_hat += v_hi;
+                    if (r_hat >= v_hi) {
+                        p_lo = mul64_wide(q_hat, v_lo, p_hi);
+                        if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
+                            --q_hat;
+                        }
+                    }
+                }
+            }
+
+            // D4: 乘並減
+            uint64_t borrow = submul_1_raw(un + j, vn, n, q_hat);
+            uint64_t cur = un[j + n];
+            uint64_t diff = cur - borrow;
+            uint64_t b = (cur < borrow) ? 1 : 0;
+            un[j + n] = diff;
+
+            // D5: 判斷是否需要回加
+            if (b > 0) {
+                --q_hat;
+                uint64_t add_carry = add_to_raw(un + j, n, vn, n);
+                un[j + n] += add_carry;
+            }
+
+            if (q_out) {
+                q_out[j] = q_hat;
+            }
+        }
+
+        if (q_out && q_len) {
+            size_t ql = m + 1;
+            while (ql > 0 && q_out[ql - 1] == 0) --ql;
+            *q_len = ql;
+        }
+
+        // D8: 去正規化餘數
+        if (r_out) {
+            if (s > 0) {
+                for (size_t i = 0; i < n; ++i) {
+                    uint64_t c = un[i];
+                    uint64_t next = (i + 1 <= n) ? un[i + 1] : 0;
+                    r_out[i] = (c >> s) | (next << (64 - s));
+                }
+            } else {
+                BigIntStorage::copy_limbs(r_out, un, n);
+            }
+            if (r_len) {
+                size_t rl = n;
+                while (rl > 0 && r_out[rl - 1] == 0) --rl;
+                *r_len = rl;
+            }
+        } else if (r_len) {
+            *r_len = 0;
+        }
+    }
 
     /// <summary>
     /// Knuth Algorithm D 原地長除法（採用 Scratch Buffer 達成 16,384 位元內零 Heap 配置）。
@@ -2420,158 +3474,79 @@ struct BigIntDivision : public BigIntMultiplication {
 
         size_t n = v.m_size;
         size_t m = u.m_size - n;
-
-        // D1: 正規化 (shift left by s bits)
-        int s = clz64(v.data()[n - 1]);
         size_t total_scratch = (n + 1) + (u.m_size + 2);
         uint64_t stack_scratch[512];
         uint64_t* scratch_ptr = stack_scratch;
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
         std::vector<uint64_t> heap_scratch;
-        if (total_scratch > 512) {
-            heap_scratch.resize(total_scratch);
-            scratch_ptr = heap_scratch.data();
+        if (std::is_constant_evaluated()) {
+            if (total_scratch > 512) {
+                heap_scratch.resize(total_scratch);
+                scratch_ptr = heap_scratch.data();
+            }
+        } else
+#endif
+        {
+            if (total_scratch > 512) {
+                auto& arena = ScratchArena::instance();
+                scratch_ptr = arena.allocate(total_scratch);
+            }
         }
 
-        uint64_t* vn = scratch_ptr;
-        uint64_t* un = scratch_ptr + (n + 1);
+        const size_t u_len = u.m_size;
+        const size_t v_len = v.m_size;
 
-        if (s == 0) {
-            BigIntStorage::copy_limbs(vn, v.data(), n);
-            BigIntStorage::copy_limbs(un, u.data(), u.m_size);
-            un[u.m_size] = 0;
-            un[u.m_size + 1] = 0;
-        } else {
-            uint64_t carry = 0;
-            for (size_t i = 0; i < n; ++i) {
-                uint64_t cur = v.data()[i];
-                vn[i] = (cur << s) | carry;
-                carry = cur >> (64 - s);
-            }
-            vn[n] = carry;
-
-            carry = 0;
-            for (size_t i = 0; i < u.m_size; ++i) {
-                uint64_t cur = u.data()[i];
-                un[i] = (cur << s) | carry;
-                carry = cur >> (64 - s);
-            }
-            un[u.m_size] = carry;
-            un[u.m_size + 1] = 0;
-        }
-
-        if (q_out) {
+        if (q_out && q_out != &u) {
             q_out->resize(m + 1, 0);
         }
-
-        uint64_t v_hi = vn[n - 1];
-        uint64_t v_lo = vn[n - 2];
-
-        // D2~D7: 主迴圈
-        for (size_t k = m + 1; k > 0; --k) {
-            size_t j = k - 1;
-            uint64_t u_hi = un[j + n];
-            uint64_t u_mid = un[j + n - 1];
-            uint64_t u_lo = (j + n >= 2) ? un[j + n - 2] : 0;
-
-            uint64_t q_hat = 0;
-            uint64_t r_hat = 0;
-
-            if (u_hi == v_hi) {
-                q_hat = 0xFFFFFFFFFFFFFFFFULL;
-                r_hat = u_mid + v_hi;
-                if (r_hat >= v_hi) {
-                    while (true) {
-                        uint64_t p_hi = 0;
-                        uint64_t p_lo = mul64_wide(q_hat, v_lo, p_hi);
-                        if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
-                            --q_hat;
-                            r_hat += v_hi;
-                            if (r_hat < v_hi) break;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            } else {
-                q_hat = div128_64(u_hi, u_mid, v_hi, r_hat);
-                while (true) {
-                    uint64_t p_hi = 0;
-                    uint64_t p_lo = mul64_wide(q_hat, v_lo, p_hi);
-                    if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
-                        --q_hat;
-                        r_hat += v_hi;
-                        if (r_hat < v_hi) break;
-                    } else {
-                        break;
-                    }
-                }
-            }
-
-            // D4: 乘並減
-            uint64_t carry = 0;
-            uint64_t borrow = 0;
-            for (size_t i = 0; i < n; ++i) {
-                uint64_t p_hi = 0;
-                uint64_t p_lo = mul64_wide(q_hat, vn[i], p_hi);
-                uint64_t p_full = p_lo + carry;
-                uint64_t c1 = (p_full < p_lo) ? 1 : 0;
-                carry = p_hi + c1;
-
-                uint64_t cur = un[j + i];
-                uint64_t diff = cur - borrow;
-                uint64_t b1 = (cur < borrow) ? 1 : 0;
-                uint64_t diff2 = diff - p_full;
-                uint64_t b2 = (diff < p_full) ? 1 : 0;
-                borrow = b1 + b2;
-                un[j + i] = diff2;
-            }
-
-            uint64_t cur = un[j + n];
-            uint64_t diff = cur - borrow;
-            uint64_t b1 = (cur < borrow) ? 1 : 0;
-            uint64_t diff2 = diff - carry;
-            uint64_t b2 = (diff < carry) ? 1 : 0;
-            un[j + n] = diff2;
-
-            // D5: 判斷是否需要回加
-            if (b1 + b2 > 0) {
-                --q_hat;
-                uint64_t add_carry = 0;
-                for (size_t i = 0; i < n; ++i) {
-                    uint64_t val = un[j + i];
-                    uint64_t sum = val + vn[i] + add_carry;
-                    add_carry = (sum < val || (add_carry && sum == val)) ? 1 : 0;
-                    un[j + i] = sum;
-                }
-                un[j + n] += add_carry;
-            }
-
-            if (q_out) {
-                q_out->data()[j] = q_hat;
-            }
+        if (r_out && r_out != &u) {
+            r_out->resize(n, 0);
         }
+
+        size_t ql = 0, rl = 0;
+        div_knuth_raw(
+            q_out ? q_out->data() : nullptr, &ql,
+            r_out ? r_out->data() : nullptr, &rl,
+            u.data(), u_len,
+            v.data(), v_len,
+            scratch_ptr);
 
         if (q_out) {
-            q_out->m_sign = 1;
+            q_out->m_size = static_cast<uint32_t>(ql);
+            q_out->m_sign = (ql > 0 ? 1 : 0);
             q_out->normalize();
         }
-
-        // D8: 去正規化餘數
         if (r_out) {
-            r_out->resize(n, 0);
-            if (s > 0) {
-                for (size_t i = 0; i < n; ++i) {
-                    uint64_t c = un[i];
-                    uint64_t next = (i + 1 <= n) ? un[i + 1] : 0;
-                    r_out->data()[i] = (c >> s) | (next << (64 - s));
-                }
-            } else {
-                BigIntStorage::copy_limbs(r_out->data(), un, n);
-            }
-            r_out->m_sign = 1;
+            r_out->m_size = static_cast<uint32_t>(rl);
+            r_out->m_sign = (rl > 0 ? 1 : 0);
             r_out->normalize();
         }
     }
+
+    /// <summary>
+    /// Burnikel–Ziegler div3by2 raw: 以 2k-limb 除數 b 除 3k-limb 被除數 a。
+    /// 產出 k-limb 商 q 與 2k-limb 餘數 r。要求 a < b * beta^k。
+    /// 搭配 ScratchArena 與指針切片達成全程 0 堆積記憶體配置。
+    /// </summary>
+    static void bz_div3by2_raw(
+        uint64_t* NUMERIC_RESTRICT q, size_t* q_len,
+        uint64_t* NUMERIC_RESTRICT r, size_t* r_len,
+        const uint64_t* a, size_t a_len,
+        const uint64_t* b, size_t k,
+        ScratchArena& arena);
+
+    /// <summary>
+    /// Burnikel–Ziegler div2by1 raw: 以 n-limb 除數 b 除 2n-limb 被除數 a。
+    /// 要求 a < b * beta^n，n 為偶數。
+    /// 遞迴調用 div3by2，以 Karatsuba/Toom-3 乘法降低計算複雜度。
+    /// 搭配 ScratchArena 達成全程 0 堆積記憶體配置。
+    /// </summary>
+    static void bz_div2by1_raw(
+        uint64_t* NUMERIC_RESTRICT q, size_t* q_len,
+        uint64_t* NUMERIC_RESTRICT r, size_t* r_len,
+        const uint64_t* a, size_t a_len,
+        const uint64_t* b, size_t n,
+        ScratchArena& arena);
 
     /// <summary>
     /// Burnikel–Ziegler div3by2: 以 2k-limb 除數 b 除 3k-limb 被除數 a。
@@ -2581,153 +3556,79 @@ struct BigIntDivision : public BigIntMultiplication {
         BigIntStorage* q, BigIntStorage* r,
         const BigIntStorage& a, const BigIntStorage& b, size_t k)
     {
-        BigIntStorage b1, b0;
-        b1.resize(k, 0);
-        BigIntStorage::copy_limbs(b1.data(), b.data() + k, k);
-        b1.m_sign = 1;
-        b1.normalize();
-
-        b0.resize(k, 0);
-        BigIntStorage::copy_limbs(b0.data(), b.data(), k);
-        b0.m_sign = 1;
-        b0.normalize();
-
-        BigIntStorage a_hi, a_lo;
-        if (a.m_size > k) {
-            size_t hi_len = a.m_size - k;
-            a_hi.resize(hi_len, 0);
-            BigIntStorage::copy_limbs(a_hi.data(), a.data() + k, hi_len);
-            a_hi.m_sign = 1;
-            a_hi.normalize();
-
-            a_lo.resize(k, 0);
-            BigIntStorage::copy_limbs(a_lo.data(), a.data(), k);
-            a_lo.m_sign = 1;
-            a_lo.normalize();
-        } else {
-            a_lo = a;
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            div_mod_core_knuth(q, r, a, b);
+            return;
         }
+#endif
+        auto& arena = ScratchArena::instance();
+        ScratchArena::Scope scope(arena);
 
-        BigIntStorage q_hat, r_hat;
-        if (a_hi.m_size == 0) {
-            q_hat.m_size = 0;
-            q_hat.m_sign = 0;
-            r_hat.m_size = 0;
-            r_hat.m_sign = 0;
-        } else {
-            bool a_hi_ge_b1_beta_k = false;
-            if (a_hi.m_size > k + b1.m_size) {
-                a_hi_ge_b1_beta_k = true;
-            } else if (a_hi.m_size == k + b1.m_size) {
-                a_hi_ge_b1_beta_k = (compare_unsigned(a_hi.data() + k, b1.m_size, b1.data(), b1.m_size) >= 0);
-            }
+        uint64_t* q_buf = arena.allocate(k + 1);
+        uint64_t* r_buf = arena.allocate(2 * k + 1);
+        size_t ql = 0, rl = 0;
 
-            if (a_hi_ge_b1_beta_k) {
-                q_hat.resize(k, 0xFFFFFFFFFFFFFFFFULL);
-                q_hat.m_sign = 1;
+        bz_div3by2_raw(q_buf, &ql, r_buf, &rl, a.data(), a.m_size, b.data(), k, arena);
 
-                BigIntStorage b1_shifted;
-                shift_left_limbs(b1_shifted, b1, k);
-                BigIntStorage diff;
-                sub_magnitude_core(diff, a_hi, b1_shifted);
-                add_unsigned(r_hat, diff, b1);
-                r_hat.m_sign = 1;
-            } else {
-                bz_div2by1(&q_hat, &r_hat, a_hi, b1);
-            }
+        if (q) {
+            q->resize(ql, 0);
+            if (ql > 0) BigIntStorage::copy_limbs(q->data(), q_buf, ql);
+            q->m_size = static_cast<uint32_t>(ql);
+            q->m_sign = (ql > 0) ? 1 : 0;
+            q->normalize();
         }
-
-        BigIntStorage d;
-        mul_core(d, q_hat, b0);
-
-        BigIntStorage r_prime;
-        shift_left_limbs(r_prime, r_hat, k);
-        if (a_lo.m_size > 0) {
-            BigIntStorage tmp;
-            add_unsigned(tmp, r_prime, a_lo);
-            tmp.m_sign = 1;
-            r_prime = std::move(tmp);
+        if (r) {
+            r->resize(rl, 0);
+            if (rl > 0) BigIntStorage::copy_limbs(r->data(), r_buf, rl);
+            r->m_size = static_cast<uint32_t>(rl);
+            r->m_sign = (rl > 0) ? 1 : 0;
+            r->normalize();
         }
-
-        while (compare_unsigned(r_prime.data(), r_prime.m_size, d.data(), d.m_size) < 0) {
-            BigIntStorage one; one.set_uint64(1, 1);
-            BigIntStorage q_next;
-            sub_magnitude_core(q_next, q_hat, one);
-            q_next.m_sign = (q_next.m_size > 0) ? 1 : 0;
-            q_hat = std::move(q_next);
-
-            BigIntStorage r_next;
-            add_unsigned(r_next, r_prime, b);
-            r_next.m_sign = 1;
-            r_prime = std::move(r_next);
-        }
-
-        BigIntStorage r_final;
-        sub_magnitude_core(r_final, r_prime, d);
-        r_final.m_sign = (r_final.m_size > 0) ? 1 : 0;
-
-        if (q) *q = std::move(q_hat);
-        if (r) *r = std::move(r_final);
     }
 
     /// <summary>
     /// Burnikel–Ziegler div2by1: 以 n-limb 除數 b 除 2n-limb 被除數 a。
     /// 要求 a < b * beta^n，n 為偶數。
-    /// 遞迴調用 div3by2，以 Karatsuba 乘法降低計算複雜度至 O(M(N) log N)。
     /// </summary>
     static NUMERIC_CONSTEXPR_20 void bz_div2by1(
         BigIntStorage* q, BigIntStorage* r,
         const BigIntStorage& a, const BigIntStorage& b)
     {
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            div_mod_core_knuth(q, r, a, b);
+            return;
+        }
+#endif
         size_t n = b.m_size;
         if (n < BZ_THRESHOLD || (n % 2 != 0)) {
             div_mod_core_knuth(q, r, a, b);
             return;
         }
 
-        size_t k = n / 2;
-        BigIntStorage a_hi, a_lo;
-        if (a.m_size > k) {
-            size_t hi_len = a.m_size - k;
-            a_hi.resize(hi_len, 0);
-            BigIntStorage::copy_limbs(a_hi.data(), a.data() + k, hi_len);
-            a_hi.m_sign = 1;
-            a_hi.normalize();
+        auto& arena = ScratchArena::instance();
+        ScratchArena::Scope scope(arena);
 
-            a_lo.resize(k, 0);
-            BigIntStorage::copy_limbs(a_lo.data(), a.data(), k);
-            a_lo.m_sign = 1;
-            a_lo.normalize();
-        } else {
-            a_lo = a;
-        }
+        uint64_t* q_buf = arena.allocate(n + 1);
+        uint64_t* r_buf = arena.allocate(n + 1);
+        size_t ql = 0, rl = 0;
 
-        BigIntStorage q1, r1;
-        bz_div3by2(&q1, &r1, a_hi, b, k);
-
-        BigIntStorage a_step2;
-        shift_left_limbs(a_step2, r1, k);
-        if (a_lo.m_size > 0) {
-            BigIntStorage tmp;
-            add_unsigned(tmp, a_step2, a_lo);
-            tmp.m_sign = 1;
-            a_step2 = std::move(tmp);
-        }
-
-        BigIntStorage q0, r0;
-        bz_div3by2(&q0, &r0, a_step2, b, k);
+        bz_div2by1_raw(q_buf, &ql, r_buf, &rl, a.data(), a.m_size, b.data(), n, arena);
 
         if (q) {
-            shift_left_limbs(*q, q1, k);
-            if (q0.m_size > 0) {
-                BigIntStorage tmp;
-                add_unsigned(tmp, *q, q0);
-                tmp.m_sign = 1;
-                *q = std::move(tmp);
-            }
+            q->resize(ql, 0);
+            if (ql > 0) BigIntStorage::copy_limbs(q->data(), q_buf, ql);
+            q->m_size = static_cast<uint32_t>(ql);
+            q->m_sign = (ql > 0) ? 1 : 0;
+            q->normalize();
         }
         if (r) {
-            *r = std::move(r0);
+            r->resize(rl, 0);
+            if (rl > 0) BigIntStorage::copy_limbs(r->data(), r_buf, rl);
+            r->m_size = static_cast<uint32_t>(rl);
+            r->m_sign = (rl > 0) ? 1 : 0;
+            r->normalize();
         }
     }
 
@@ -2785,8 +3686,18 @@ struct BigIntDivision : public BigIntMultiplication {
             return;
         }
 
-        // 小於 BZ_THRESHOLD (64 limbs, 4096-bit) 採 Knuth Algorithm D 長除法
-        if (v.m_size < BZ_THRESHOLD) {
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            div_mod_core_knuth(q_out, r_out, u, v);
+            return;
+        }
+#endif
+
+        // 小於 BZ_THRESHOLD 或商數長度小於 BZ_THRESHOLD 時採 Knuth Algorithm D 長除法
+        // 當 m = u.m_size - v.m_size 較小時，Knuth Algorithm D 僅需 O((m+1)*n) 次單肢乘減，
+        // 遠快於分治除法的大數 Karatsuba 乘法遞迴與正規化開銷。
+        size_t m_len = (u.m_size >= v.m_size) ? (u.m_size - v.m_size) : 0;
+        if (v.m_size < BZ_THRESHOLD || m_len < BZ_THRESHOLD) {
             div_mod_core_knuth(q_out, r_out, u, v);
             return;
         }
@@ -2819,63 +3730,84 @@ struct BigIntDivision : public BigIntMultiplication {
         size_t t = (u_bits + n_bits) / n_bits;
         if (t < 2) t = 2;
 
-        auto get_block = [&](BigIntStorage& out, size_t block_idx) {
-            size_t start = block_idx * n;
-            if (start >= u_shifted.m_size) {
-                out.m_size = 0;
-                out.m_sign = 0;
-                return;
-            }
-            size_t len = (std::min)(n, u_shifted.m_size - start);
-            out.resize(len, 0);
-            BigIntStorage::copy_limbs(out.data(), u_shifted.data() + start, len);
-            out.m_sign = 1;
-            out.normalize();
-        };
+        auto& arena = ScratchArena::instance();
+        ScratchArena::Scope scope(arena);
 
-        BigIntStorage r_cur;
-        get_block(r_cur, t - 1);
+        uint64_t* z = arena.allocate(2 * n + 1);
+        uint64_t* q_step = arena.allocate(n + 1);
+        uint64_t* r_cur = arena.allocate(n + 1);
+        uint64_t* r_next = arena.allocate(n + 1);
 
-        BigIntStorage q_total;
+        // 初始化 r_cur 為 u_shifted 的最高 block (block t - 1)
+        BigIntStorage::zero_limbs(r_cur, n + 1);
+        size_t top_start = (t - 1) * n;
+        size_t r_cur_len = 0;
+        if (top_start < u_shifted.m_size) {
+            r_cur_len = (std::min)(n, u_shifted.m_size - top_start);
+            BigIntStorage::copy_limbs(r_cur, u_shifted.data() + top_start, r_cur_len);
+            while (r_cur_len > 0 && r_cur[r_cur_len - 1] == 0) --r_cur_len;
+        }
+
+        if (q_out) {
+            q_out->resize((t - 1) * n, 0);
+            BigIntStorage::zero_limbs(q_out->data(), (t - 1) * n);
+        }
+
         for (size_t i = t - 1; i > 0; --i) {
             size_t block_idx = i - 1;
-            BigIntStorage a_block;
-            get_block(a_block, block_idx);
-
-            BigIntStorage z;
-            shift_left_limbs(z, r_cur, n);
-            if (a_block.m_size > 0) {
-                BigIntStorage tmp;
-                add_unsigned(tmp, z, a_block);
-                tmp.m_sign = 1;
-                z = std::move(tmp);
+            size_t start = block_idx * n;
+            size_t a_block_len = 0;
+            if (start < u_shifted.m_size) {
+                a_block_len = (std::min)(n, u_shifted.m_size - start);
             }
 
-            BigIntStorage q_step, r_step;
-            bz_div2by1(&q_step, &r_step, z, v_shifted);
-            r_cur = std::move(r_step);
+            BigIntStorage::zero_limbs(z, 2 * n + 1);
+            if (a_block_len > 0) {
+                BigIntStorage::copy_limbs(z, u_shifted.data() + start, a_block_len);
+            }
+            if (r_cur_len > 0) {
+                BigIntStorage::copy_limbs(z + n, r_cur, r_cur_len);
+            }
+            size_t z_len = n + r_cur_len;
+            while (z_len > 0 && z[z_len - 1] == 0) --z_len;
+
+            size_t q_step_len = 0;
+            size_t r_next_len = 0;
+            bz_div2by1_raw(q_step, &q_step_len, r_next, &r_next_len, z, z_len, v_shifted.data(), n, arena);
+
+            BigIntStorage::zero_limbs(r_cur, n + 1);
+            if (r_next_len > 0) {
+                BigIntStorage::copy_limbs(r_cur, r_next, r_next_len);
+            }
+            r_cur_len = r_next_len;
 
             if (q_out) {
-                shift_left_limbs(q_total, q_total, n);
-                if (q_step.m_size > 0) {
-                    BigIntStorage tmp;
-                    add_unsigned(tmp, q_total, q_step);
-                    tmp.m_sign = 1;
-                    q_total = std::move(tmp);
+                if (q_step_len > 0) {
+                    BigIntStorage::copy_limbs(q_out->data() + (i - 1) * n, q_step, q_step_len);
                 }
             }
         }
 
         if (q_out) {
-            *q_out = std::move(q_total);
+            q_out->m_size = static_cast<uint32_t>((t - 1) * n);
             q_out->m_sign = (q_out->m_size > 0) ? 1 : 0;
             q_out->normalize();
         }
         if (r_out) {
-            if (sigma > 0) {
-                shift_right(*r_out, r_cur, sigma);
+            BigIntStorage r_temp;
+            r_temp.resize(r_cur_len, 0);
+            if (r_cur_len > 0) {
+                BigIntStorage::copy_limbs(r_temp.data(), r_cur, r_cur_len);
+                r_temp.m_size = static_cast<uint32_t>(r_cur_len);
+                r_temp.m_sign = 1;
             } else {
-                *r_out = std::move(r_cur);
+                r_temp.m_size = 0;
+                r_temp.m_sign = 0;
+            }
+            if (sigma > 0) {
+                shift_right(*r_out, r_temp, sigma);
+            } else {
+                *r_out = std::move(r_temp);
             }
             r_out->m_sign = (r_out->m_size > 0) ? 1 : 0;
             r_out->normalize();
@@ -2950,6 +3882,236 @@ struct BigIntDivision : public BigIntMultiplication {
         div_mod_core(&q, &r, u, v);
     }
 };
+
+// ----------------------------------------------------------------------------
+// Burnikel–Ziegler 遞迴函式實作
+// ----------------------------------------------------------------------------
+
+inline void BigIntDivision::bz_div3by2_raw(
+    uint64_t* NUMERIC_RESTRICT q, size_t* q_len,
+    uint64_t* NUMERIC_RESTRICT r, size_t* r_len,
+    const uint64_t* a, size_t a_len,
+    const uint64_t* b, size_t k,
+    ScratchArena& arena)
+{
+    if (a_len == 0) {
+        if (q) BigIntStorage::zero_limbs(q, k);
+        if (q_len) *q_len = 0;
+        if (r) BigIntStorage::zero_limbs(r, 2 * k);
+        if (r_len) *r_len = 0;
+        return;
+    }
+
+    const uint64_t* b1 = b + k;
+    const uint64_t* b0 = b;
+    size_t b0_len = k;
+    while (b0_len > 0 && b0[b0_len - 1] == 0) --b0_len;
+
+    const uint64_t* a_hi = (a_len > k) ? (a + k) : nullptr;
+    size_t a_hi_len = (a_len > k) ? (a_len - k) : 0;
+    while (a_hi_len > 0 && a_hi[a_hi_len - 1] == 0) --a_hi_len;
+
+    const uint64_t* a_lo = a;
+    size_t a_lo_len = (a_len < k) ? a_len : k;
+    while (a_lo_len > 0 && a_lo[a_lo_len - 1] == 0) --a_lo_len;
+
+    ScratchArena::Scope scope(arena);
+
+    uint64_t* q_hat = arena.allocate(k + 1);
+    uint64_t* r_hat = arena.allocate(2 * k + 2);
+    BigIntStorage::zero_limbs(q_hat, k + 1);
+    BigIntStorage::zero_limbs(r_hat, 2 * k + 2);
+    size_t q_hat_len = 0;
+    size_t r_hat_len = 0;
+
+    if (a_hi_len == 0) {
+        q_hat_len = 0;
+        r_hat_len = 0;
+    } else {
+        bool a_hi_ge_b1_beta_k = false;
+        if (a_hi_len > 2 * k) {
+            a_hi_ge_b1_beta_k = true;
+        } else if (a_hi_len == 2 * k) {
+            a_hi_ge_b1_beta_k = (compare_unsigned(a_hi + k, k, b1, k) >= 0);
+        }
+
+        if (a_hi_ge_b1_beta_k) {
+            for (size_t i = 0; i < k; ++i) {
+                q_hat[i] = 0xFFFFFFFFFFFFFFFFULL;
+            }
+            q_hat_len = k;
+
+            // r_hat = (a_hi - b1 * beta^k) + b1
+            size_t lo_copy = (a_hi_len < k) ? a_hi_len : k;
+            if (lo_copy > 0) {
+                BigIntStorage::copy_limbs(r_hat, a_hi, lo_copy);
+            }
+            uint64_t carry = add_to_raw(r_hat, k, b1, k);
+            r_hat[k] = carry;
+            if (a_hi_len > k) {
+                size_t hi_part_len = a_hi_len - k;
+                if (compare_unsigned(a_hi + k, hi_part_len, b1, k) > 0) {
+                    uint64_t* hi_diff = arena.allocate(hi_part_len + 1);
+                    size_t hd_len = sub_limbs_diff_raw(hi_diff, a_hi + k, hi_part_len, b1, k);
+                    add_to_raw(r_hat + k, k + 2, hi_diff, hd_len);
+                }
+            }
+            r_hat_len = 2 * k + 2;
+            while (r_hat_len > 0 && r_hat[r_hat_len - 1] == 0) --r_hat_len;
+        } else {
+            bz_div2by1_raw(q_hat, &q_hat_len, r_hat, &r_hat_len, a_hi, a_hi_len, b1, k, arena);
+        }
+    }
+
+    // D = q_hat * b0
+    uint64_t* d = arena.allocate(2 * k + 1);
+    BigIntStorage::zero_limbs(d, 2 * k + 1);
+    size_t d_len = 0;
+    if (q_hat_len > 0 && b0_len > 0) {
+        mul_slice_helper(d, q_hat, q_hat_len, b0, b0_len, arena);
+        d_len = q_hat_len + b0_len;
+        while (d_len > 0 && d[d_len - 1] == 0) --d_len;
+    }
+
+    // r_prime = r_hat * beta^k + a_lo
+    uint64_t* r_prime = arena.allocate(3 * k + 4);
+    BigIntStorage::zero_limbs(r_prime, 3 * k + 4);
+    if (a_lo_len > 0) {
+        BigIntStorage::copy_limbs(r_prime, a_lo, a_lo_len);
+    }
+    if (r_hat_len > 0) {
+        BigIntStorage::copy_limbs(r_prime + k, r_hat, r_hat_len);
+    }
+    size_t r_prime_len = k + r_hat_len;
+    while (r_prime_len > 0 && r_prime[r_prime_len - 1] == 0) --r_prime_len;
+
+    // while (r_prime < d)
+    while (compare_unsigned(r_prime, r_prime_len, d, d_len) < 0) {
+        // --q_hat
+        uint8_t borrow = 1;
+        for (size_t i = 0; i < k && borrow != 0; ++i) {
+            borrow = sbb64(borrow, q_hat[i], 0, &q_hat[i]);
+        }
+        while (q_hat_len > 0 && q_hat[q_hat_len - 1] == 0) --q_hat_len;
+
+        // r_prime += b
+        add_to_raw(r_prime, 3 * k + 4, b, 2 * k);
+        r_prime_len = 3 * k + 4;
+        while (r_prime_len > 0 && r_prime[r_prime_len - 1] == 0) --r_prime_len;
+    }
+
+    // r = r_prime - d
+    if (r) {
+        BigIntStorage::zero_limbs(r, 2 * k);
+        size_t rl = sub_limbs_diff_raw(r, r_prime, r_prime_len, d, d_len);
+        if (r_len) *r_len = rl;
+    } else if (r_len) {
+        *r_len = 0;
+    }
+
+    // q = q_hat
+    if (q) {
+        BigIntStorage::zero_limbs(q, k);
+        if (q_hat_len > 0) {
+            BigIntStorage::copy_limbs(q, q_hat, q_hat_len);
+        }
+        if (q_len) *q_len = q_hat_len;
+    } else if (q_len) {
+        *q_len = 0;
+    }
+}
+
+inline void BigIntDivision::bz_div2by1_raw(
+    uint64_t* NUMERIC_RESTRICT q, size_t* q_len,
+    uint64_t* NUMERIC_RESTRICT r, size_t* r_len,
+    const uint64_t* a, size_t a_len,
+    const uint64_t* b, size_t n,
+    ScratchArena& arena)
+{
+    if (a_len == 0) {
+        if (q) BigIntStorage::zero_limbs(q, n);
+        if (q_len) *q_len = 0;
+        if (r) BigIntStorage::zero_limbs(r, n);
+        if (r_len) *r_len = 0;
+        return;
+    }
+
+    if (n < BZ_THRESHOLD || (n % 2 != 0)) {
+        // Base case: Knuth Algorithm D
+        size_t total_scratch = (n + 1) + (a_len + 2);
+        uint64_t stack_scratch[512];
+        uint64_t* scratch_ptr = stack_scratch;
+        if (total_scratch > 512) {
+            scratch_ptr = arena.allocate(total_scratch);
+        }
+        if (q) BigIntStorage::zero_limbs(q, n);
+        if (r) BigIntStorage::zero_limbs(r, n);
+        div_knuth_raw(q, q_len, r, r_len, a, a_len, b, n, scratch_ptr);
+        return;
+    }
+
+    size_t k = n / 2;
+    const uint64_t* a_hi = (a_len > k) ? (a + k) : nullptr;
+    size_t a_hi_len = (a_len > k) ? (a_len - k) : 0;
+    while (a_hi_len > 0 && a_hi[a_hi_len - 1] == 0) --a_hi_len;
+
+    const uint64_t* a_lo = a;
+    size_t a_lo_len = (a_len < k) ? a_len : k;
+    while (a_lo_len > 0 && a_lo[a_lo_len - 1] == 0) --a_lo_len;
+
+    ScratchArena::Scope scope(arena);
+
+    uint64_t* q1 = arena.allocate(k + 1);
+    uint64_t* r1 = arena.allocate(2 * k + 1);
+    size_t q1_len = 0, r1_len = 0;
+
+    bz_div3by2_raw(q1, &q1_len, r1, &r1_len, a_hi, a_hi_len, b, k, arena);
+
+    // a_step2 = r1 * beta^k + a_lo
+    uint64_t* a_step2 = arena.allocate(3 * k + 1);
+    BigIntStorage::zero_limbs(a_step2, 3 * k + 1);
+    if (a_lo_len > 0) {
+        BigIntStorage::copy_limbs(a_step2, a_lo, a_lo_len);
+    }
+    if (r1_len > 0) {
+        BigIntStorage::copy_limbs(a_step2 + k, r1, r1_len);
+    }
+    size_t a_step2_len = k + r1_len;
+    while (a_step2_len > 0 && a_step2[a_step2_len - 1] == 0) --a_step2_len;
+
+    uint64_t* q0 = arena.allocate(k + 1);
+    uint64_t* r0 = arena.allocate(2 * k + 1);
+    size_t q0_len = 0, r0_len = 0;
+
+    bz_div3by2_raw(q0, &q0_len, r0, &r0_len, a_step2, a_step2_len, b, k, arena);
+
+    // q = q1 * beta^k + q0
+    if (q) {
+        BigIntStorage::zero_limbs(q, 2 * k);
+        if (q0_len > 0) {
+            BigIntStorage::copy_limbs(q, q0, (std::min)(q0_len, k));
+        }
+        if (q1_len > 0) {
+            BigIntStorage::copy_limbs(q + k, q1, (std::min)(q1_len, k));
+        }
+        size_t ql = 2 * k;
+        while (ql > 0 && q[ql - 1] == 0) --ql;
+        if (q_len) *q_len = ql;
+    } else if (q_len) {
+        *q_len = 0;
+    }
+
+    // r = r0
+    if (r) {
+        BigIntStorage::zero_limbs(r, 2 * k);
+        if (r0_len > 0) {
+            BigIntStorage::copy_limbs(r, r0, (std::min)(r0_len, 2 * k));
+        }
+        if (r_len) *r_len = (std::min)(r0_len, 2 * k);
+    } else if (r_len) {
+        *r_len = 0;
+    }
+}
 
 } // namespace detail
 } // namespace numeric
@@ -4301,6 +5463,17 @@ public:
     }
 
     /// <summary>
+    /// 賦值並反轉正負號：將 other 拷貝至目前物件並取負。
+    /// 若目前物件已分配足夠容量，則直接重用緩衝區，達成 0 次動態記憶體配置。
+    /// </summary>
+    template <size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 BasicBigInt& assign_negated(const BasicBigInt<OtherLimbs>& other) {
+        this->assign_from(other);
+        this->negate();
+        return *this;
+    }
+
+    /// <summary>
     /// 前置遞增運算子：++a。
     /// </summary>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator++() {
@@ -4377,9 +5550,48 @@ public:
 
     /// <summary>
     /// 乘法複合賦值運算子。
+    /// In-place multiplication compound operator.
+    /// 單肢段與小數值乘法採堆疊暫存直接寫回，消除動態配置並保持緩衝區容量。
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator*=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_size == 0 || this->m_sign == 0) {
+            return *this;
+        }
+        if (rhs.m_size == 0 || rhs.m_sign == 0) {
+            this->m_size = 0;
+            this->m_sign = 0;
+            return *this;
+        }
+        if (rhs.m_size == 1) {
+            uint64_t mult = rhs.m_data[0];
+            int8_t new_sign = static_cast<int8_t>(this->m_sign * rhs.m_sign);
+            if (this->m_capacity < this->m_size + 1) {
+                this->reserve(this->m_size + 1);
+            }
+            uint64_t carry = detail::BigIntCore::mul_1_raw(this->data(), this->data(), this->m_size, mult);
+            if (carry != 0) {
+                this->data()[this->m_size] = carry;
+                this->m_size += 1;
+            }
+            this->m_sign = new_sign;
+            this->normalize();
+            return *this;
+        }
+        size_t total_len = this->m_size + rhs.m_size;
+        if (total_len <= 16) {
+            uint64_t stack_buf[16];
+            detail::BigIntCore::mul_schoolbook_raw(stack_buf, this->data(), this->m_size, rhs.data(), rhs.m_size);
+            int8_t new_sign = static_cast<int8_t>(this->m_sign * rhs.m_sign);
+            if (this->m_capacity < total_len) {
+                this->reserve(total_len);
+            }
+            BigIntBase::copy_limbs(this->data(), stack_buf, total_len);
+            this->m_size = static_cast<uint32_t>(total_len);
+            this->m_sign = new_sign;
+            this->normalize();
+            return *this;
+        }
         BasicBigInt tmp;
         detail::BigIntCore::mul_signed(tmp, *this, rhs);
         *this = std::move(tmp);
@@ -4394,12 +5606,29 @@ public:
 
     /// <summary>
     /// 除法複合賦值運算子。
+    /// In-place division compound operator.
+    /// 單肢段除數採原地暫存除法直寫商數，消除物件建構開銷。
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator/=(const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt q;
-        detail::BigIntCore::div_q_signed(q, *this, rhs);
-        *this = std::move(q);
+        if (rhs.m_size == 0) {
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("division by zero"));
+        }
+        if (this->m_size == 0) return *this;
+        if (rhs.m_size == 1) {
+            uint64_t divisor = rhs.m_data[0];
+            int8_t new_sign = static_cast<int8_t>(this->m_sign * rhs.m_sign);
+            uint64_t rem = 0;
+            for (size_t i = this->m_size; i > 0; --i) {
+                uint64_t next_rem = 0;
+                this->m_data[i - 1] = detail::BigIntCore::div128_64(rem, this->m_data[i - 1], divisor, next_rem);
+                rem = next_rem;
+            }
+            this->m_sign = (this->m_size > 0) ? new_sign : 0;
+            this->normalize();
+            return *this;
+        }
+        detail::BigIntCore::div_q_signed(*this, *this, rhs);
         return *this;
     }
 
@@ -4411,12 +5640,33 @@ public:
 
     /// <summary>
     /// 取模複合賦值運算子。
+    /// In-place modulo compound operator.
+    /// 單肢段除數採原地暫存除法直寫餘數，消除物件建構開銷。
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator%=(const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt r;
-        detail::BigIntCore::div_r_signed(r, *this, rhs);
-        *this = std::move(r);
+        if (rhs.m_size == 0) {
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("division by zero"));
+        }
+        if (this->m_size == 0) return *this;
+        if (rhs.m_size == 1) {
+            uint64_t divisor = rhs.m_data[0];
+            int8_t orig_sign = this->m_sign;
+            uint64_t rem = 0;
+            for (size_t i = this->m_size; i > 0; --i) {
+                uint64_t next_rem = 0;
+                detail::BigIntCore::div128_64(rem, this->m_data[i - 1], divisor, next_rem);
+                rem = next_rem;
+            }
+            if (rem == 0) {
+                this->m_size = 0;
+                this->m_sign = 0;
+            } else {
+                this->set_uint64(rem, orig_sign);
+            }
+            return *this;
+        }
+        detail::BigIntCore::div_r_signed(*this, *this, rhs);
         return *this;
     }
 
@@ -4431,9 +5681,7 @@ public:
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator&=(const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt tmp;
-        detail::BigIntCore::bitwise_and(tmp, *this, rhs);
-        *this = std::move(tmp);
+        detail::BigIntCore::bitwise_and(*this, *this, rhs);
         return *this;
     }
 
@@ -4448,9 +5696,7 @@ public:
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator|=(const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt tmp;
-        detail::BigIntCore::bitwise_or(tmp, *this, rhs);
-        *this = std::move(tmp);
+        detail::BigIntCore::bitwise_or(*this, *this, rhs);
         return *this;
     }
 
@@ -4465,9 +5711,7 @@ public:
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator^=(const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt tmp;
-        detail::BigIntCore::bitwise_xor(tmp, *this, rhs);
-        *this = std::move(tmp);
+        detail::BigIntCore::bitwise_xor(*this, *this, rhs);
         return *this;
     }
 
@@ -4479,29 +5723,29 @@ public:
 
     /// <summary>
     /// 位元左移複合賦值運算子。
+    /// In-place bitwise left shift compound operator.
+    /// 直接於目前物件緩衝區就地執行位元左移，消除暫存物件與動態配置開銷。
     /// </summary>
     template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator<<=(T shift) {
         if (shift < 0) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
         }
-        BasicBigInt tmp;
-        detail::BigIntCore::shift_left(tmp, *this, static_cast<size_t>(shift));
-        *this = std::move(tmp);
+        detail::BigIntCore::shift_left(*this, *this, static_cast<size_t>(shift));
         return *this;
     }
 
     /// <summary>
     /// 位元右移複合賦值運算子。
+    /// In-place bitwise right shift compound operator.
+    /// 直接於目前物件緩衝區就地執行位元右移，消除暫存物件與動態配置開銷。
     /// </summary>
     template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator>>=(T shift) {
         if (shift < 0) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
         }
-        BasicBigInt tmp;
-        detail::BigIntCore::shift_right(tmp, *this, static_cast<size_t>(shift));
-        *this = std::move(tmp);
+        detail::BigIntCore::shift_right(*this, *this, static_cast<size_t>(shift));
         return *this;
     }
 
@@ -4798,6 +6042,13 @@ public:
         if (lhs.m_sign < rhs.m_sign) return true;
         if (lhs.m_sign > rhs.m_sign) return false;
         if (lhs.m_sign == 0) return false;
+        if (lhs.m_sign > 0) {
+            if (lhs.m_size < rhs.m_size) return true;
+            if (lhs.m_size > rhs.m_size) return false;
+        } else {
+            if (lhs.m_size > rhs.m_size) return true;
+            if (lhs.m_size < rhs.m_size) return false;
+        }
         int cmp = detail::BigIntCore::compare_unsigned(
             lhs.m_data, lhs.m_size,
             rhs.m_data, rhs.m_size);

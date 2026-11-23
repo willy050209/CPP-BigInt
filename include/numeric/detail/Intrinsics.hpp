@@ -331,15 +331,74 @@ struct BigIntIntrinsics {
     }
 
     /// <summary>
-    /// 硬體友善無分支乘加原語：dst[0..n-1] += src[0..n-1] * multiplier。
+    /// 硬體友善無分支單肢段乘法原語：dst[0..n-1] = src[0..n-1] * multiplier。
+    /// Multiply primitive: dst[0..n-1] = src[0..n-1] * multiplier.
     /// 回傳最終高位溢出進位 (carry)。
-    /// 消除三元判斷分支，全面支援 C++20 constexpr 常數求值。
+    /// 依據編譯器能力自動分派至 __int128 或 _umul128 / _addcarry_u64 硬體指令管線。
     /// </summary>
-    /// <param name="dst">目標運算元與輸出緩衝區</param>
-    /// <param name="src">來源運算元陣列</param>
-    /// <param name="n">運算 limb 長度</param>
-    /// <param name="multiplier">64 位元單字乘數</param>
-    /// <returns>最終高位溢出進位</returns>
+    /// <param name="dst">目標輸出緩衝區 / Destination buffer</param>
+    /// <param name="src">來源運算元陣列 / Source limb array</param>
+    /// <param name="n">運算 limb 長度 / Limb count</param>
+    /// <param name="multiplier">64 位元單字乘數 / 64-bit word multiplier</param>
+    /// <returns>最終高位溢出進位 / Final high overflow carry</returns>
+    static NUMERIC_CONSTEXPR_20 uint64_t mul_1_raw(
+        uint64_t* NUMERIC_RESTRICT dst,
+        const uint64_t* NUMERIC_RESTRICT src,
+        size_t n,
+        uint64_t multiplier) noexcept
+    {
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        if (std::is_constant_evaluated()) {
+            uint64_t carry = 0;
+            for (size_t i = 0; i < n; ++i) {
+                uint64_t hi = 0;
+                uint64_t lo = mul64_wide(src[i], multiplier, hi);
+                uint8_t c = adc64(0, lo, carry, &dst[i]);
+                carry = hi + c;
+            }
+            return carry;
+        }
+#endif
+#if defined(__SIZEOF_INT128__)
+        unsigned __int128 carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            unsigned __int128 prod = static_cast<unsigned __int128>(src[i]) * multiplier + carry;
+            dst[i] = static_cast<uint64_t>(prod);
+            carry = prod >> 64;
+        }
+        return static_cast<uint64_t>(carry);
+#elif defined(_MSC_VER) && defined(_M_X64)
+        uint64_t carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t hi = 0;
+            uint64_t lo = _umul128(src[i], multiplier, &hi);
+            unsigned char c = _addcarry_u64(0, lo, carry, reinterpret_cast<unsigned __int64*>(&dst[i]));
+            carry = hi + c;
+        }
+        return carry;
+#else
+        uint64_t carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t hi = 0;
+            uint64_t lo = mul64_wide(src[i], multiplier, hi);
+            uint8_t c = adc64(0, lo, carry, &dst[i]);
+            carry = hi + c;
+        }
+        return carry;
+#endif
+    }
+
+    /// <summary>
+    /// 硬體友善無分支乘加原語：dst[0..n-1] += src[0..n-1] * multiplier。
+    /// Multiply-accumulate primitive: dst[0..n-1] += src[0..n-1] * multiplier.
+    /// 回傳最終高位溢出進位 (carry)。
+    /// 依據編譯器能力自動分派至 __int128 或 _umul128 / _addcarry_u64 硬體指令管線。
+    /// </summary>
+    /// <param name="dst">目標運算元與輸出緩衝區 / Target and destination buffer</param>
+    /// <param name="src">來源運算元陣列 / Source limb array</param>
+    /// <param name="n">運算 limb 長度 / Limb count</param>
+    /// <param name="multiplier">64 位元單字乘數 / 64-bit word multiplier</param>
+    /// <returns>最終高位溢出進位 / Final high overflow carry</returns>
     static NUMERIC_CONSTEXPR_20 uint64_t addmul_1_raw(
         uint64_t* NUMERIC_RESTRICT dst,
         const uint64_t* NUMERIC_RESTRICT src,
@@ -359,6 +418,26 @@ struct BigIntIntrinsics {
             return carry;
         }
 #endif
+#if defined(__SIZEOF_INT128__)
+        unsigned __int128 carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            unsigned __int128 prod = static_cast<unsigned __int128>(src[i]) * multiplier + dst[i] + carry;
+            dst[i] = static_cast<uint64_t>(prod);
+            carry = prod >> 64;
+        }
+        return static_cast<uint64_t>(carry);
+#elif defined(_MSC_VER) && defined(_M_X64)
+        uint64_t carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t hi = 0;
+            uint64_t lo = _umul128(src[i], multiplier, &hi);
+            unsigned char c1 = _addcarry_u64(0, lo, carry, &lo);
+            hi += c1;
+            unsigned char c2 = _addcarry_u64(0, dst[i], lo, reinterpret_cast<unsigned __int64*>(&dst[i]));
+            carry = hi + c2;
+        }
+        return carry;
+#else
         uint64_t carry = 0;
         for (size_t i = 0; i < n; ++i) {
             uint64_t hi = 0;
@@ -368,18 +447,20 @@ struct BigIntIntrinsics {
             carry = hi + c1 + c2;
         }
         return carry;
+#endif
     }
 
     /// <summary>
     /// 硬體友善無分支乘減原語：dst[0..n-1] -= src[0..n-1] * multiplier。
+    /// Multiply-subtract primitive: dst[0..n-1] -= src[0..n-1] * multiplier.
     /// 回傳最終高位溢出借位 (borrow)。
-    /// 消除三元判斷分支，全面支援 C++20 constexpr 常數求值。
+    /// 依據編譯器能力自動分派至 __int128 或 _umul128 / _subborrow_u64 硬體指令管線。
     /// </summary>
-    /// <param name="dst">目標運算元與輸出緩衝區</param>
-    /// <param name="src">來源運算元陣列</param>
-    /// <param name="n">運算 limb 長度</param>
-    /// <param name="multiplier">64 位元單字乘數</param>
-    /// <returns>最終高位溢出借位</returns>
+    /// <param name="dst">目標運算元與輸出緩衝區 / Target and destination buffer</param>
+    /// <param name="src">來源運算元陣列 / Source limb array</param>
+    /// <param name="n">運算 limb 長度 / Limb count</param>
+    /// <param name="multiplier">64 位元單字乘數 / 64-bit word multiplier</param>
+    /// <returns>最終高位溢出借位 / Final high overflow borrow</returns>
     static NUMERIC_CONSTEXPR_20 uint64_t submul_1_raw(
         uint64_t* NUMERIC_RESTRICT dst,
         const uint64_t* NUMERIC_RESTRICT src,
@@ -399,6 +480,29 @@ struct BigIntIntrinsics {
             return borrow;
         }
 #endif
+#if defined(__SIZEOF_INT128__)
+        uint64_t borrow = 0;
+        for (size_t i = 0; i < n; ++i) {
+            unsigned __int128 prod = static_cast<unsigned __int128>(src[i]) * multiplier + borrow;
+            uint64_t lo = static_cast<uint64_t>(prod);
+            uint64_t hi = static_cast<uint64_t>(prod >> 64);
+            uint64_t cur = dst[i];
+            dst[i] = cur - lo;
+            borrow = hi + (cur < lo ? 1 : 0);
+        }
+        return borrow;
+#elif defined(_MSC_VER) && defined(_M_X64)
+        uint64_t borrow = 0;
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t hi = 0;
+            uint64_t lo = _umul128(src[i], multiplier, &hi);
+            unsigned char c = _addcarry_u64(0, lo, borrow, &lo);
+            hi += c;
+            unsigned char b = _subborrow_u64(0, dst[i], lo, reinterpret_cast<unsigned __int64*>(&dst[i]));
+            borrow = hi + b;
+        }
+        return borrow;
+#else
         uint64_t borrow = 0;
         for (size_t i = 0; i < n; ++i) {
             uint64_t hi = 0;
@@ -408,6 +512,7 @@ struct BigIntIntrinsics {
             borrow = hi + b1 + b2;
         }
         return borrow;
+#endif
     }
 };
 

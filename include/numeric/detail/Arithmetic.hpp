@@ -28,6 +28,29 @@ struct BigIntArithmetic : public BigIntIntrinsics {
     static NUMERIC_CONSTEXPR_20 int compare_unsigned(const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
         if (a_len > b_len) return 1;
         if (a_len < b_len) return -1;
+        if (a_len == 1) {
+            if (a[0] > b[0]) return 1;
+            if (a[0] < b[0]) return -1;
+            return 0;
+        }
+        if (a_len == 2) {
+            if (a[1] > b[1]) return 1;
+            if (a[1] < b[1]) return -1;
+            if (a[0] > b[0]) return 1;
+            if (a[0] < b[0]) return -1;
+            return 0;
+        }
+        if (a_len == 4) {
+            if (a[3] > b[3]) return 1;
+            if (a[3] < b[3]) return -1;
+            if (a[2] > b[2]) return 1;
+            if (a[2] < b[2]) return -1;
+            if (a[1] > b[1]) return 1;
+            if (a[1] < b[1]) return -1;
+            if (a[0] > b[0]) return 1;
+            if (a[0] < b[0]) return -1;
+            return 0;
+        }
         for (size_t i = a_len; i > 0; --i) {
             if (a[i - 1] > b[i - 1]) return 1;
             if (a[i - 1] < b[i - 1]) return -1;

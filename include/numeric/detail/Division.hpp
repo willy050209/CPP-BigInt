@@ -18,7 +18,7 @@ namespace detail {
 /// 支援單肢段快除、Knuth Algorithm D 長除法與 Burnikel-Ziegler 分治除法。
 /// </summary>
 struct BigIntDivision : public BigIntMultiplication {
-    static constexpr size_t BZ_THRESHOLD = 64; // Tuned threshold for Burnikel-Ziegler division (4096-bit)
+    static constexpr size_t BZ_THRESHOLD = 32; // Tuned threshold for Burnikel-Ziegler division (2048-bit)
 
     /// <summary>
     /// 乘法分段輔助函式：out = a * b。out 容量至少為 a_len + b_len。
@@ -158,29 +158,31 @@ struct BigIntDivision : public BigIntMultiplication {
                 q_hat = 0xFFFFFFFFFFFFFFFFULL;
                 r_hat = u_mid + v_hi;
                 if (r_hat >= v_hi) {
-                    while (true) {
-                        uint64_t p_hi = 0;
-                        uint64_t p_lo = mul64_wide(q_hat, v_lo, p_hi);
-                        if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
-                            --q_hat;
-                            r_hat += v_hi;
-                            if (r_hat < v_hi) break;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            } else {
-                q_hat = div128_64(u_hi, u_mid, v_hi, r_hat);
-                while (true) {
                     uint64_t p_hi = 0;
                     uint64_t p_lo = mul64_wide(q_hat, v_lo, p_hi);
                     if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
                         --q_hat;
                         r_hat += v_hi;
-                        if (r_hat < v_hi) break;
-                    } else {
-                        break;
+                        if (r_hat >= v_hi) {
+                            p_lo = mul64_wide(q_hat, v_lo, p_hi);
+                            if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
+                                --q_hat;
+                            }
+                        }
+                    }
+                }
+            } else {
+                q_hat = div128_64(u_hi, u_mid, v_hi, r_hat);
+                uint64_t p_hi = 0;
+                uint64_t p_lo = mul64_wide(q_hat, v_lo, p_hi);
+                if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
+                    --q_hat;
+                    r_hat += v_hi;
+                    if (r_hat >= v_hi) {
+                        p_lo = mul64_wide(q_hat, v_lo, p_hi);
+                        if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
+                            --q_hat;
+                        }
                     }
                 }
             }
@@ -264,16 +266,29 @@ struct BigIntDivision : public BigIntMultiplication {
         size_t total_scratch = (n + 1) + (u.m_size + 2);
         uint64_t stack_scratch[512];
         uint64_t* scratch_ptr = stack_scratch;
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
         std::vector<uint64_t> heap_scratch;
-        if (total_scratch > 512) {
-            heap_scratch.resize(total_scratch);
-            scratch_ptr = heap_scratch.data();
+        if (std::is_constant_evaluated()) {
+            if (total_scratch > 512) {
+                heap_scratch.resize(total_scratch);
+                scratch_ptr = heap_scratch.data();
+            }
+        } else
+#endif
+        {
+            if (total_scratch > 512) {
+                auto& arena = ScratchArena::instance();
+                scratch_ptr = arena.allocate(total_scratch);
+            }
         }
 
-        if (q_out) {
+        const size_t u_len = u.m_size;
+        const size_t v_len = v.m_size;
+
+        if (q_out && q_out != &u) {
             q_out->resize(m + 1, 0);
         }
-        if (r_out) {
+        if (r_out && r_out != &u) {
             r_out->resize(n, 0);
         }
 
@@ -281,8 +296,8 @@ struct BigIntDivision : public BigIntMultiplication {
         div_knuth_raw(
             q_out ? q_out->data() : nullptr, &ql,
             r_out ? r_out->data() : nullptr, &rl,
-            u.data(), u.m_size,
-            v.data(), v.m_size,
+            u.data(), u_len,
+            v.data(), v_len,
             scratch_ptr);
 
         if (q_out) {
@@ -467,8 +482,11 @@ struct BigIntDivision : public BigIntMultiplication {
         }
 #endif
 
-        // 小於 BZ_THRESHOLD (128 limbs, 8192-bit) 採 Knuth Algorithm D 長除法
-        if (v.m_size < BZ_THRESHOLD) {
+        // 小於 BZ_THRESHOLD 或商數長度小於 BZ_THRESHOLD 時採 Knuth Algorithm D 長除法
+        // 當 m = u.m_size - v.m_size 較小時，Knuth Algorithm D 僅需 O((m+1)*n) 次單肢乘減，
+        // 遠快於分治除法的大數 Karatsuba 乘法遞迴與正規化開銷。
+        size_t m_len = (u.m_size >= v.m_size) ? (u.m_size - v.m_size) : 0;
+        if (v.m_size < BZ_THRESHOLD || m_len < BZ_THRESHOLD) {
             div_mod_core_knuth(q_out, r_out, u, v);
             return;
         }

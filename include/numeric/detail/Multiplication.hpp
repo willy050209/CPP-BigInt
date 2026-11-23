@@ -27,15 +27,35 @@ struct BigIntMultiplication : public BigIntBitwise {
 
     /// <summary>
     /// 原生 Schoolbook 乘法：out = a * b。out 長度至少為 a_len + b_len。
+    /// Raw Schoolbook multiplication: out = a * b. out capacity must be >= a_len + b_len.
+    /// 首趟採用 mul_1_raw 直寫輸出，消除零填充與無效累加；外層對齊較短運算元消除迴圈開銷。
     /// </summary>
     static NUMERIC_CONSTEXPR_20 void mul_schoolbook_raw(uint64_t* NUMERIC_RESTRICT out,
                                                         const uint64_t* a, size_t a_len,
                                                         const uint64_t* b, size_t b_len) noexcept {
-        BigIntStorage::zero_limbs(out, a_len + b_len);
-        for (size_t i = 0; i < a_len; ++i) {
-            if (a[i] == 0) continue;
-            uint64_t carry = addmul_1_raw(out + i, b, b_len, a[i]);
-            out[i + b_len] += carry;
+        if (a_len == 0 || b_len == 0) {
+            BigIntStorage::zero_limbs(out, a_len + b_len);
+            return;
+        }
+        if (a_len == 1 && b_len == 1) {
+            out[0] = mul64_wide(a[0], b[0], out[1]);
+            return;
+        }
+        // 確保外層迴圈遍歷較短之運算元以減少累加輪數
+        if (a_len > b_len) {
+            const uint64_t* tmp_ptr = a; a = b; b = tmp_ptr;
+            size_t tmp_len = a_len; a_len = b_len; b_len = tmp_len;
+        }
+
+        // 首趟單肢段乘法直寫 out[0..b_len]，消除全域歸零與讀取零值累加
+        out[b_len] = mul_1_raw(out, b, b_len, a[0]);
+        if (a_len > 1) {
+            BigIntStorage::zero_limbs(out + b_len + 1, a_len - 1);
+            for (size_t i = 1; i < a_len; ++i) {
+                if (a[i] == 0) continue;
+                uint64_t carry = addmul_1_raw(out + i, b, b_len, a[i]);
+                out[i + b_len] += carry;
+            }
         }
     }
 
