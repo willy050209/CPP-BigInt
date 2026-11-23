@@ -17,8 +17,11 @@ __pycache__/
 # Benchmark data and temporary dependencies
 benchmarks/data/
 benchmarks/deps/
-benchmarks/dotnet/bin/
-benchmarks/dotnet/obj/
+# .NET build artifacts
+**/bin/
+**/obj/
+dotnet/artifacts/
+*.nupkg
 benchmarks/results/*.json
 *.exe
 *.obj

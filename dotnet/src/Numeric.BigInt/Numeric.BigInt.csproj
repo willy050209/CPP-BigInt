@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>Numeric</RootNamespace>
+    <AssemblyName>Numeric.BigInt</AssemblyName>
+    <PackageId>Numeric.BigInt</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>CPP-BigInt Team</Authors>
+    <Description>High-performance arbitrary-precision integer arithmetic library for .NET (C#, F#, VB.NET) powered by CPP-BigInt C-ABI.</Description>
+    <RepositoryUrl>https://github.com/willy/CPP-BigInt</RepositoryUrl>
+    <PackageTags>bigint;biginteger;arbitrary-precision;math;performance;sbo;simd;cpp</PackageTags>
+  </PropertyGroup>
+
+  <!-- Include native DLL in output and package -->
+  <ItemGroup>
+    <None Include="runtimes\**\*" Pack="true" PackagePath="runtimes" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

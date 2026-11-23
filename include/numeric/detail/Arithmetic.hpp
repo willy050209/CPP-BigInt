@@ -26,11 +26,25 @@ struct BigIntArithmetic : public BigIntIntrinsics {
     /// <param name="b_len">陣列 b 長度</param>
     /// <returns>若 a &gt; b 回傳 1，a &lt; b 回傳 -1，相等回傳 0</returns>
     static NUMERIC_CONSTEXPR_20 int compare_unsigned(const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
-        if (a_len > b_len) return 1;
-        if (a_len < b_len) return -1;
+        if (a_len != b_len) return (a_len > b_len) ? 1 : -1;
+        if (a_len == 1) {
+            if (a[0] != b[0]) return (a[0] > b[0]) ? 1 : -1;
+            return 0;
+        }
+        if (a_len == 2) {
+            if (a[1] != b[1]) return (a[1] > b[1]) ? 1 : -1;
+            if (a[0] != b[0]) return (a[0] > b[0]) ? 1 : -1;
+            return 0;
+        }
+        if (a_len == 4) {
+            if (a[3] != b[3]) return (a[3] > b[3]) ? 1 : -1;
+            if (a[2] != b[2]) return (a[2] > b[2]) ? 1 : -1;
+            if (a[1] != b[1]) return (a[1] > b[1]) ? 1 : -1;
+            if (a[0] != b[0]) return (a[0] > b[0]) ? 1 : -1;
+            return 0;
+        }
         for (size_t i = a_len; i > 0; --i) {
-            if (a[i - 1] > b[i - 1]) return 1;
-            if (a[i - 1] < b[i - 1]) return -1;
+            if (a[i - 1] != b[i - 1]) return (a[i - 1] > b[i - 1]) ? 1 : -1;
         }
         return 0;
     }

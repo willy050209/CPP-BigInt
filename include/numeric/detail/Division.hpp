@@ -18,7 +18,7 @@ namespace detail {
 /// 支援單肢段快除、Knuth Algorithm D 長除法與 Burnikel-Ziegler 分治除法。
 /// </summary>
 struct BigIntDivision : public BigIntMultiplication {
-    static constexpr size_t BZ_THRESHOLD = 64; // Tuned threshold for Burnikel-Ziegler division (4096-bit)
+    static constexpr size_t BZ_THRESHOLD = 32; // Tuned threshold for Burnikel-Ziegler division (2048-bit)
 
     /// <summary>
     /// 乘法分段輔助函式：out = a * b。out 容量至少為 a_len + b_len。
@@ -158,29 +158,31 @@ struct BigIntDivision : public BigIntMultiplication {
                 q_hat = 0xFFFFFFFFFFFFFFFFULL;
                 r_hat = u_mid + v_hi;
                 if (r_hat >= v_hi) {
-                    while (true) {
-                        uint64_t p_hi = 0;
-                        uint64_t p_lo = mul64_wide(q_hat, v_lo, p_hi);
-                        if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
-                            --q_hat;
-                            r_hat += v_hi;
-                            if (r_hat < v_hi) break;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            } else {
-                q_hat = div128_64(u_hi, u_mid, v_hi, r_hat);
-                while (true) {
                     uint64_t p_hi = 0;
                     uint64_t p_lo = mul64_wide(q_hat, v_lo, p_hi);
                     if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
                         --q_hat;
                         r_hat += v_hi;
-                        if (r_hat < v_hi) break;
-                    } else {
-                        break;
+                        if (r_hat >= v_hi) {
+                            p_lo = mul64_wide(q_hat, v_lo, p_hi);
+                            if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
+                                --q_hat;
+                            }
+                        }
+                    }
+                }
+            } else {
+                q_hat = div128_64(u_hi, u_mid, v_hi, r_hat);
+                uint64_t p_hi = 0;
+                uint64_t p_lo = mul64_wide(q_hat, v_lo, p_hi);
+                if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
+                    --q_hat;
+                    r_hat += v_hi;
+                    if (r_hat >= v_hi) {
+                        p_lo = mul64_wide(q_hat, v_lo, p_hi);
+                        if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
+                            --q_hat;
+                        }
                     }
                 }
             }
@@ -264,16 +266,29 @@ struct BigIntDivision : public BigIntMultiplication {
         size_t total_scratch = (n + 1) + (u.m_size + 2);
         uint64_t stack_scratch[512];
         uint64_t* scratch_ptr = stack_scratch;
+#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
         std::vector<uint64_t> heap_scratch;
-        if (total_scratch > 512) {
-            heap_scratch.resize(total_scratch);
-            scratch_ptr = heap_scratch.data();
+        if (std::is_constant_evaluated()) {
+            if (total_scratch > 512) {
+                heap_scratch.resize(total_scratch);
+                scratch_ptr = heap_scratch.data();
+            }
+        } else
+#endif
+        {
+            if (total_scratch > 512) {
+                auto& arena = ScratchArena::instance();
+                scratch_ptr = arena.allocate(total_scratch);
+            }
         }
 
-        if (q_out) {
+        const size_t u_len = u.m_size;
+        const size_t v_len = v.m_size;
+
+        if (q_out && q_out != &u) {
             q_out->resize(m + 1, 0);
         }
-        if (r_out) {
+        if (r_out && r_out != &u) {
             r_out->resize(n, 0);
         }
 
@@ -281,8 +296,8 @@ struct BigIntDivision : public BigIntMultiplication {
         div_knuth_raw(
             q_out ? q_out->data() : nullptr, &ql,
             r_out ? r_out->data() : nullptr, &rl,
-            u.data(), u.m_size,
-            v.data(), v.m_size,
+            u.data(), u_len,
+            v.data(), v_len,
             scratch_ptr);
 
         if (q_out) {
@@ -467,8 +482,11 @@ struct BigIntDivision : public BigIntMultiplication {
         }
 #endif
 
-        // 小於 BZ_THRESHOLD (128 limbs, 8192-bit) 採 Knuth Algorithm D 長除法
-        if (v.m_size < BZ_THRESHOLD) {
+        // 小於 BZ_THRESHOLD 或商數長度小於 BZ_THRESHOLD 時採 Knuth Algorithm D 長除法
+        // 當 m = u.m_size - v.m_size 較小時，Knuth Algorithm D 僅需 O((m+1)*n) 次單肢乘減，
+        // 遠快於分治除法的大數 Karatsuba 乘法遞迴與正規化開銷。
+        size_t m_len = (u.m_size >= v.m_size) ? (u.m_size - v.m_size) : 0;
+        if (v.m_size < BZ_THRESHOLD || m_len < BZ_THRESHOLD) {
             div_mod_core_knuth(q_out, r_out, u, v);
             return;
         }
@@ -486,23 +504,49 @@ struct BigIntDivision : public BigIntMultiplication {
         size_t v_bits = (v.m_size - 1) * 64 + (64 - clz64(v.data()[v.m_size - 1]));
         size_t sigma = (n_bits >= v_bits) ? (n_bits - v_bits) : 0;
 
-        BigIntStorage v_shifted, u_shifted;
+        auto& arena = ScratchArena::instance();
+        ScratchArena::Scope scope(arena);
+
+        const size_t v_len = v.m_size;
+        const size_t u_len = u.m_size;
+
+        size_t sigma_limbs = sigma / 64;
+        unsigned int sigma_bits = static_cast<unsigned int>(sigma % 64);
+
+        uint64_t* v_shifted = arena.allocate(n + 2);
+        BigIntStorage::zero_limbs(v_shifted, n + 2);
         if (sigma > 0) {
-            shift_left(v_shifted, v, sigma);
-            shift_left(u_shifted, u, sigma);
+            if (sigma_bits == 0) {
+                BigIntStorage::copy_limbs(v_shifted + sigma_limbs, v.data(), v_len);
+            } else {
+                shift_left_bits_raw(v_shifted + sigma_limbs, v.data(), v_len, sigma_bits);
+            }
         } else {
-            v_shifted = v;
-            u_shifted = u;
+            BigIntStorage::copy_limbs(v_shifted, v.data(), v_len);
         }
 
-        size_t u_bits = (u_shifted.m_size > 0) 
-            ? ((u_shifted.m_size - 1) * 64 + (64 - clz64(u_shifted.data()[u_shifted.m_size - 1])))
+        size_t u_shifted_cap = u_len + sigma_limbs + 4;
+        size_t u_alloc_sz = ((u_shifted_cap > (n * 4)) ? u_shifted_cap : (n * 4)) + n;
+        uint64_t* u_shifted = arena.allocate(u_alloc_sz);
+        BigIntStorage::zero_limbs(u_shifted, u_alloc_sz);
+        size_t u_shifted_len = u_len;
+        if (sigma > 0) {
+            if (sigma_bits == 0) {
+                BigIntStorage::copy_limbs(u_shifted + sigma_limbs, u.data(), u_len);
+                u_shifted_len = u_len + sigma_limbs;
+            } else {
+                u_shifted_len = sigma_limbs + shift_left_bits_raw(u_shifted + sigma_limbs, u.data(), u_len, sigma_bits);
+            }
+        } else {
+            BigIntStorage::copy_limbs(u_shifted, u.data(), u_len);
+        }
+        while (u_shifted_len > 0 && u_shifted[u_shifted_len - 1] == 0) --u_shifted_len;
+
+        size_t u_bits = (u_shifted_len > 0) 
+            ? ((u_shifted_len - 1) * 64 + (64 - clz64(u_shifted[u_shifted_len - 1])))
             : 0;
         size_t t = (u_bits + n_bits) / n_bits;
         if (t < 2) t = 2;
-
-        auto& arena = ScratchArena::instance();
-        ScratchArena::Scope scope(arena);
 
         uint64_t* z = arena.allocate(2 * n + 1);
         uint64_t* q_step = arena.allocate(n + 1);
@@ -513,14 +557,17 @@ struct BigIntDivision : public BigIntMultiplication {
         BigIntStorage::zero_limbs(r_cur, n + 1);
         size_t top_start = (t - 1) * n;
         size_t r_cur_len = 0;
-        if (top_start < u_shifted.m_size) {
-            r_cur_len = (std::min)(n, u_shifted.m_size - top_start);
-            BigIntStorage::copy_limbs(r_cur, u_shifted.data() + top_start, r_cur_len);
+        if (top_start < u_shifted_len) {
+            r_cur_len = (std::min)(n, u_shifted_len - top_start);
+            BigIntStorage::copy_limbs(r_cur, u_shifted + top_start, r_cur_len);
             while (r_cur_len > 0 && r_cur[r_cur_len - 1] == 0) --r_cur_len;
         }
 
         if (q_out) {
-            q_out->resize((t - 1) * n, 0);
+            if (q_out != &u && q_out->m_capacity < (t - 1) * n) {
+                q_out->reserve((t - 1) * n);
+            }
+            q_out->m_size = static_cast<uint32_t>((t - 1) * n);
             BigIntStorage::zero_limbs(q_out->data(), (t - 1) * n);
         }
 
@@ -528,13 +575,13 @@ struct BigIntDivision : public BigIntMultiplication {
             size_t block_idx = i - 1;
             size_t start = block_idx * n;
             size_t a_block_len = 0;
-            if (start < u_shifted.m_size) {
-                a_block_len = (std::min)(n, u_shifted.m_size - start);
+            if (start < u_shifted_len) {
+                a_block_len = (std::min)(n, u_shifted_len - start);
             }
 
             BigIntStorage::zero_limbs(z, 2 * n + 1);
             if (a_block_len > 0) {
-                BigIntStorage::copy_limbs(z, u_shifted.data() + start, a_block_len);
+                BigIntStorage::copy_limbs(z, u_shifted + start, a_block_len);
             }
             if (r_cur_len > 0) {
                 BigIntStorage::copy_limbs(z + n, r_cur, r_cur_len);
@@ -544,7 +591,7 @@ struct BigIntDivision : public BigIntMultiplication {
 
             size_t q_step_len = 0;
             size_t r_next_len = 0;
-            bz_div2by1_raw(q_step, &q_step_len, r_next, &r_next_len, z, z_len, v_shifted.data(), n, arena);
+            bz_div2by1_raw(q_step, &q_step_len, r_next, &r_next_len, z, z_len, v_shifted, n, arena);
 
             BigIntStorage::zero_limbs(r_cur, n + 1);
             if (r_next_len > 0) {
@@ -565,22 +612,41 @@ struct BigIntDivision : public BigIntMultiplication {
             q_out->normalize();
         }
         if (r_out) {
-            BigIntStorage r_temp;
-            r_temp.resize(r_cur_len, 0);
-            if (r_cur_len > 0) {
-                BigIntStorage::copy_limbs(r_temp.data(), r_cur, r_cur_len);
-                r_temp.m_size = static_cast<uint32_t>(r_cur_len);
-                r_temp.m_sign = 1;
-            } else {
-                r_temp.m_size = 0;
-                r_temp.m_sign = 0;
+            if (r_out != &u && r_out->m_capacity < n) {
+                r_out->reserve(n);
             }
             if (sigma > 0) {
-                shift_right(*r_out, r_temp, sigma);
+                size_t limb_s = sigma / 64;
+                unsigned int bit_s = static_cast<unsigned int>(sigma % 64);
+                if (r_cur_len <= limb_s) {
+                    r_out->m_size = 0;
+                    r_out->m_sign = 0;
+                } else {
+                    size_t out_len = r_cur_len - limb_s;
+                    uint64_t* rd = r_out->data();
+                    const uint64_t* src = r_cur + limb_s;
+                    if (bit_s == 0) {
+                        BigIntStorage::copy_limbs(rd, src, out_len);
+                    } else {
+                        for (size_t k = 0; k + 1 < out_len; ++k) {
+                            rd[k] = shrd64(src[k + 1], src[k], bit_s);
+                        }
+                        rd[out_len - 1] = src[out_len - 1] >> bit_s;
+                    }
+                    while (out_len > 0 && rd[out_len - 1] == 0) --out_len;
+                    r_out->m_size = static_cast<uint32_t>(out_len);
+                    r_out->m_sign = (out_len > 0) ? 1 : 0;
+                }
             } else {
-                *r_out = std::move(r_temp);
+                if (r_cur_len > 0) {
+                    BigIntStorage::copy_limbs(r_out->data(), r_cur, r_cur_len);
+                    r_out->m_size = static_cast<uint32_t>(r_cur_len);
+                    r_out->m_sign = 1;
+                } else {
+                    r_out->m_size = 0;
+                    r_out->m_sign = 0;
+                }
             }
-            r_out->m_sign = (r_out->m_size > 0) ? 1 : 0;
             r_out->normalize();
         }
     }

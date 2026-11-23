@@ -27,15 +27,35 @@ struct BigIntMultiplication : public BigIntBitwise {
 
     /// <summary>
     /// 原生 Schoolbook 乘法：out = a * b。out 長度至少為 a_len + b_len。
+    /// Raw Schoolbook multiplication: out = a * b. out capacity must be >= a_len + b_len.
+    /// 首趟採用 mul_1_raw 直寫輸出，消除零填充與無效累加；外層對齊較短運算元消除迴圈開銷。
     /// </summary>
     static NUMERIC_CONSTEXPR_20 void mul_schoolbook_raw(uint64_t* NUMERIC_RESTRICT out,
                                                         const uint64_t* a, size_t a_len,
                                                         const uint64_t* b, size_t b_len) noexcept {
-        BigIntStorage::zero_limbs(out, a_len + b_len);
-        for (size_t i = 0; i < a_len; ++i) {
-            if (a[i] == 0) continue;
-            uint64_t carry = addmul_1_raw(out + i, b, b_len, a[i]);
-            out[i + b_len] += carry;
+        if (a_len == 0 || b_len == 0) {
+            BigIntStorage::zero_limbs(out, a_len + b_len);
+            return;
+        }
+        if (a_len == 1 && b_len == 1) {
+            out[0] = mul64_wide(a[0], b[0], out[1]);
+            return;
+        }
+        // 確保外層迴圈遍歷較短之運算元以減少累加輪數
+        if (a_len > b_len) {
+            const uint64_t* tmp_ptr = a; a = b; b = tmp_ptr;
+            size_t tmp_len = a_len; a_len = b_len; b_len = tmp_len;
+        }
+
+        // 首趟單肢段乘法直寫 out[0..b_len]，消除全域歸零與讀取零值累加
+        out[b_len] = mul_1_raw(out, b, b_len, a[0]);
+        if (a_len > 1) {
+            BigIntStorage::zero_limbs(out + b_len + 1, a_len - 1);
+            for (size_t i = 1; i < a_len; ++i) {
+                if (a[i] == 0) continue;
+                uint64_t carry = addmul_1_raw(out + i, b, b_len, a[i]);
+                out[i + b_len] += carry;
+            }
         }
     }
 
@@ -72,11 +92,14 @@ struct BigIntMultiplication : public BigIntBitwise {
     /// <summary>
     /// 原生相減差值絕對值：out = a - b (要求 a >= b)。回傳正規化長度。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 size_t sub_limbs_diff_raw(uint64_t* out, const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
+    static NUMERIC_CONSTEXPR_20 size_t sub_limbs_diff_raw(uint64_t* NUMERIC_RESTRICT out, const uint64_t* NUMERIC_RESTRICT a, size_t a_len, const uint64_t* NUMERIC_RESTRICT b, size_t b_len) noexcept {
         uint8_t borrow = 0;
-        for (size_t i = 0; i < a_len; ++i) {
-            uint64_t bv = (i < b_len) ? b[i] : 0;
-            borrow = sbb64(borrow, a[i], bv, &out[i]);
+        size_t min_len = (a_len < b_len) ? a_len : b_len;
+        for (size_t i = 0; i < min_len; ++i) {
+            borrow = sbb64(borrow, a[i], b[i], &out[i]);
+        }
+        for (size_t i = min_len; i < a_len; ++i) {
+            borrow = sbb64(borrow, a[i], 0, &out[i]);
         }
         size_t len = a_len;
         while (len > 0 && out[len - 1] == 0) {

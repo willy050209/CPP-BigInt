@@ -257,7 +257,16 @@ public:
     /// </summary>
     NUMERIC_CONSTEXPR_20 void assign_from(const BigIntBase& other) {
         if (this != &other) {
-            if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
+            if (m_capacity >= other.m_size && m_data != nullptr) {
+                // 原有緩衝區容量充足，直接重用以消除記憶體重新配置與釋放開銷
+                if (other.m_size > 0) {
+                    copy_limbs(m_data, other.m_data, other.m_size);
+                }
+                if (m_is_sbo && m_sbo_capacity > other.m_size) {
+                    zero_limbs(m_data + other.m_size, m_sbo_capacity - other.m_size);
+                }
+            } else if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
+                // 原緩衝區不足，但符合 SBO 內聯容量
                 reset_heap();
                 if (other.m_size > 0) {
                     copy_limbs(m_inline_data, other.m_data, other.m_size);
@@ -269,19 +278,16 @@ public:
                 m_capacity = m_sbo_capacity;
                 m_is_sbo = true;
             } else {
+                // 必須於堆積重新配置
                 size_t needed = (other.m_capacity > other.m_size) ? other.m_capacity : other.m_size;
                 if (needed == 0) needed = 1;
+                uint64_t* new_heap = new uint64_t[needed];
+                reset_heap();
+                m_data = new_heap;
+                m_capacity = static_cast<uint32_t>(needed);
+                m_is_sbo = false;
                 if (other.m_size > 0) {
-                    if (m_capacity < other.m_size || m_is_sbo || m_data == nullptr) {
-                        uint64_t* new_heap = new uint64_t[needed];
-                        reset_heap();
-                        m_data = new_heap;
-                        m_capacity = static_cast<uint32_t>(needed);
-                        m_is_sbo = false;
-                    }
                     copy_limbs(m_data, other.m_data, other.m_size);
-                } else {
-                    reset_heap();
                 }
             }
             m_size = other.m_size;
@@ -406,6 +412,14 @@ public:
         if (m_size == 0) {
             m_sign = 0;
         }
+        shrink_to_sbo_if_possible();
+    }
+
+    /// <summary>
+    /// 釋放未使用的緩衝區容量；若 limbs 數量小於等於 SBO 容量則縮回 SBO。
+    /// Shrink unused buffer capacity; retracts to inline SBO if limbs fit.
+    /// </summary>
+    NUMERIC_CONSTEXPR_20 void shrink_to_fit() noexcept {
         shrink_to_sbo_if_possible();
     }
 

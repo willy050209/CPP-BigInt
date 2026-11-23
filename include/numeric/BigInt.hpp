@@ -743,6 +743,23 @@ public:
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator+=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 1 && rhs.m_size == 1) {
+            uint8_t c = detail::BigIntCore::adc64(0, this->m_data[0], rhs.m_data[0], &this->m_data[0]);
+            if (c != 0) {
+                this->m_data[1] = 1;
+                this->m_size = 2;
+            }
+            return *this;
+        }
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 2 && rhs.m_size == 2) {
+            uint8_t c = detail::BigIntCore::adc64(0, this->m_data[0], rhs.m_data[0], &this->m_data[0]);
+            c = detail::BigIntCore::adc64(c, this->m_data[1], rhs.m_data[1], &this->m_data[1]);
+            if (c != 0) {
+                this->m_data[2] = 1;
+                this->m_size = 3;
+            }
+            return *this;
+        }
         detail::BigIntCore::add_signed(*this, *this, rhs);
         return *this;
     }
@@ -759,6 +776,39 @@ public:
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator-=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 1 && rhs.m_size == 1) {
+            uint64_t a0 = this->m_data[0];
+            uint64_t b0 = rhs.m_data[0];
+            if (a0 > b0) {
+                this->m_data[0] = a0 - b0;
+                return *this;
+            } else if (a0 < b0) {
+                this->m_data[0] = b0 - a0;
+                this->m_sign = -1;
+                return *this;
+            } else {
+                this->m_size = 0;
+                this->m_sign = 0;
+                return *this;
+            }
+        }
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 2 && rhs.m_size == 2) {
+            uint64_t a0 = this->m_data[0], a1 = this->m_data[1];
+            uint64_t b0 = rhs.m_data[0], b1 = rhs.m_data[1];
+            if (a1 > b1 || (a1 == b1 && a0 >= b0)) {
+                uint8_t borrow = detail::BigIntCore::sbb64(0, a0, b0, &this->m_data[0]);
+                detail::BigIntCore::sbb64(borrow, a1, b1, &this->m_data[1]);
+                if (this->m_data[1] == 0) {
+                    if (this->m_data[0] == 0) {
+                        this->m_size = 0;
+                        this->m_sign = 0;
+                    } else {
+                        this->m_size = 1;
+                    }
+                }
+                return *this;
+            }
+        }
         detail::BigIntCore::sub_signed(*this, *this, rhs);
         return *this;
     }
@@ -772,9 +822,48 @@ public:
 
     /// <summary>
     /// 乘法複合賦值運算子。
+    /// In-place multiplication compound operator.
+    /// 單肢段與小數值乘法採堆疊暫存直接寫回，消除動態配置並保持緩衝區容量。
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator*=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_size == 0 || this->m_sign == 0) {
+            return *this;
+        }
+        if (rhs.m_size == 0 || rhs.m_sign == 0) {
+            this->m_size = 0;
+            this->m_sign = 0;
+            return *this;
+        }
+        if (rhs.m_size == 1) {
+            uint64_t mult = rhs.m_data[0];
+            int8_t new_sign = static_cast<int8_t>(this->m_sign * rhs.m_sign);
+            if (this->m_capacity < this->m_size + 1) {
+                this->reserve(this->m_size + 1);
+            }
+            uint64_t carry = detail::BigIntCore::mul_1_raw(this->data(), this->data(), this->m_size, mult);
+            if (carry != 0) {
+                this->data()[this->m_size] = carry;
+                this->m_size += 1;
+            }
+            this->m_sign = new_sign;
+            this->normalize();
+            return *this;
+        }
+        size_t total_len = this->m_size + rhs.m_size;
+        if (total_len <= 16) {
+            uint64_t stack_buf[16];
+            detail::BigIntCore::mul_schoolbook_raw(stack_buf, this->data(), this->m_size, rhs.data(), rhs.m_size);
+            int8_t new_sign = static_cast<int8_t>(this->m_sign * rhs.m_sign);
+            if (this->m_capacity < total_len) {
+                this->reserve(total_len);
+            }
+            BigIntBase::copy_limbs(this->data(), stack_buf, total_len);
+            this->m_size = static_cast<uint32_t>(total_len);
+            this->m_sign = new_sign;
+            this->normalize();
+            return *this;
+        }
         BasicBigInt tmp;
         detail::BigIntCore::mul_signed(tmp, *this, rhs);
         *this = std::move(tmp);
@@ -789,12 +878,29 @@ public:
 
     /// <summary>
     /// 除法複合賦值運算子。
+    /// In-place division compound operator.
+    /// 單肢段除數採原地暫存除法直寫商數，消除物件建構開銷。
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator/=(const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt q;
-        detail::BigIntCore::div_q_signed(q, *this, rhs);
-        *this = std::move(q);
+        if (rhs.m_size == 0) {
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("division by zero"));
+        }
+        if (this->m_size == 0) return *this;
+        if (rhs.m_size == 1) {
+            uint64_t divisor = rhs.m_data[0];
+            int8_t new_sign = static_cast<int8_t>(this->m_sign * rhs.m_sign);
+            uint64_t rem = 0;
+            for (size_t i = this->m_size; i > 0; --i) {
+                uint64_t next_rem = 0;
+                this->m_data[i - 1] = detail::BigIntCore::div128_64(rem, this->m_data[i - 1], divisor, next_rem);
+                rem = next_rem;
+            }
+            this->m_sign = (this->m_size > 0) ? new_sign : 0;
+            this->normalize();
+            return *this;
+        }
+        detail::BigIntCore::div_q_signed(*this, *this, rhs);
         return *this;
     }
 
@@ -806,12 +912,33 @@ public:
 
     /// <summary>
     /// 取模複合賦值運算子。
+    /// In-place modulo compound operator.
+    /// 單肢段除數採原地暫存除法直寫餘數，消除物件建構開銷。
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator%=(const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt r;
-        detail::BigIntCore::div_r_signed(r, *this, rhs);
-        *this = std::move(r);
+        if (rhs.m_size == 0) {
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("division by zero"));
+        }
+        if (this->m_size == 0) return *this;
+        if (rhs.m_size == 1) {
+            uint64_t divisor = rhs.m_data[0];
+            int8_t orig_sign = this->m_sign;
+            uint64_t rem = 0;
+            for (size_t i = this->m_size; i > 0; --i) {
+                uint64_t next_rem = 0;
+                detail::BigIntCore::div128_64(rem, this->m_data[i - 1], divisor, next_rem);
+                rem = next_rem;
+            }
+            if (rem == 0) {
+                this->m_size = 0;
+                this->m_sign = 0;
+            } else {
+                this->set_uint64(rem, orig_sign);
+            }
+            return *this;
+        }
+        detail::BigIntCore::div_r_signed(*this, *this, rhs);
         return *this;
     }
 
@@ -823,9 +950,53 @@ public:
 
     /// <summary>
     /// 位元及複合賦值運算子。
+    /// In-place bitwise AND compound operator.
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator&=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_sign > 0 && rhs.m_sign > 0) {
+            size_t min_len = (this->m_size < rhs.m_size) ? this->m_size : rhs.m_size;
+            if (min_len == 1) {
+                this->m_data[0] &= rhs.m_data[0];
+                this->m_size = (this->m_data[0] != 0) ? 1 : 0;
+                this->m_sign = (this->m_size != 0) ? 1 : 0;
+                return *this;
+            }
+            if (min_len == 2) {
+                this->m_data[0] &= rhs.m_data[0];
+                this->m_data[1] &= rhs.m_data[1];
+                this->m_size = (this->m_data[1] != 0) ? 2 : ((this->m_data[0] != 0) ? 1 : 0);
+                this->m_sign = (this->m_size != 0) ? 1 : 0;
+                return *this;
+            }
+            if (min_len == 4) {
+                this->m_data[0] &= rhs.m_data[0];
+                this->m_data[1] &= rhs.m_data[1];
+                this->m_data[2] &= rhs.m_data[2];
+                this->m_data[3] &= rhs.m_data[3];
+                size_t sz = 4;
+                while (sz > 0 && this->m_data[sz - 1] == 0) --sz;
+                this->m_size = static_cast<uint32_t>(sz);
+                this->m_sign = (sz != 0) ? 1 : 0;
+                return *this;
+            }
+            uint64_t* NUMERIC_RESTRICT d = this->m_data;
+            const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
+            size_t i = 0;
+            for (; i + 3 < min_len; i += 4) {
+                d[i] &= s[i];
+                d[i + 1] &= s[i + 1];
+                d[i + 2] &= s[i + 2];
+                d[i + 3] &= s[i + 3];
+            }
+            for (; i < min_len; ++i) {
+                d[i] &= s[i];
+            }
+            while (min_len > 0 && d[min_len - 1] == 0) --min_len;
+            this->m_size = static_cast<uint32_t>(min_len);
+            this->m_sign = (min_len != 0) ? 1 : 0;
+            return *this;
+        }
         detail::BigIntCore::bitwise_and(*this, *this, rhs);
         return *this;
     }
@@ -838,9 +1009,71 @@ public:
 
     /// <summary>
     /// 位元或複合賦值運算子。
+    /// In-place bitwise OR compound operator.
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator|=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_sign == 0) {
+            *this = rhs;
+            return *this;
+        }
+        if (rhs.m_sign == 0) {
+            return *this;
+        }
+        if (this->m_sign > 0 && rhs.m_sign > 0) {
+            if (this->m_size >= rhs.m_size) {
+                if (rhs.m_size == 1) {
+                    this->m_data[0] |= rhs.m_data[0];
+                    return *this;
+                }
+                if (rhs.m_size == 2) {
+                    this->m_data[0] |= rhs.m_data[0];
+                    this->m_data[1] |= rhs.m_data[1];
+                    return *this;
+                }
+                if (rhs.m_size == 4) {
+                    this->m_data[0] |= rhs.m_data[0];
+                    this->m_data[1] |= rhs.m_data[1];
+                    this->m_data[2] |= rhs.m_data[2];
+                    this->m_data[3] |= rhs.m_data[3];
+                    return *this;
+                }
+                uint64_t* NUMERIC_RESTRICT d = this->m_data;
+                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
+                size_t i = 0;
+                for (; i + 3 < rhs.m_size; i += 4) {
+                    d[i] |= s[i];
+                    d[i + 1] |= s[i + 1];
+                    d[i + 2] |= s[i + 2];
+                    d[i + 3] |= s[i + 3];
+                }
+                for (; i < rhs.m_size; ++i) {
+                    d[i] |= s[i];
+                }
+                return *this;
+            } else {
+                size_t old_size = this->m_size;
+                size_t new_size = rhs.m_size;
+                if (this->m_capacity < new_size) {
+                    this->reserve(new_size);
+                }
+                uint64_t* NUMERIC_RESTRICT d = this->m_data;
+                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
+                size_t i = 0;
+                for (; i + 3 < old_size; i += 4) {
+                    d[i] |= s[i];
+                    d[i + 1] |= s[i + 1];
+                    d[i + 2] |= s[i + 2];
+                    d[i + 3] |= s[i + 3];
+                }
+                for (; i < old_size; ++i) {
+                    d[i] |= s[i];
+                }
+                detail::BigIntStorage::copy_limbs(d + old_size, s + old_size, new_size - old_size);
+                this->m_size = static_cast<uint32_t>(new_size);
+                return *this;
+            }
+        }
         detail::BigIntCore::bitwise_or(*this, *this, rhs);
         return *this;
     }
@@ -853,9 +1086,97 @@ public:
 
     /// <summary>
     /// 位元互斥或複合賦值運算子。
+    /// In-place bitwise XOR compound operator.
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator^=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_sign == 0) {
+            *this = rhs;
+            return *this;
+        }
+        if (rhs.m_sign == 0) {
+            return *this;
+        }
+        if (this->m_sign > 0 && rhs.m_sign > 0) {
+            if (this->m_size == rhs.m_size) {
+                if (this->m_size == 1) {
+                    this->m_data[0] ^= rhs.m_data[0];
+                    this->m_size = (this->m_data[0] != 0) ? 1 : 0;
+                    this->m_sign = (this->m_size != 0) ? 1 : 0;
+                    return *this;
+                }
+                if (this->m_size == 2) {
+                    this->m_data[0] ^= rhs.m_data[0];
+                    this->m_data[1] ^= rhs.m_data[1];
+                    this->m_size = (this->m_data[1] != 0) ? 2 : ((this->m_data[0] != 0) ? 1 : 0);
+                    this->m_sign = (this->m_size != 0) ? 1 : 0;
+                    return *this;
+                }
+                if (this->m_size == 4) {
+                    this->m_data[0] ^= rhs.m_data[0];
+                    this->m_data[1] ^= rhs.m_data[1];
+                    this->m_data[2] ^= rhs.m_data[2];
+                    this->m_data[3] ^= rhs.m_data[3];
+                    size_t sz = 4;
+                    while (sz > 0 && this->m_data[sz - 1] == 0) --sz;
+                    this->m_size = static_cast<uint32_t>(sz);
+                    this->m_sign = (sz != 0) ? 1 : 0;
+                    return *this;
+                }
+                uint64_t* NUMERIC_RESTRICT d = this->m_data;
+                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
+                size_t i = 0;
+                for (; i + 3 < this->m_size; i += 4) {
+                    d[i] ^= s[i];
+                    d[i + 1] ^= s[i + 1];
+                    d[i + 2] ^= s[i + 2];
+                    d[i + 3] ^= s[i + 3];
+                }
+                for (; i < this->m_size; ++i) {
+                    d[i] ^= s[i];
+                }
+                size_t sz = this->m_size;
+                while (sz > 0 && d[sz - 1] == 0) --sz;
+                this->m_size = static_cast<uint32_t>(sz);
+                this->m_sign = (sz != 0) ? 1 : 0;
+                return *this;
+            } else if (this->m_size > rhs.m_size) {
+                uint64_t* NUMERIC_RESTRICT d = this->m_data;
+                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
+                size_t i = 0;
+                for (; i + 3 < rhs.m_size; i += 4) {
+                    d[i] ^= s[i];
+                    d[i + 1] ^= s[i + 1];
+                    d[i + 2] ^= s[i + 2];
+                    d[i + 3] ^= s[i + 3];
+                }
+                for (; i < rhs.m_size; ++i) {
+                    d[i] ^= s[i];
+                }
+                return *this;
+            } else {
+                size_t old_size = this->m_size;
+                size_t new_size = rhs.m_size;
+                if (this->m_capacity < new_size) {
+                    this->reserve(new_size);
+                }
+                uint64_t* NUMERIC_RESTRICT d = this->m_data;
+                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
+                size_t i = 0;
+                for (; i + 3 < old_size; i += 4) {
+                    d[i] ^= s[i];
+                    d[i + 1] ^= s[i + 1];
+                    d[i + 2] ^= s[i + 2];
+                    d[i + 3] ^= s[i + 3];
+                }
+                for (; i < old_size; ++i) {
+                    d[i] ^= s[i];
+                }
+                detail::BigIntStorage::copy_limbs(d + old_size, s + old_size, new_size - old_size);
+                this->m_size = static_cast<uint32_t>(new_size);
+                return *this;
+            }
+        }
         detail::BigIntCore::bitwise_xor(*this, *this, rhs);
         return *this;
     }
@@ -868,29 +1189,29 @@ public:
 
     /// <summary>
     /// 位元左移複合賦值運算子。
+    /// In-place bitwise left shift compound operator.
+    /// 直接於目前物件緩衝區就地執行位元左移，消除暫存物件與動態配置開銷。
     /// </summary>
     template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator<<=(T shift) {
         if (shift < 0) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
         }
-        BasicBigInt tmp;
-        detail::BigIntCore::shift_left(tmp, *this, static_cast<size_t>(shift));
-        *this = std::move(tmp);
+        detail::BigIntCore::shift_left(*this, *this, static_cast<size_t>(shift));
         return *this;
     }
 
     /// <summary>
     /// 位元右移複合賦值運算子。
+    /// In-place bitwise right shift compound operator.
+    /// 直接於目前物件緩衝區就地執行位元右移，消除暫存物件與動態配置開銷。
     /// </summary>
     template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator>>=(T shift) {
         if (shift < 0) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
         }
-        BasicBigInt tmp;
-        detail::BigIntCore::shift_right(tmp, *this, static_cast<size_t>(shift));
-        *this = std::move(tmp);
+        detail::BigIntCore::shift_right(*this, *this, static_cast<size_t>(shift));
         return *this;
     }
 
@@ -1151,6 +1472,12 @@ public:
         if (lhs.m_sign != rhs.m_sign) return false;
         if (lhs.m_size != rhs.m_size) return false;
         if (lhs.m_size == 0) return true;
+        if (lhs.m_size == 1) return lhs.m_data[0] == rhs.m_data[0];
+        if (lhs.m_size == 2) return lhs.m_data[0] == rhs.m_data[0] && lhs.m_data[1] == rhs.m_data[1];
+        if (lhs.m_size == 4) {
+            return lhs.m_data[0] == rhs.m_data[0] && lhs.m_data[1] == rhs.m_data[1] &&
+                   lhs.m_data[2] == rhs.m_data[2] && lhs.m_data[3] == rhs.m_data[3];
+        }
         for (size_t i = 0; i < lhs.m_size; ++i) {
             if (lhs.m_data[i] != rhs.m_data[i]) return false;
         }
@@ -1184,13 +1511,59 @@ public:
 
     template <size_t OtherLimbs>
     friend NUMERIC_CONSTEXPR_20 bool operator<(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept {
-        if (lhs.m_sign < rhs.m_sign) return true;
-        if (lhs.m_sign > rhs.m_sign) return false;
+        if (lhs.m_sign != rhs.m_sign) {
+            return lhs.m_sign < rhs.m_sign;
+        }
         if (lhs.m_sign == 0) return false;
-        int cmp = detail::BigIntCore::compare_unsigned(
-            lhs.m_data, lhs.m_size,
-            rhs.m_data, rhs.m_size);
-        return (lhs.m_sign > 0) ? (cmp < 0) : (cmp > 0);
+        if (lhs.m_sign > 0) {
+            if (lhs.m_size != rhs.m_size) {
+                return lhs.m_size < rhs.m_size;
+            }
+            const size_t sz = lhs.m_size;
+            if (sz == 1) {
+                return lhs.m_data[0] < rhs.m_data[0];
+            }
+            if (sz == 2) {
+                if (lhs.m_data[1] != rhs.m_data[1]) return lhs.m_data[1] < rhs.m_data[1];
+                return lhs.m_data[0] < rhs.m_data[0];
+            }
+            if (sz == 4) {
+                if (lhs.m_data[3] != rhs.m_data[3]) return lhs.m_data[3] < rhs.m_data[3];
+                if (lhs.m_data[2] != rhs.m_data[2]) return lhs.m_data[2] < rhs.m_data[2];
+                if (lhs.m_data[1] != rhs.m_data[1]) return lhs.m_data[1] < rhs.m_data[1];
+                return lhs.m_data[0] < rhs.m_data[0];
+            }
+            const uint64_t* a = lhs.m_data;
+            const uint64_t* b = rhs.m_data;
+            for (size_t i = sz; i > 0; --i) {
+                if (a[i - 1] != b[i - 1]) return a[i - 1] < b[i - 1];
+            }
+            return false;
+        } else {
+            if (lhs.m_size != rhs.m_size) {
+                return lhs.m_size > rhs.m_size;
+            }
+            const size_t sz = lhs.m_size;
+            if (sz == 1) {
+                return lhs.m_data[0] > rhs.m_data[0];
+            }
+            if (sz == 2) {
+                if (lhs.m_data[1] != rhs.m_data[1]) return lhs.m_data[1] > rhs.m_data[1];
+                return lhs.m_data[0] > rhs.m_data[0];
+            }
+            if (sz == 4) {
+                if (lhs.m_data[3] != rhs.m_data[3]) return lhs.m_data[3] > rhs.m_data[3];
+                if (lhs.m_data[2] != rhs.m_data[2]) return lhs.m_data[2] > rhs.m_data[2];
+                if (lhs.m_data[1] != rhs.m_data[1]) return lhs.m_data[1] > rhs.m_data[1];
+                return lhs.m_data[0] > rhs.m_data[0];
+            }
+            const uint64_t* a = lhs.m_data;
+            const uint64_t* b = rhs.m_data;
+            for (size_t i = sz; i > 0; --i) {
+                if (a[i - 1] != b[i - 1]) return a[i - 1] > b[i - 1];
+            }
+            return false;
+        }
     }
 
     template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
