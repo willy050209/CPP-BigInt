@@ -3715,23 +3715,49 @@ struct BigIntDivision : public BigIntMultiplication {
         size_t v_bits = (v.m_size - 1) * 64 + (64 - clz64(v.data()[v.m_size - 1]));
         size_t sigma = (n_bits >= v_bits) ? (n_bits - v_bits) : 0;
 
-        BigIntStorage v_shifted, u_shifted;
+        auto& arena = ScratchArena::instance();
+        ScratchArena::Scope scope(arena);
+
+        const size_t v_len = v.m_size;
+        const size_t u_len = u.m_size;
+
+        size_t sigma_limbs = sigma / 64;
+        unsigned int sigma_bits = static_cast<unsigned int>(sigma % 64);
+
+        uint64_t* v_shifted = arena.allocate(n + 2);
+        BigIntStorage::zero_limbs(v_shifted, n + 2);
         if (sigma > 0) {
-            shift_left(v_shifted, v, sigma);
-            shift_left(u_shifted, u, sigma);
+            if (sigma_bits == 0) {
+                BigIntStorage::copy_limbs(v_shifted + sigma_limbs, v.data(), v_len);
+            } else {
+                shift_left_bits_raw(v_shifted + sigma_limbs, v.data(), v_len, sigma_bits);
+            }
         } else {
-            v_shifted = v;
-            u_shifted = u;
+            BigIntStorage::copy_limbs(v_shifted, v.data(), v_len);
         }
 
-        size_t u_bits = (u_shifted.m_size > 0) 
-            ? ((u_shifted.m_size - 1) * 64 + (64 - clz64(u_shifted.data()[u_shifted.m_size - 1])))
+        size_t u_shifted_cap = u_len + sigma_limbs + 4;
+        size_t u_alloc_sz = ((u_shifted_cap > (n * 4)) ? u_shifted_cap : (n * 4)) + n;
+        uint64_t* u_shifted = arena.allocate(u_alloc_sz);
+        BigIntStorage::zero_limbs(u_shifted, u_alloc_sz);
+        size_t u_shifted_len = u_len;
+        if (sigma > 0) {
+            if (sigma_bits == 0) {
+                BigIntStorage::copy_limbs(u_shifted + sigma_limbs, u.data(), u_len);
+                u_shifted_len = u_len + sigma_limbs;
+            } else {
+                u_shifted_len = sigma_limbs + shift_left_bits_raw(u_shifted + sigma_limbs, u.data(), u_len, sigma_bits);
+            }
+        } else {
+            BigIntStorage::copy_limbs(u_shifted, u.data(), u_len);
+        }
+        while (u_shifted_len > 0 && u_shifted[u_shifted_len - 1] == 0) --u_shifted_len;
+
+        size_t u_bits = (u_shifted_len > 0) 
+            ? ((u_shifted_len - 1) * 64 + (64 - clz64(u_shifted[u_shifted_len - 1])))
             : 0;
         size_t t = (u_bits + n_bits) / n_bits;
         if (t < 2) t = 2;
-
-        auto& arena = ScratchArena::instance();
-        ScratchArena::Scope scope(arena);
 
         uint64_t* z = arena.allocate(2 * n + 1);
         uint64_t* q_step = arena.allocate(n + 1);
@@ -3742,14 +3768,17 @@ struct BigIntDivision : public BigIntMultiplication {
         BigIntStorage::zero_limbs(r_cur, n + 1);
         size_t top_start = (t - 1) * n;
         size_t r_cur_len = 0;
-        if (top_start < u_shifted.m_size) {
-            r_cur_len = (std::min)(n, u_shifted.m_size - top_start);
-            BigIntStorage::copy_limbs(r_cur, u_shifted.data() + top_start, r_cur_len);
+        if (top_start < u_shifted_len) {
+            r_cur_len = (std::min)(n, u_shifted_len - top_start);
+            BigIntStorage::copy_limbs(r_cur, u_shifted + top_start, r_cur_len);
             while (r_cur_len > 0 && r_cur[r_cur_len - 1] == 0) --r_cur_len;
         }
 
         if (q_out) {
-            q_out->resize((t - 1) * n, 0);
+            if (q_out != &u && q_out->m_capacity < (t - 1) * n) {
+                q_out->reserve((t - 1) * n);
+            }
+            q_out->m_size = static_cast<uint32_t>((t - 1) * n);
             BigIntStorage::zero_limbs(q_out->data(), (t - 1) * n);
         }
 
@@ -3757,13 +3786,13 @@ struct BigIntDivision : public BigIntMultiplication {
             size_t block_idx = i - 1;
             size_t start = block_idx * n;
             size_t a_block_len = 0;
-            if (start < u_shifted.m_size) {
-                a_block_len = (std::min)(n, u_shifted.m_size - start);
+            if (start < u_shifted_len) {
+                a_block_len = (std::min)(n, u_shifted_len - start);
             }
 
             BigIntStorage::zero_limbs(z, 2 * n + 1);
             if (a_block_len > 0) {
-                BigIntStorage::copy_limbs(z, u_shifted.data() + start, a_block_len);
+                BigIntStorage::copy_limbs(z, u_shifted + start, a_block_len);
             }
             if (r_cur_len > 0) {
                 BigIntStorage::copy_limbs(z + n, r_cur, r_cur_len);
@@ -3773,7 +3802,7 @@ struct BigIntDivision : public BigIntMultiplication {
 
             size_t q_step_len = 0;
             size_t r_next_len = 0;
-            bz_div2by1_raw(q_step, &q_step_len, r_next, &r_next_len, z, z_len, v_shifted.data(), n, arena);
+            bz_div2by1_raw(q_step, &q_step_len, r_next, &r_next_len, z, z_len, v_shifted, n, arena);
 
             BigIntStorage::zero_limbs(r_cur, n + 1);
             if (r_next_len > 0) {
@@ -3794,22 +3823,41 @@ struct BigIntDivision : public BigIntMultiplication {
             q_out->normalize();
         }
         if (r_out) {
-            BigIntStorage r_temp;
-            r_temp.resize(r_cur_len, 0);
-            if (r_cur_len > 0) {
-                BigIntStorage::copy_limbs(r_temp.data(), r_cur, r_cur_len);
-                r_temp.m_size = static_cast<uint32_t>(r_cur_len);
-                r_temp.m_sign = 1;
-            } else {
-                r_temp.m_size = 0;
-                r_temp.m_sign = 0;
+            if (r_out != &u && r_out->m_capacity < n) {
+                r_out->reserve(n);
             }
             if (sigma > 0) {
-                shift_right(*r_out, r_temp, sigma);
+                size_t limb_s = sigma / 64;
+                unsigned int bit_s = static_cast<unsigned int>(sigma % 64);
+                if (r_cur_len <= limb_s) {
+                    r_out->m_size = 0;
+                    r_out->m_sign = 0;
+                } else {
+                    size_t out_len = r_cur_len - limb_s;
+                    uint64_t* rd = r_out->data();
+                    const uint64_t* src = r_cur + limb_s;
+                    if (bit_s == 0) {
+                        BigIntStorage::copy_limbs(rd, src, out_len);
+                    } else {
+                        for (size_t k = 0; k + 1 < out_len; ++k) {
+                            rd[k] = shrd64(src[k + 1], src[k], bit_s);
+                        }
+                        rd[out_len - 1] = src[out_len - 1] >> bit_s;
+                    }
+                    while (out_len > 0 && rd[out_len - 1] == 0) --out_len;
+                    r_out->m_size = static_cast<uint32_t>(out_len);
+                    r_out->m_sign = (out_len > 0) ? 1 : 0;
+                }
             } else {
-                *r_out = std::move(r_temp);
+                if (r_cur_len > 0) {
+                    BigIntStorage::copy_limbs(r_out->data(), r_cur, r_cur_len);
+                    r_out->m_size = static_cast<uint32_t>(r_cur_len);
+                    r_out->m_sign = 1;
+                } else {
+                    r_out->m_size = 0;
+                    r_out->m_sign = 0;
+                }
             }
-            r_out->m_sign = (r_out->m_size > 0) ? 1 : 0;
             r_out->normalize();
         }
     }
@@ -5521,6 +5569,23 @@ public:
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator+=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 1 && rhs.m_size == 1) {
+            uint8_t c = detail::BigIntCore::adc64(0, this->m_data[0], rhs.m_data[0], &this->m_data[0]);
+            if (c != 0) {
+                this->m_data[1] = 1;
+                this->m_size = 2;
+            }
+            return *this;
+        }
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 2 && rhs.m_size == 2) {
+            uint8_t c = detail::BigIntCore::adc64(0, this->m_data[0], rhs.m_data[0], &this->m_data[0]);
+            c = detail::BigIntCore::adc64(c, this->m_data[1], rhs.m_data[1], &this->m_data[1]);
+            if (c != 0) {
+                this->m_data[2] = 1;
+                this->m_size = 3;
+            }
+            return *this;
+        }
         detail::BigIntCore::add_signed(*this, *this, rhs);
         return *this;
     }
@@ -5537,6 +5602,39 @@ public:
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator-=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 1 && rhs.m_size == 1) {
+            uint64_t a0 = this->m_data[0];
+            uint64_t b0 = rhs.m_data[0];
+            if (a0 > b0) {
+                this->m_data[0] = a0 - b0;
+                return *this;
+            } else if (a0 < b0) {
+                this->m_data[0] = b0 - a0;
+                this->m_sign = -1;
+                return *this;
+            } else {
+                this->m_size = 0;
+                this->m_sign = 0;
+                return *this;
+            }
+        }
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 2 && rhs.m_size == 2) {
+            uint64_t a0 = this->m_data[0], a1 = this->m_data[1];
+            uint64_t b0 = rhs.m_data[0], b1 = rhs.m_data[1];
+            if (a1 > b1 || (a1 == b1 && a0 >= b0)) {
+                uint8_t borrow = detail::BigIntCore::sbb64(0, a0, b0, &this->m_data[0]);
+                detail::BigIntCore::sbb64(borrow, a1, b1, &this->m_data[1]);
+                if (this->m_data[1] == 0) {
+                    if (this->m_data[0] == 0) {
+                        this->m_size = 0;
+                        this->m_sign = 0;
+                    } else {
+                        this->m_size = 1;
+                    }
+                }
+                return *this;
+            }
+        }
         detail::BigIntCore::sub_signed(*this, *this, rhs);
         return *this;
     }

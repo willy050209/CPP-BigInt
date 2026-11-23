@@ -743,6 +743,23 @@ public:
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator+=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 1 && rhs.m_size == 1) {
+            uint8_t c = detail::BigIntCore::adc64(0, this->m_data[0], rhs.m_data[0], &this->m_data[0]);
+            if (c != 0) {
+                this->m_data[1] = 1;
+                this->m_size = 2;
+            }
+            return *this;
+        }
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 2 && rhs.m_size == 2) {
+            uint8_t c = detail::BigIntCore::adc64(0, this->m_data[0], rhs.m_data[0], &this->m_data[0]);
+            c = detail::BigIntCore::adc64(c, this->m_data[1], rhs.m_data[1], &this->m_data[1]);
+            if (c != 0) {
+                this->m_data[2] = 1;
+                this->m_size = 3;
+            }
+            return *this;
+        }
         detail::BigIntCore::add_signed(*this, *this, rhs);
         return *this;
     }
@@ -759,6 +776,39 @@ public:
     /// </summary>
     template <size_t OtherLimbs>
     NUMERIC_CONSTEXPR_20 BasicBigInt& operator-=(const BasicBigInt<OtherLimbs>& rhs) {
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 1 && rhs.m_size == 1) {
+            uint64_t a0 = this->m_data[0];
+            uint64_t b0 = rhs.m_data[0];
+            if (a0 > b0) {
+                this->m_data[0] = a0 - b0;
+                return *this;
+            } else if (a0 < b0) {
+                this->m_data[0] = b0 - a0;
+                this->m_sign = -1;
+                return *this;
+            } else {
+                this->m_size = 0;
+                this->m_sign = 0;
+                return *this;
+            }
+        }
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 2 && rhs.m_size == 2) {
+            uint64_t a0 = this->m_data[0], a1 = this->m_data[1];
+            uint64_t b0 = rhs.m_data[0], b1 = rhs.m_data[1];
+            if (a1 > b1 || (a1 == b1 && a0 >= b0)) {
+                uint8_t borrow = detail::BigIntCore::sbb64(0, a0, b0, &this->m_data[0]);
+                detail::BigIntCore::sbb64(borrow, a1, b1, &this->m_data[1]);
+                if (this->m_data[1] == 0) {
+                    if (this->m_data[0] == 0) {
+                        this->m_size = 0;
+                        this->m_sign = 0;
+                    } else {
+                        this->m_size = 1;
+                    }
+                }
+                return *this;
+            }
+        }
         detail::BigIntCore::sub_signed(*this, *this, rhs);
         return *this;
     }
