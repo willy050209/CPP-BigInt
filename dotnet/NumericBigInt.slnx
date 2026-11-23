@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Numeric.BigInt/Numeric.BigInt.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Numeric.BigInt.Tests.CSharp/Numeric.BigInt.Tests.CSharp.csproj" />
+    <Project Path="tests/Numeric.BigInt.Tests.FSharp/Numeric.BigInt.Tests.FSharp.fsproj" />
+    <Project Path="tests/Numeric.BigInt.Tests.VB/Numeric.BigInt.Tests.VB.vbproj" />
+  </Folder>
+</Solution>

@@ -11,4 +11,8 @@
     <ServerGarbageCollection>false</ServerGarbageCollection>
   </PropertyGroup>
 
+  <ItemGroup>
+    <None Include="..\..\build\Release\bigint_c.dll" Link="bigint_c.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
