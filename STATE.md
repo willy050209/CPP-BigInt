@@ -1,6 +1,6 @@
 # 專案任務看板 (STATE.md)
 
-## 當前專案狀態: ✅ Phase 4: 全套驗證通過與效能基準報告生成完成 (All Benchmarks & Tests Passed)
+## 當前專案狀態: ✅ Phase 5: GMP 追平效能調優與官方 .NET 跨語言套件開發完成 (All C++/C#/F#/VB Tests & Benchmarks Passed)
 
 ---
 
@@ -27,13 +27,17 @@
   - [x] `StringConversion.hpp` 直接受益於 `bz_div2by1_raw` 與 `div_knuth_raw` 的核心加速
   - [x] 驗證字串雙向轉換測試
 
-- [x] **Task 5: 全套基準測試與效能驗收 (Review & Benchmark Finalization)**
-  - [x] 執行 `run_all_benchmarks.py` 重新量測所有 Tier (Layer 1 ~ Layer 4, C++, GMP, .NET 10 JIT & Native AOT, Python)
-  - [x] 生成並更新 [`BENCHMARK_REPORT.md`](file:///D:/P/CPP/CPP-BigInt/benchmarks/results/BENCHMARK_REPORT.md)
-  - [x] 65,536-bit 純除法核心超越 GMP (146.5 µs vs 211.9 µs，1.45x faster)
-  - [x] 16,384-bit 純除法核心超越 GMP (13.87 µs vs 19.80 µs，1.43x faster)
-  - [x] 4,096-bit 純除法核心超越 GMP (1.57 µs vs 2.02 µs，1.28x faster)
-  - [x] 執行資安審查與程式碼整理
+- [x] **Task 5: GMP 追平調優迭代與跨編譯器全版本驗證 (241/270 項追平或超越)**
+  - [x] 實作 1/2-limb 標量快路徑、`1/2/4-limb` 無分支比較特化
+  - [x] 實作 `NUMERIC_RESTRICT` 4x 展開就地位元運算與無分支 `shld64` / `shrd64` 位移
+  - [x] 調優 `TOOM3_THRESHOLD = 64`、`BZ_THRESHOLD = 32` 並實作原地零配置除/模
+  - [x] GCC 16 / Clang 23 / MSVC 19.52 (C++14/17/20/23/latest) 1,403/1,403 項全數通過
+
+- [x] **Task 6: 官方 .NET 10 跨語言封裝函式庫 (`Numeric.BigInt`) 與 Tri-Language 驗證**
+  - [x] 建置 `dotnet/src/Numeric.BigInt`（`BigInt` 不可變安全類別 + `ref struct BigIntScope` / `BigIntSbo256` 0-GC 堆疊層）
+  - [x] 實作 `NativeResolver` 自動本機庫探查與 `[LibraryImport]` 零封送開銷綁定
+  - [x] 完成 C# 14、F# 10、VB.NET 10 三語言測試與 `Numeric.BigInt.1.0.0.nupkg` 打包
+  - [x] 完善架構、API 與 .NET 技術說明文件 (`docs/dotnet.md`, `README.md`, `ARCHITECTURE.md`)
 
 ---
 

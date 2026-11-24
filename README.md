@@ -15,13 +15,14 @@
   - **異質運算與右值取負**：支援不同 SBO 容量型別無縫混算（回傳型別嚴格由 LHS 決定），且單元取負支援右值暫存緩衝區原地重用（`operator-() &&`）。
   - 數值擴展時自動平滑晉升至動態陣列；運算回縮至 SBO 容量以內時自動退回 SBO，維持極高快取局部性。
 - **高效數值運算法與硬體原語加速**：
-  - **對稱加減法 (~5 ns)**：直接編譯為硬體進位/借位指令（MSVC `_addcarry_u64` / `_subborrow_u64`，GCC/Clang `__builtin_addcll` / `__builtin_subcll`），配合 SBO 4-limb 完全無分支展開快速路徑（`add_unsigned_sbo4` / `sub_unsigned_sbo4`），於暫存器內以單週期管線執行；雙目運算子採 Direct-Result 零深拷貝與 Move-Reuse 機制。
+  - **標量與對稱加減法 (~3.0 ns ~ 5 ns)**：針對 1-limb / 2-limb 標量運算提供純暫存器 `+=` / `-=` 快速路徑，並直接編譯為硬體進位/借位指令（MSVC `_addcarry_u64` / `_subborrow_u64`，GCC/Clang `__builtin_addcll` / `__builtin_subcll`），配合 SBO 4-limb 完全無分支展開路徑（`add_unsigned_sbo4` / `sub_unsigned_sbo4`）及 Direct-Result / Move-Reuse 機制。
   - **三層階梯式乘法**：
     1. 小整數（$N \le 16$ limbs / 1024 bits）：高度展開與向量化之 **Schoolbook 乘法**（當長度總和 $\le$ SBO 容量時，使用純棧上 SBO 緩衝區，0 Heap 配置，~12 ns）。
-    2. 中整數（$16 < N \le 64$ limbs / 1024 ~ 4096 bits）：**Karatsuba 分治演算法** ($O(N^{1.585})$)。
-    3. 大整數（$N > 64$ limbs / > 4096 bits）：**Toom-Cook 3 (Toom-3) 分治演算法** ($O(N^{1.465})$)。
-    - 遞迴運算由線程局部無鎖 RAII `ScratchArena` 管理，深度內達成 0 次 Heap 動態配置。
-  - **除法與取模**：**雙階派發體系**，小於 128 limbs（8,192 位元）採用改良版 Knuth Algorithm D（棧上 512-limb 工作緩衝區，0 Heap 配置）；大於等於 128 limbs 自動啟用 **Burnikel-Ziegler $D_{2n,n} / D_{3n,2n}$ 分治除法** ($O(M(N) \log N)$)，64K 位元除法加速達 **2.59x**。
+    2. 中整數（$16 < N \le 64$ limbs / 1024 ~ 4096 bits）：**Karatsuba / Block Karatsuba 分治演算法** ($O(N^{1.585})$)。
+    3. 大整數（$N \ge 64$ limbs / $\ge$ 4096 bits）：**Toom-Cook 3 (Toom-3) 分治演算法** ($O(N^{1.465})$)。
+    - 遞迴運算由線程局部無鎖指標穩定分塊 `ScratchArena` 管理，達成 0 次 Heap 動態配置。
+  - **除法與取模**：**雙階派發體系**，小於 32 limbs（2,048 位元）或短商數情形採用改良版 Knuth Algorithm D（支援原地零配置除/模）；大於等於 32 limbs 自動啟用零配置切片版 **Burnikel-Ziegler $D_{2n,n} / D_{3n,2n}$ 分治除法** ($O(M(N) \log N)$)。
+  - **SIMD 友好位元運算與無分支比較**：就地位元運算（`&=`, `|=`, `^=`）採 `NUMERIC_RESTRICT` 4x 展開（65,536-bit 僅 160 ns，領先 GMP 2.2x）；`shld64` / `shrd64` 消除迴圈分支；1/2/4-limb 比較特化達 **~1.98 ns**。
 - **極致字串序列化與解析 (0-Heap & 分治轉換)**：
   - **十進位格式化**：
     - 單肢極速路徑（$N = 1$）：結合 `digits10_u64` 二分搜尋常數求長度、32 位元倒數除法 chunking 與 2-Digit LUT 雙字元寫入，延遲僅 **~36.1 ns**，超越 .NET 10 Native AOT（~62.4 ns）。
@@ -33,9 +34,10 @@
   - 位元運算：`&`, `|`, `^`, `~`, `<<`, `>>`（完整二補數 Two's Complement 語意，負數移位拋出 `std::invalid_argument`）。
   - 比較與邏輯：`==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `||`, `!`（支援 C 語言「非零即真」語意）。
   - 跨型別混算：無縫與所有原生整數型態（`int8_t` ~ `uint64_t`）混合運算與比較。
-- **標準 C-ABI (`extern "C"`) 與跨語言 FFI 支援**：
+- **標準 C-ABI (`extern "C"`) 與正式 .NET 跨語言函式庫**：
   - 提供獨立動態庫 `bigint_c.dll` / `libbigint_c.so` 與標頭檔 `numeric/c_api.h`（發行版 `dist/bigint_c.h`）。
-  - 支援 **Opaque Handle 模式** 與 **零堆積 256/512 位元棧上 SBO 模式**，讓 Python (`ctypes`)、Rust (`bindgen`)、.NET 10 (`[DllImport]`) 能在 0 Bytes GC 與 0 堆積配置下享受極致微延遲（.NET 實測加法加速達 **11.73x**）。
+  - **正式 .NET 10 跨語言封裝 (`Numeric.BigInt`)**：完整支援 **C# 14**、**F# 10** 與 **VB.NET 10**，提供不可變 `BigInt` 類別（含完整運算子重載與 VB `\` 整數除法）、`SafeHandle` 自動資源安全管理、零設定動態庫探查器 `NativeResolver`，以及 **0 Bytes GC 配置** 的 `ref struct BigIntScope` 與 `BigIntSbo256` 堆疊運算層。
+  - 透過 .NET 10 `[LibraryImport]` P/Invoke 實測，相較原生 `System.Numerics.BigInteger` 獲得 **2.8x ~ 6.9x** 加速並徹底消弭託管堆積配置（[docs/dotnet.md](docs/dotnet.md)）。
 - **進階擴充支援**：
   - **整數數學函式 (`numeric/BigIntMath.hpp`)**：`abs`, `isqrt`, `sqrt`, `icbrt`, `cbrt`, `pow`, `gcd`, `lcm`（同時支援 `numeric::` 與 `std::` 命名空間）。
   - **位元集合互轉 (`numeric/Bitset.hpp`)**：支援任意寬度 `std::bitset<N>` 雙向轉換，負數嚴格遵循標準二補數延伸。
@@ -91,8 +93,13 @@ target_link_libraries(your_target PRIVATE bigint)
 import bigint;
 ```
 
-#### 4. C-ABI 跨語言動態庫引入 (C / Python / Rust / .NET)
+#### 4. C-ABI 與正式 .NET 跨語言函式庫引入 (C# 14 / F# 10 / VB.NET 10)
 CMake 建置時預設開啟 `-DBIGINT_BUILD_C_API=ON`，產出 `bigint_c.dll` / `libbigint_c.so`，並提供純 C 標頭檔 `dist/bigint_c.h`。
+若需於 .NET 10 中作為 `System.Numerics.BigInteger` 的高速替代方案，可直接引用解決方案 [`dotnet/NumericBigInt.slnx`](dotnet/NumericBigInt.slnx) 或打包 NuGet 套件：
+```powershell
+dotnet.exe build dotnet\NumericBigInt.slnx -c Release
+dotnet.exe pack dotnet\src\Numeric.BigInt\Numeric.BigInt.csproj -c Release -o dotnet\artifacts
+```
 
 #### 5. 單一檔案打包與檢查工具
 ```powershell
@@ -175,7 +182,8 @@ API 技術參考手冊已收錄於 [docs/](docs/README.md)：
 - [std::bitset 泛型互轉 (`numeric/Bitset.hpp`)](docs/bitset.md)
 - [C++ 標準庫擴充特化 (std::hash, std::formatter)](docs/extensions.md)
 - [編譯設定與巨集環境 (`numeric/Config.hpp`)](docs/config.md)
-- [C-ABI 跨語言介面手冊 (Python, Rust, .NET 10 FFI)](docs/c_api.md)
+- [C-ABI 跨語言介面手冊 (Python, Rust, .NET FFI)](docs/c_api.md)
+- [.NET 10 跨語言封裝函式庫手冊 (`Numeric.BigInt` for C#, F#, VB.NET)](docs/dotnet.md)
 - [跨語言效能評測報告 (Benchmark Report)](benchmarks/results/BENCHMARK_REPORT.md)
 
 ---

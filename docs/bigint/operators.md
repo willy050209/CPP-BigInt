@@ -88,18 +88,18 @@ NUMERIC_CONSTEXPR_20 bigint& operator%=(const bigint& rhs);
   - **Direct-Result 語意與零深拷貝 (Zero Copy Overhead)**：`operator+` 與 `operator-` 針對左值運算元採用 `(const bigint& lhs, const bigint& rhs)`，運算結果直接寫入回傳物件，徹底消除傳統以值傳遞（Pass-by-value）時非必要的大數 Heap 深層拷貝。在大數加減法實測中獲得 **2.3x ~ 2.6x** 的顯著效能飛躍。
   - **右值移動重用 (Rvalue Move Optimization)**：當運算元包含暫時物件（如 `bigint&&` 或連續運算 `a + b + c`）時，自動觸發移動重載，就地重用已配置之內部堆積緩衝區，達成連續鏈式運算 0 額外記憶體配置。
   - **硬體指令級加速 (Hardware Intrinsics)**：核心採用 `adc64` 與 `sbb64`，於 MSVC 啟用 `_addcarry_u64` / `_subborrow_u64`，於 GCC/Clang 啟用 `__builtin_addcll` / `__builtin_subcll`，利用 CPU Carry Flag 進行單週期連鎖進借位。
-  - **4-Limb SBO 加減法對稱暫存器級快速路徑 (`add_unsigned_sbo4` / `sub_unsigned_sbo4`)**：針對 $\le 256$ 位元之 SBO 內部 4 個 limbs 實施完全無分支展開（Unrolled Loop），消除迴圈跳轉開銷，完全於 CPU 暫存器中以單週期 carry/borrow chain 執行。加法與減法分別取得 **~5.0 ns 與 ~5.1 ns** 的對稱極致延遲，大幅超越 .NET 10 Native AOT（~19 ns）與 Python（~41 ns）。
+  - **1-Limb / 2-Limb 標量快路徑與 4-Limb SBO 暫存器級快速路徑 (`add_unsigned_sbo4` / `sub_unsigned_sbo4`)**：針對 1/2-limb 的 `+=` / `-=` 就地運算提供純暫存器快速路徑（延遲低至 ~3.0 ns）；針對 $\le 256$ 位元之 SBO 內部 4 個 limbs 實施完全無分支展開（Unrolled Loop），完全於 CPU 暫存器中以單週期 carry/borrow chain 執行。
   - **早期終止機制 (Early-exit Propagation)**：當殘留進位/借位歸零且較短運算元已耗盡時，立即退出運算迴圈並執行批次記憶體拷貝，大幅縮短不對稱位元加減時間。
   - **自我別名安全 (Self-Aliasing Safety)**：底層演算法（如 `BigIntCore::add_signed`、`BigIntCore::sub_signed`）全面通過別名防護檢測，即使運算元位址重疊（例如 `a += a`），亦能保證計算正確性。
 - **乘法 (三層階梯式演算法架構)**：
-  - **第 1 階：Schoolbook 乘法 ($N \le 16$ limbs / 1024 bits, $O(N^2)$)**：小規模乘法採用高度內聯與向量化之學校乘法。當運算元長度總和 $\le$ SBO 容量時（例如 128 位元 $\times$ 128 位元），直接在棧上 SBO 緩衝區就地計算，**達成 0 次 Heap 分配與 ~12 ns 延遲**。
-  - **第 2 階：Karatsuba 分治乘法 ($16 < N \le 64$ limbs / 1024 ~ 4096 bits, $O(N^{\log_2 3}) \approx O(N^{1.585})$)**：中型整數自動啟用 Karatsuba 乘法，透過 $(A_1 + A_0)(B_1 + B_0)$ 將 4 次子乘法縮減為 3 次。
-  - **第 3 階：Toom-Cook 3 (Toom-3) 分治乘法 ($N > 64$ limbs / > 4096 bits, $O(N^{\log_3 5}) \approx O(N^{1.465})$)**：針對 4,096 位元以上的大型數值，將運算元分割為 3 項多項式，於 $0, 1, -1, -2, \infty$ 五個點進行插值求值與高精度矩陣逆轉換，運算複雜度由 $N^{1.585}$ 進一步壓低至 $N^{1.465}$。
-  - **Thread-Local 刮痕池 (`ScratchArena`)**：Karatsuba 與 Toom-3 的多層遞迴臨時緩衝區由線程局部無鎖的 RAII `ScratchArena` 管理，整個乘法運算生命週期內達成 **0 次 Heap 動態分配與釋放**。
+  - **第 1 階：Schoolbook 乘法 ($N < 16$ limbs / 1024 bits, $O(N^2)$)**：小規模乘法採用高度內聯與向量化之學校乘法。當運算元長度總和 $\le$ SBO 容量時（例如 128 位元 $\times$ 128 位元），直接在棧上 SBO 緩衝區就地計算，**達成 0 次 Heap 分配與 ~12 ns 延遲**。
+  - **第 2 階：Karatsuba / Block Karatsuba 分治乘法 ($16 \le N < 64$ limbs / 1024 ~ 4096 bits, $O(N^{\log_2 3}) \approx O(N^{1.585})$)**：中型或非對稱大整數自動啟用 Karatsuba / Block Karatsuba 乘法，將子乘法數量減少為 3 次。
+  - **第 3 階：Toom-Cook 3 (Toom-3) 分治乘法 ($N \ge 64$ limbs / $\ge 4096$ bits, $O(N^{\log_3 5}) \approx O(N^{1.465})$)**：針對 4,096 位元以上的大型數值（`TOOM3_THRESHOLD = 64`），將運算元分割為 3 項多項式，於 $0, 1, -1, -2, \infty$ 五個點進行插值求值與高精度矩陣逆轉換，運算複雜度由 $N^{1.585}$ 進一步壓低至 $N^{1.465}$。
+  - **Thread-Local 分塊刮痕池 (`ScratchArena`)**：Karatsuba 與 Toom-3 的多層遞迴臨時緩衝區由線程局部無鎖、指標穩定的 RAII `ScratchArena` 管理，整個乘法運算生命週期內達成 **0 次 Heap 動態分配與釋放**。
 - **除法與取模**：
   - **雙階派發架構 (Two-Tier Division Architecture)**：
-    - **中小型運算元 ($< 128$ limbs / 8,192 bits)**：採用改良版 **Knuth Algorithm D** 規格化長除法。對於 16,384 位元以內的運算元，正規化工作陣列完全配置於棧上（`stack_scratch[512]`），達成 0 次 Heap 動態配置。
-    - **大型運算元 ($\ge 128$ limbs / 8,192 bits)**：自動切換至 **Burnikel-Ziegler $D_{2n, n}$ / $D_{3n, 2n}$ 分治除法**。透過將除數與被除數依據動態區塊長度 $n$ 與補位 $\sigma = n_{\text{bits}} - v_{\text{bits}}$ 進行高位區塊正規化，並遞迴調用快速長乘法，將長除法複雜度由傳統 $O(N^2)$ 降低至 **$O(M(N) \log N)$**。64K-bit 除法速度達到 **2.59x 加速**（延遲由 306.45 µs 降低至 **118.22 µs**）。
+    - **中小型與短商數運算元 ($< 32$ limbs / 2,048 bits 或短商數情形)**：採用改良版 **Knuth Algorithm D** 原地規格化長除法（支援原地零配置除/模與棧上緩衝區）。
+    - **大型運算元 ($\ge 32$ limbs / $\ge 2,048$ bits)**：自動切換至 **Burnikel-Ziegler $D_{2n, n}$ / $D_{3n, 2n}$ 分治除法**（`BZ_THRESHOLD = 32`）。改採 `ScratchArena` 切片配置消除所有遞迴動態向量配置，將長除法複雜度由傳統 $O(N^2)$ 降低至 **$O(M(N) \log N)$**。
   - **商餘獨立求值 (Decoupled Quotient/Remainder)**：內部介面解耦為 `div_q_signed`、`div_r_signed` 與 `div_qr_signed`。當執行除法（`a / b` 或 `a /= b`）時，完全不配置亦不處理餘數陣列；當執行取模（`a % b` 或 `a %= b`）時，完全跳過商數陣列之填充與正規化，大幅節省記憶體頻寬。
 
 #### 例外狀況
@@ -141,7 +141,7 @@ NUMERIC_CONSTEXPR_20 bigint& operator^=(const bigint& rhs);
 CPP-BigInt 為負整數提供了精準的**無限符號位元二補數抽象語意**：
 - 負數在概念上具有無限延伸的符號位元 `...1111`。
 - 負數與負數進行 `&`、`|`、`^` 運算結果維持正確的負數二補數規則（如 `(-1) & (-1) == -1`）。
-- **零拷貝優化**：針對 `(const&, const&)` 採用 direct-result 直接建構結果緩衝區；當任一運算元為右值（`&&`）時自動重用其底層緩衝區（in-place reuse），避免暫存記憶體配置。
+- **零拷貝與 4x 展開 SIMD 就地優化**：針對 `(const&, const&)` 採用 direct-result 直接建構結果緩衝區；當任一運算元為右值（`&&`）時自動重用其底層緩衝區；就地位元運算（`&=`, `|=`, `^=`）於同號或正數區間採用 `NUMERIC_RESTRICT` 4x 展開，在 65,536-bit 下僅耗時 ~160 ns。
 
 #### 範例
 ```cpp

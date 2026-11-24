@@ -196,7 +196,12 @@ int main(void) {
 }
 ```
 
-### 2. C# (.NET 10 P/Invoke) 範例
+### 2. C# / .NET 10 (`[LibraryImport]` P/Invoke 與正式封裝套件)
+
+> [!TIP]
+> 若您正在開發 .NET 應用程式（C# / F# / VB.NET），建議直接使用官方封裝的 **[Numeric.BigInt](dotnet.md)** 函式庫（支援運算子重載、`SafeHandle` 與 `ref struct BigIntScope`），無需手動撰寫下列低階 P/Invoke 宣告。
+
+下例展示低階 `[LibraryImport]` 零封送開銷呼叫方式：
 
 ```csharp
 using System;

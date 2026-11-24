@@ -2,20 +2,22 @@
 
 ## 1. 系統架構概觀
 
-`CPP-BigInt` 是一套現代化、零外部依賴、向下相容 C++11 至 C++23 的任意精度整數運算函式庫，同時提供純 C-ABI（可供 .NET P/Invoke、Python CTypes 或 Rust FFI 調用）。
+`CPP-BigInt` 是一套現代化、零外部依賴、向下相容 C++11 至 C++23 的任意精度整數運算函式庫，提供純 C-ABI（`bigint_c.dll`）與官方 **.NET 跨語言託管封裝（`Numeric.BigInt`）**，供 C++、C# 14、F# 10、VB.NET 10、Python 與 Rust 調用。
 
 系統採用模組化分層架構（Modular Layered Architecture）與雙層解耦（LLVM SmallVector Pattern），在兼顧極限執行效能的同時避免樣板程式碼膨脹。
 
 ```mermaid
 graph TD
-    UserApp["使用者應用程式 (C++ / C-ABI / .NET P/Invoke)"] --> BigIntFacade["High-Level Facade: BasicBigInt<SboLimbs> / bigint_t"]
+    UserApp["使用者應用程式 (C++ / C# 14 / F# 10 / VB.NET 10 / Python)"] --> ManagedDotnet["Numeric.BigInt (.NET 雙層封裝: BigInt + BigIntScope)"]
+    UserApp --> BigIntFacade["High-Level C++ Facade: BasicBigInt<SboLimbs> / bigint_t"]
+    ManagedDotnet --> BigIntFacade
     
     subgraph CoreEngine["數值核心引擎 (numeric::detail)"]
         BigIntFacade --> StringConv["StringConversion.hpp (Radix-10 分治與乘法求逆)"]
         BigIntFacade --> Division["Division.hpp (Knuth D, Burnikel-Ziegler 3/2 & 2/1)"]
         Division --> Multiplication["Multiplication.hpp (Schoolbook, Karatsuba, Toom-3, ScratchArena)"]
-        Multiplication --> Bitwise["Bitwise.hpp (shld/shrd, 兩階段向量化, 0-Alloc Not)"]
-        Bitwise --> Arithmetic["Arithmetic.hpp (帶符號加減, 大小比較, 邊界正規化)"]
+        Multiplication --> Bitwise["Bitwise.hpp (shld/shrd, 4x 展開向量化, 0-Alloc Not)"]
+        Bitwise --> Arithmetic["Arithmetic.hpp (1/2-limb 快路徑, 無分支比較, 帶符號加減)"]
         Arithmetic --> Storage["Storage.hpp (BigIntBase, SBO 棧上陣列與 Heap 緩衝區)"]
         Arithmetic --> Intrinsics["Intrinsics.hpp (ADC64, SBB64, MUL64, DIV128, CLZ, SHLD/SHRD)"]
     end
@@ -39,17 +41,27 @@ graph TD
   - 全面支援 C++20 `std::is_constant_evaluated()` 常數求值。
 
 ### 2.3 邏輯演算法層 (Algorithm Logic Layer)
-- **`Arithmetic.hpp`**: 無符號/帶符號加減法核心、規格化與大小比較。
-- **`Bitwise.hpp`**: 雙字硬體位移、兩階段無分支 OR/XOR 向量化、零配置二補數 NOT。
+- **`Arithmetic.hpp` 與 `BigInt.hpp` 快路徑**：
+  - 1-limb 與 2-limb 標量就地加減快路徑（`operator+=`, `operator-=`），結合硬體進借位大幅減少分支與正規化開銷。
+  - 1/2/4-limb 無分支比較特化（`operator<`, `operator==`），由高位向低位單一不等比較。
+- **`Bitwise.hpp`**:
+  - `shld64` / `shrd64` 雙字硬體位移（移除迴圈內條件分支與小位數展開）。
+  - `NUMERIC_RESTRICT` 4x 展開就地位元運算（`&=`, `|=`, `^=`），支援 SIMD 向量化並消除正數重配置開銷。
+  - 零配置二補數 NOT。
 - **`Multiplication.hpp`**:
   - `mul_schoolbook_raw`: 密集小數乘法（由 `addmul_1_raw` 驅動）。
-  - `mul_karatsuba_raw`: $O(N^{1.585})$ Karatsuba 乘法（ScratchArena 零堆積配置）。
-  - `mul_toom3_raw`: $O(N^{1.465})$ Toom-Cook 3-way 乘法（門檻 256 limbs）。
+  - `mul_karatsuba_raw` / `mul_block_karatsuba_raw`: $O(N^{1.585})$ Karatsuba 乘法（門檻 16 limbs，支援非對稱分塊，ScratchArena 零堆積配置）。
+  - `mul_toom3_raw`: $O(N^{1.465})$ Toom-Cook 3-way 乘法（門檻 `TOOM3_THRESHOLD = 64` limbs / 4,096 bits）。
 - **`Division.hpp`**:
-  - `div_mod_core_knuth`: Knuth Algorithm D 原地長除法（由 `submul_1_raw` 驅動）。
-  - `bz_div3by2_raw` / `bz_div2by1_raw`: Burnikel-Ziegler 分治除法（門檻 128 limbs，ScratchArena 零堆積配置）。
+  - `div_mod_core_knuth`: Knuth Algorithm D 原地長除法（由 `submul_1_raw` 驅動），亦為短商數除法提供直接快路徑與原地零配置除法/取模。
+  - `bz_div3by2_raw` / `bz_div2by1_raw`: Burnikel-Ziegler 分治除法（門檻 `BZ_THRESHOLD = 32` limbs / 2,048 bits，以 `ScratchArena` 切片配置達成零堆積配置）。
 - **`StringConversion.hpp`**:
   - 快速 Radix-10 雙向轉換，結合乘法逆元（消除硬體除法）與分治除法。
+
+### 2.4 .NET 跨語言託管層 (`dotnet/src/Numeric.BigInt`)
+- **Tier 1 (`BigInt` + `BigIntHandle`)**: 不可變物件封裝 `SafeHandleZeroOrMinusOneIsInvalid`，提供完整 CLS 相容運算子重載（含 VB.NET 專屬 `op_IntegerDivision` `\`）。
+- **Tier 2 (`ref struct BigIntScope` & `BigIntSbo256`)**: 堆疊 SBO 緩衝區與無鎖暫存池，在 C# 熱點路徑達成嚴格 0 Bytes GC 配置。
+- **Interop (`NativeMethods` & `NativeResolver`)**: 採用 `[LibraryImport]` 零封送開銷 P/Invoke 與跨平台自動 DLL 探查器。
 
 ---
 
@@ -57,6 +69,6 @@ graph TD
 
 1. **SBO 棧上陣列 (Stack Allocation)**:
    - 256 位元（或依樣板指定的 SboLimbs）內保證 0 次動態記憶體配置。
-2. **無鎖 Bump Allocator (`ScratchArena`)**:
-   - 專為遞迴演算法（Karatsuba、Toom-3、Burnikel-Ziegler）設計之線程局部暫存池。
+2. **無鎖分塊 Bump Allocator (`ScratchArena`)**:
+   - 專為遞迴演算法（Karatsuba、Toom-3、Burnikel-Ziegler）設計之線程局部暫存池，採用指標穩定分塊機制避免遞迴擴張導致指標懸置。
    - 採用 RAII `ScratchArena::Scope` 自動回滾指標，消滅遞迴中的重複 `new/delete`。

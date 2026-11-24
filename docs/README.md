@@ -13,6 +13,7 @@
 | `numeric` | `<numeric/Bitset.hpp>` | `bigint` 與任意寬度 `std::bitset<N>` 雙向互轉介面。 |
 | `numeric` | `<numeric/Config.hpp>` | 編譯期環境檢測、屬性與相容性巨集定義。 |
 | `numeric` / `C` | `<numeric/c_api.h>` / `dist/bigint_c.h` | C-ABI (`extern "C"`) 介面，供純 C、Python、Rust、.NET 等 FFI 呼叫。 |
+| `Numeric` (.NET) | [`dotnet/src/Numeric.BigInt/`](../dotnet/src/Numeric.BigInt/) | 正式 .NET 10 跨語言（C# 14、F# 10、VB.NET 10）封裝函式庫。 |
 | `std` | `<numeric/BigInt.hpp>` | 標準庫特化：支援 `std::hash` 與 C++20 `std::formatter`。 |
 
 ### 內部模組化架構 (`numeric::detail`)
@@ -24,9 +25,9 @@
 | `numeric/detail/Intrinsics.hpp` | `BigIntIntrinsics` | 硬體級原語：`adc64`, `sbb64`, `clz64`, `mul64_wide`, `div128_64`, 倒數除法加速 |
 | `numeric/detail/Storage.hpp` | `BigIntBase` | LLVM SmallVector 雙層解耦架構、SBO 指標管理、容量擴展與歸一化 |
 | `numeric/detail/Arithmetic.hpp` | `BigIntArithmetic` | 無符號與有符號加減法（對稱 SBO 快速路徑、一般性向量運算） |
-| `numeric/detail/Bitwise.hpp` | `BigIntBitwise` | 整肢移位、位元左移/右移、算術右移、位元 NOT/AND/OR/XOR |
-| `numeric/detail/Multiplication.hpp` | `BigIntMultiplication` | Schoolbook、Karatsuba、Toom-3 演算法與無鎖 `ScratchArena` 記憶體池 |
-| `numeric/detail/Division.hpp` | `BigIntDivision` | Knuth Algorithm D 原地長除法與 Burnikel-Ziegler $D_{2n,n} / D_{3n,2n}$ 分治除法 |
+| `numeric/detail/Bitwise.hpp` | `BigIntBitwise` | 整肢移位、無分支 `shld64`/`shrd64` 移位、4x 展開 `NUMERIC_RESTRICT` 就地位元運算 |
+| `numeric/detail/Multiplication.hpp` | `BigIntMultiplication` | Schoolbook、Block Karatsuba、Toom-3（門檻 64 limbs）與指標穩定 `ScratchArena` 記憶體池 |
+| `numeric/detail/Division.hpp` | `BigIntDivision` | Knuth Algorithm D（含短商數快路徑）與 Burnikel-Ziegler（門檻 32 limbs）零堆積配置分治除法 |
 | `numeric/detail/StringConversion.hpp` | `BigIntStringConversion` | 2-Digit LUT、分治十進位解析與格式化、`Pow10Cache` 冪次快取、constexpr 求值 |
 | `numeric/detail/BigIntCore.hpp` | `BigIntCore` | 核心匯聚類別，完整繼承各子模組，保證 100% 原始 API 相容性 |
 
@@ -88,9 +89,12 @@
 收錄於 `<numeric/Config.hpp>`，定義 C++ 版本條件編譯、`NUMERIC_CONSTEXPR_20_FORCEINLINE`、無例外 (`-fno-exceptions`) 安全回退機制、constexpr 支援等級及原生硬體加速檢測。
 
 ### 6. [C-ABI 介面與跨語言 FFI (C-API)](c_api.md)
-收錄於 `<numeric/c_api.h>` 與 `dist/bigint_c.h`，提供 57 個標準 `extern "C"` 介面，支援 Opaque Handle 模式與 256/512 位元棧上零配置 SBO 模式，無縫對接 Python、Rust、.NET 10 (`[DllImport]`) 及 Go。
+收錄於 `<numeric/c_api.h>` 與 `dist/bigint_c.h`，提供 57 個標準 `extern "C"` 介面，支援 Opaque Handle 模式與 256/512 位元棧上零配置 SBO 模式，無縫對接 Python、Rust、.NET 10 (`[DllImport]` / `[LibraryImport]`) 及 Go。
 
-### 7. [跨語言效能評測報告 (Benchmark Report)](../benchmarks/results/BENCHMARK_REPORT.md)
+### 7. [.NET 跨語言封裝函式庫 (`Numeric.BigInt`)](dotnet.md)
+完整收錄正式 .NET 10 封裝函式庫，提供不可變 `BigInt`（完整運算子重載，支援 **C# 14**、**F# 10** 與 **VB.NET 10**）與零 GC 配置之 `ref struct BigIntScope` / `BigIntSbo256` 堆疊運算介面。
+
+### 8. [跨語言效能評測報告 (Benchmark Report)](../benchmarks/results/BENCHMARK_REPORT.md)
 收錄 `CPP-BigInt`、`C++ GMP (MPIR)`、`.NET 10`、`Python 3.13` 及 `gmpy2` 之 64 至 65,536 bits 完整對比矩陣與效能比值。
 
 ---
