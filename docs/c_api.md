@@ -9,7 +9,8 @@
 | 項目 | 檔案路徑 | 說明 |
 | :--- | :--- | :--- |
 | **模組標頭檔** | [`include/numeric/c_api.h`](../../include/numeric/c_api.h) | 原始碼開發目錄下的 C API 標頭檔。 |
-| **發行單一標頭檔** | [`dist/bigint_c.h`](../../dist/bigint_c.h) | 隨發行版發布的純 C 單一標頭檔，可直接複製至第三方專案。 |
+| **發行單一標頭檔** | [`dist/bigint_c.h`](../../dist/bigint_c.h) | 隨發行版發布的純 C 單一標頭檔，可直接複製至第三方專案（C99/C11 與 C++11～20 皆相容）。 |
+| **一鍵導出腳本** | [`scripts/export_c_api.py`](../../scripts/export_c_api.py) | 自動以 C++23 編譯並導出至 `dist/c_api/`（含標頭、動態庫、匯入庫與 C99/C++11/Python 範例），支援 `--verify` 驗證。 |
 | **二進位共用庫** | `build/Release/bigint_c.dll` (`bigint_c.lib`) / `libbigint_c.so` | CMake 建置產生的動態連結函式庫。 |
 
 ---

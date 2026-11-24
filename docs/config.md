@@ -15,9 +15,7 @@
 | `NUMERIC_BIGINT_SBO_LIMBS` | 正整數（預設 `4`，可設為 `8`） | SBO 小對象最佳化容量（以 64-bit limb 為單位）。預設 4 肢（256 位元），物件大小 64 位元組剛好對齊單一 L1 快取行；設為 8 肢（512 位元）可支援 0-heap 加密運算。 |
 | `NUMERIC_CPLUSPLUS` | 數值（如 `202302L`） | 正規化後的 C++ 語言標準版本代碼（相容 MSVC `_MSVC_LANG` 與 GCC/Clang `__cplusplus`）。 |
 | `NUMERIC_NODISCARD` | `[[nodiscard]]` | C++23 下強制展開為 `[[nodiscard]]`，防止忽略純運算或檢查狀態回傳值。 |
-| `NUMERIC_CONSTEXPR_14` | `constexpr` | C++23 下直接展開為 `constexpr`。 |
 | `NUMERIC_CONSTEXPR_20` | `constexpr` | C++23 下直接展開為 `constexpr`。 |
-| `NUMERIC_INLINE_VAR` | `inline` | C++17+ 行內變數指示字（供標頭檔常數使用）。 |
 | `NUMERIC_LIFETIMEBOUND` | `[[msvc::lifetimebound]]` 或空 | 在 MSVC（非 Clang）下展開為 `[[msvc::lifetimebound]]`，標註衍生自 `*this` 之指標或 `std::span` 視圖，防止懸空參考；其餘編譯器展開為空。 |
 | `NUMERIC_CONSTEXPR_20_FORCEINLINE` | `constexpr ...` | 將 `constexpr` 與編譯器強制內聯屬性安全結合的熱路徑巨集。 |
 | `NUMERIC_RESTRICT` | `__restrict` 或 `__restrict__` | 指標無別名（No-Alias）限定詞，指示編譯器指標無記憶體重疊以強化指令平行化。 |
@@ -76,9 +74,9 @@ namespace numeric {
 
 ### 3. 編譯期常數計算 (`NUMERIC_CONSTEXPR_20`)
 
-在 C++20 中，標準放寬了 `constexpr` 對動態記憶體配置（Transient Allocation）與虛擬函式等的限制。`CPP-BigInt` 的核心運算法在 C++20 下均符合 `constexpr` 要求。
+在 C++23 基準下，標準支援 `constexpr` 動態記憶體配置（Transient Allocation），`CPP-BigInt` 的核心運算法均符合編譯期 `constexpr` 要求。
 
-#### 範例 (C++20 編譯期運算)
+#### 範例 (C++23 編譯期運算)
 ```cpp
 #include <numeric/BigInt.hpp>
 

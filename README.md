@@ -97,8 +97,11 @@ target_link_libraries(your_target PRIVATE bigint)
 import bigint;
 ```
 
-#### 4. C-ABI 與正式 .NET 跨語言函式庫引入 (C# 14 / F# 10 / VB.NET 10)
-CMake 建置時預設開啟 `-DBIGINT_BUILD_C_API=ON`，產出 `bigint_c.dll` / `libbigint_c.so`，並提供純 C 標頭檔 `dist/bigint_c.h`。
+#### 4. C-ABI、舊版 C++（C++11～20）與正式 .NET 跨語言函式庫引入 (C# 14 / F# 10 / VB.NET 10)
+核心標頭檔全面要求 **C++23**；若需於 **舊版 C++（C++11～20）**、純 C 或 Python / Rust / Go / .NET 呼叫，可透過 C-ABI 匯出腳本一鍵建置並封裝獨立 SDK（含 `bigint_c.h`、`bigint_c.dll` / `libbigint_c.so` 與多語言範例）：
+```bash
+python scripts/export_c_api.py --verify
+```
 若需於 .NET 10 中作為 `System.Numerics.BigInteger` 的高速替代方案，可直接引用解決方案 [`dotnet/NumericBigInt.slnx`](dotnet/NumericBigInt.slnx) 或打包 NuGet 套件：
 ```powershell
 dotnet.exe build dotnet\NumericBigInt.slnx -c Release

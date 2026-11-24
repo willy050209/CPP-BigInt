@@ -39,7 +39,7 @@
    - 公開函式一律使用尾隨回傳型別（Trailing Return Type：`auto func(...) -> ReturnType`），整數泛型約束強制使用 `<concepts>`（`std::integral`、`std::signed_integral`、`std::unsigned_integral`）。
    - 無例外可恢復失敗路徑優先回傳 `std::expected<T, BigIntError>`，衍生指標與 `std::span` 視圖必須標註 `NUMERIC_LIFETIMEBOUND`。
 2. **Constexpr 與屬性規則**：
-   - 編譯期常數函式使用 `NUMERIC_CONSTEXPR_14` / `NUMERIC_CONSTEXPR_20`（於 C++23 下展開為 `constexpr`）。
+   - 編譯期常數函式使用 `NUMERIC_CONSTEXPR_20`（於 C++23 下展開為 `constexpr`）。
    - 常數評估檢測使用 `std::is_constant_evaluated()` 或 `if consteval`。
    - 純回傳值與不可忽略狀態必須標註 `NUMERIC_NODISCARD`（`[[nodiscard]]`）。
 3. **微最佳化熱點與零開銷安全規則**：
