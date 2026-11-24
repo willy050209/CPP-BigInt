@@ -77,7 +77,8 @@ public:
         const std::span<const std::uint64_t> src) noexcept -> void
     {
         assert(dst.size() >= src.size());
-        std::ranges::copy(src, dst.begin());
+        const std::size_t count{std::min(dst.size(), src.size())};
+        std::ranges::copy(src.first(count), dst.begin());
     }
 
     /// <summary>
@@ -340,36 +341,40 @@ public:
         if (this == &other) {
             return;
         }
-        if (m_capacity >= other.m_size && m_data != nullptr) {
-            if (other.m_size > 0U) {
-                copy_limbs(capacity_span(), other.as_span());
+        const std::uint32_t src_size{
+            other.m_is_sbo ? std::min(other.m_size, other.m_sbo_capacity) : other.m_size
+        };
+        const std::span<const std::uint64_t> src_span{other.m_data, src_size};
+        if (m_capacity >= src_size && m_data != nullptr) {
+            if (src_size > 0U) {
+                copy_limbs(capacity_span(), src_span);
             }
-            if (m_is_sbo && m_sbo_capacity > other.m_size) {
-                zero_limbs(inline_span().subspan(other.m_size));
+            if (m_is_sbo && m_sbo_capacity > src_size) {
+                zero_limbs(inline_span().subspan(src_size));
             }
-        } else if (m_sbo_capacity > 0U && other.m_size <= m_sbo_capacity) {
+        } else if (m_sbo_capacity > 0U && src_size <= m_sbo_capacity) {
             reset_heap();
-            if (other.m_size > 0U) {
-                copy_limbs(inline_span(), other.as_span());
+            if (src_size > 0U) {
+                copy_limbs(inline_span(), src_span);
             }
-            if (m_sbo_capacity > other.m_size) {
-                zero_limbs(inline_span().subspan(other.m_size));
+            if (m_sbo_capacity > src_size) {
+                zero_limbs(inline_span().subspan(src_size));
             }
             m_data = m_inline_data;
             m_capacity = m_sbo_capacity;
             m_is_sbo = true;
         } else {
-            const std::size_t needed{(other.m_capacity > other.m_size) ? other.m_capacity : (other.m_size > 0U ? other.m_size : 1U)};
+            const std::size_t needed{(other.m_capacity > src_size) ? other.m_capacity : (src_size > 0U ? src_size : 1U)};
             std::uint64_t* const new_heap{allocate_limbs(needed)};
             reset_heap();
             m_data = new_heap;
             m_capacity = static_cast<std::uint32_t>(needed);
             m_is_sbo = false;
-            if (other.m_size > 0U) {
-                copy_limbs(capacity_span(), other.as_span());
+            if (src_size > 0U) {
+                copy_limbs(capacity_span(), src_span);
             }
         }
-        m_size = other.m_size;
+        m_size = src_size;
         m_sign = other.m_sign;
     }
 
