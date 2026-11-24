@@ -17,13 +17,25 @@
 
 ```cpp
 namespace numeric {
-    template <size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
+    enum class BigIntError : std::uint8_t {
+        EmptyInput,
+        InvalidFormat,
+        DivisionByZero,
+        NegativeInput,
+        Overflow
+    };
+
+    template <std::size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
     class BasicBigInt;
 
-    using BigInt = BasicBigInt<NUMERIC_BIGINT_SBO_LIMBS>;
-    using bigint = BigInt;
-    using BigInt512 = BasicBigInt<8>;
-    using bigint512 = BigInt512;
+    using BigInt     = BasicBigInt<NUMERIC_BIGINT_SBO_LIMBS>;
+    using bigint     = BigInt;
+    using BigInt256  = BasicBigInt<4>;
+    using bigint256  = BigInt256;
+    using BigInt512  = BasicBigInt<8>;
+    using bigint512  = BigInt512;
+    using BigInt1024 = BasicBigInt<16>;
+    using bigint1024 = BigInt1024;
 }
 ```
 
@@ -41,12 +53,13 @@ namespace numeric {
     - 小型乘法（$\le 16$ limbs / 1024 位元）：高度向量化與展開之 **Schoolbook 乘法**（且當兩運算元長度總和 $\le$ SBO 容量時，使用純棧上暫存完成，0 Heap 配置）。
     - 中型乘法（$16 < N \le 64$ limbs / 1024 ~ 4096 位元）：**Karatsuba 分治演算法** ($O(N^{1.585})$)。
     - 大型乘法（$N > 64$ limbs / > 4096 位元）：**Toom-Cook 3 (Toom-3) 演算法** ($O(N^{1.465})$)。
-  - **雙階除法派發**：中小型整數（$< 128$ limbs）採用 **Knuth Algorithm D**；大型整數（$\ge 128$ limbs / 8,192 bits）自動分派至 **Burnikel-Ziegler $D_{2n,n} / D_{3n,2n}$** 分治演算法 ($O(M(N) \log N)$)。
+  - **雙階除法派發**：中小型整數（`< 32` limbs / 2,048 位元或短商數）採用 **Knuth Algorithm D**；大型整數（`>= 32` limbs / 2,048 bits）自動分派至 **Burnikel-Ziegler $D_{2n,n} / D_{3n,2n}$** 分治演算法 ($O(M(N) \log N)$)。
   - **Thread-Local ScratchArena**：大數運算遞迴深度內達成 **0 次 Heap 動態配置**。
 - **Direct-Result 與 Move-Reuse 零拷貝運算子**：二元運算子提供 4-overload 矩陣，常數參考直接建構結果，右值運算元就地重用緩衝區。
-- **無縫整數混算**：支援與所有 C++ 原生整數型態（`int8_t` ~ `int64_t`、`uint8_t` ~ `uint64_t`、`long`、`char` 等）無縫進行混合四則運算、位元運算與比較。
+- **無縫整數混算與 Concepts 約束**：透過 `std::signed_integral` / `std::unsigned_integral` Concepts 支援與原生整數無縫混合運算與比較，並對 `bool` 與 `std::bitset<N>` 標註 `explicit` 防止非預期隱式轉換。
+- **無例外單子式錯誤處理 (`std::expected`)**：提供 `try_from_string`、`try_from_binary_string`、`try_to_int64`、`try_to_uint64` 回傳 `std::expected<..., BigIntError>`。
 - **標準二補數語意**：位元運算子（`&`, `|`, `^`, `~`, `<<`, `>>`）模擬標準二補數無限符號延伸（Two's Complement sign extension），其行為與原生有符號整數高度一致。
-- **全編譯期求值 (`constexpr`) 支援**：在 C++20 及以上標準環境下，建構子、四則運算、位元運算與比較皆完整標註為 `constexpr`。
+- **C++23 全編譯期求值 (`constexpr`) 與生命週期安全**：建構子、四則運算、位元運算與比較皆支援 `constexpr`，內部採用 `std::span` 視圖與 `NUMERIC_LIFETIMEBOUND`（`[[msvc::lifetimebound]]`）防止懸空參考。
 
 ---
 
@@ -55,8 +68,8 @@ namespace numeric {
 ```mermaid
 flowchart TD
     A["numeric::bigint 實例"] --> B{"數值寬度 <= SBO 容量？<br>(預設 <= 4 limbs / 256 位元)"}
-    B -- 是 --> C["SBO 模式 (Small Buffer Optimization)<br>使用內部 m_sbo 陣列<br>0 次 Heap 動態配置，純棧/暫存器極速運算"]
-    B -- 否 --> D["動態儲存模式 (Heap Allocation)<br>分配 m_heap 陣列<br>隨數值規模自動擴展"]
+    B -- 是 --> C["SBO 模式 (Small Buffer Optimization)<br>使用內部 m_inline_storage 陣列 (bind_inline)<br>0 次 Heap 動態配置，純棧/暫存器極速運算"]
+    B -- 否 --> D["動態儲存模式 (Heap Allocation)<br>以 std::make_unique&lt;uint64_t[]&gt; 分配陣列<br>隨數值規模自動擴展"]
     D -- 運算後數值縮減 <= SBO 容量 --> E["自動退回 SBO<br>釋放 Heap 記憶體，恢復快取局部性"]
 ```
 
@@ -76,11 +89,11 @@ flowchart TD
 | 成員類別 | 說明文件 | 主要包含項目 |
 | :--- | :--- | :--- |
 | **常數代理** | [靜態解析與常數](parsing.md) | `zero`, `one`, `operator()` |
-| **建構函式** | [建構函式全覽](constructors.md) | 預設建構子、原生型別、泛型整數、字串視圖、`std::bitset` |
-| **狀態檢測** | [屬性與狀態方法](properties.md) | `is_sbo`, `is_small`, `is_zero`, `sign`, `limb_count`, `limbs`, `storage` |
-| **型別轉換** | [轉換與序列化](conversions.md) | `operator bool`, `int64_t`, `double`, `to_string`, `to_binary_string`, `to_bitset` |
+| **建構函式** | [建構函式全覽](constructors.md) | 預設建構子、Concepts 整數建構、`explicit` `bool`/字串/`std::bitset` |
+| **狀態檢測** | [屬性與狀態方法](properties.md) | `is_sbo`, `is_small`, `is_zero`, `sign`, `limb_count`, `limbs`, `as_span`, `capacity_span`, `inline_span`, `storage` |
+| **型別轉換** | [轉換與序列化](conversions.md) | `operator bool`, `int64_t`, `double`, `try_to_int64`, `try_to_uint64`, `to_string`, `to_binary_string`, `to_bitset` |
 | **運算子重載** | [運算子全集](operators.md) | `+`, `-`, `*`, `/`, `%`, 位元運算、位移、比較、邏輯、串流輸出 |
-| **靜態方法** | [靜態解析與常數](parsing.md) | `from_string`, `from_binary_string` |
+| **靜態方法** | [靜態解析與常數](parsing.md) | `from_string`, `try_from_string`, `from_binary_string`, `try_from_binary_string`, `BigIntError` |
 
 ---
 

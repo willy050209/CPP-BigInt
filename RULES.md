@@ -1,6 +1,6 @@
 # CPP-BigInt 開發原則與編碼規範 (RULES.md)
 
-本規範適用於專案中所有人類開發者與 AI Worker 子代理，確保架構一致性、向下相容性與極限執行效能。
+本規範適用於專案中所有人類開發者與 AI Worker 子代理，確保架構一致性、C++23 安全子集規範、零警告合規與極限執行效能。
 
 ---
 
@@ -10,7 +10,7 @@
 - **資料結構 (Storage / Data Class)** 與 **業務邏輯 (Algorithm Logic)** 必須嚴格隔離：
   - `Storage.hpp` 僅負責 limbs 儲存、容量擴充與 SBO 生命週期。
   - 演算法邏輯置於 `Arithmetic.hpp`, `Bitwise.hpp`, `Multiplication.hpp`, `Division.hpp`。
-- 演算法核心必須盡可能設計為**純指標 raw 函式**（如 `*_raw(uint64_t* out, const uint64_t* a, ...)`），方便重用與多重演算法串接。
+- 演算法核心必須以邊界安全的 `std::span<std::uint64_t>` / `std::span<const std::uint64_t>` 或受邊界檢查保護之 `*_raw` 純指標核心（搭配 `NUMERIC_RESTRICT`）設計，方便重用與向量化。
 
 ### 1.2 註解規範 (Documentation Standards)
 - **僅對類別 (Class/Struct)、公開介面與函式 (Function/Method) 使用 XML 文件註解**：
@@ -32,22 +32,16 @@
 
 ---
 
-## 2. C++ 相容性與巨集規範 (Compatibility Guidelines)
+## 2. C++23 規範、安全性與巨集慣例 (C++23 & Safety Guidelines)
 
-1. **向下相容性**：
-   - 保證支援 C++11 至 C++23。
-   - 命名空間不可使用 C++17 巢狀寫法 `namespace A::B { ... }`，必須寫為：
-     ```cpp
-     namespace numeric {
-     namespace detail {
-     ...
-     }
-     }
-     ```
-2. **Constexpr 規則**：
-   - C++14 有效之函式使用 `NUMERIC_CONSTEXPR_14`。
-   - C++20 有效之動態/指標運算使用 `NUMERIC_CONSTEXPR_20`。
-   - 純常數評估使用 `std::is_constant_evaluated()`（置於 `#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)` 內）。
-3. **微最佳化 hotpaths**：
-   - 極限關鍵路徑使用 `NUMERIC_FORCEINLINE` 或 `NUMERIC_CONSTEXPR_20_FORCEINLINE`。
-   - 確保純回傳無副作用函式標註 `NUMERIC_NODISCARD`。
+1. **C++23 基準與模組相容**：
+   - 專案全面採用 **C++23** 標準（MSVC `/std:c++latest`，GCC/Clang `-std=c++23`），並保持與 C++20 模組匯出（`dist/bigint.ixx`）的單向依賴相容。
+   - 公開函式一律使用尾隨回傳型別（Trailing Return Type：`auto func(...) -> ReturnType`），整數泛型約束強制使用 `<concepts>`（`std::integral`、`std::signed_integral`、`std::unsigned_integral`）。
+   - 無例外可恢復失敗路徑優先回傳 `std::expected<T, BigIntError>`，衍生指標與 `std::span` 視圖必須標註 `NUMERIC_LIFETIMEBOUND`。
+2. **Constexpr 與屬性規則**：
+   - 編譯期常數函式使用 `NUMERIC_CONSTEXPR_14` / `NUMERIC_CONSTEXPR_20`（於 C++23 下展開為 `constexpr`）。
+   - 常數評估檢測使用 `std::is_constant_evaluated()` 或 `if consteval`。
+   - 純回傳值與不可忽略狀態必須標註 `NUMERIC_NODISCARD`（`[[nodiscard]]`）。
+3. **微最佳化熱點與零開銷安全規則**：
+   - 極限關鍵路徑使用 `NUMERIC_ALWAYS_INLINE` 或 `NUMERIC_CONSTEXPR_20_FORCEINLINE`。
+   - 大型棧上暫存陣列僅於必要長度區段寫入，避免在熱路徑對整個固定緩衝區執行無條件 `{}` 全陣列零初始化；CMake `/sdl` 旗標僅啟用於 Debug 組態。

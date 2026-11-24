@@ -155,31 +155,31 @@ std::cout << (a ^ b) << "\n"; // 輸出: 6  (0b0110)
 
 ---
 
-### 4. 泛型位移運算子 (Generic Shift Operators)
+### 4. 泛型位移運算子 (Concepts-Constrained Shift Operators)
 
 #### 語法
 ```cpp
-template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-NUMERIC_CONSTEXPR_20 bigint& operator<<=(T shift);
+template <std::integral T>
+NUMERIC_CONSTEXPR_20 auto operator<<=(T shift) -> BasicBigInt&;
 
-template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-NUMERIC_CONSTEXPR_20 bigint& operator>>=(T shift);
+template <std::integral T>
+NUMERIC_CONSTEXPR_20 auto operator>>=(T shift) -> BasicBigInt&;
 
-template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-friend NUMERIC_CONSTEXPR_20 bigint operator<<(const bigint& lhs, T shift);
+template <std::integral T>
+NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator<<(const BasicBigInt& lhs, T shift) -> BasicBigInt;
 
-template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-friend NUMERIC_CONSTEXPR_20 bigint operator<<(bigint&& lhs, T shift);
+template <std::integral T>
+NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator<<(BasicBigInt&& lhs, T shift) -> BasicBigInt;
 
-template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-friend NUMERIC_CONSTEXPR_20 bigint operator>>(const bigint& lhs, T shift);
+template <std::integral T>
+NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator>>(const BasicBigInt& lhs, T shift) -> BasicBigInt;
 
-template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-friend NUMERIC_CONSTEXPR_20 bigint operator>>(bigint&& lhs, T shift);
+template <std::integral T>
+NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator>>(BasicBigInt&& lhs, T shift) -> BasicBigInt;
 ```
 
 #### 型別參數
-- `typename T`: 任意原生整數型別（如 `int`, `unsigned int`, `size_t`, `int64_t` 等）。
+- `std::integral T`: 經 C++23 Concepts 約束之任意原生整數型別（如 `int`, `unsigned int`, `std::size_t`, `std::int64_t` 等）。
 
 #### 參數
 - `shift`: 位移位元數（必須 $\ge 0$）。
@@ -238,20 +238,23 @@ if (0 < a) {
 
 #### 語法
 ```cpp
-NUMERIC_CONSTEXPR_20 bool operator&&(const bigint& lhs, const bigint& rhs) noexcept;
-NUMERIC_CONSTEXPR_20 bool operator||(const bigint& lhs, const bigint& rhs) noexcept;
+template <std::size_t N1, std::size_t N2>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator&&(const BasicBigInt<N1>& lhs, const BasicBigInt<N2>& rhs) noexcept -> bool;
 
-template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-NUMERIC_CONSTEXPR_20 bool operator&&(const bigint& lhs, const T& rhs) noexcept;
+template <std::size_t N1, std::size_t N2>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator||(const BasicBigInt<N1>& lhs, const BasicBigInt<N2>& rhs) noexcept -> bool;
 
-template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-NUMERIC_CONSTEXPR_20 bool operator&&(const T& lhs, const bigint& rhs) noexcept;
+template <std::size_t N, std::integral T>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator&&(const BasicBigInt<N>& lhs, T rhs) noexcept -> bool;
 
-template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-NUMERIC_CONSTEXPR_20 bool operator||(const bigint& lhs, const T& rhs) noexcept;
+template <std::size_t N, std::integral T>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator&&(T lhs, const BasicBigInt<N>& rhs) noexcept -> bool;
 
-template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-NUMERIC_CONSTEXPR_20 bool operator||(const T& lhs, const bigint& rhs) noexcept;
+template <std::size_t N, std::integral T>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator||(const BasicBigInt<N>& lhs, T rhs) noexcept -> bool;
+
+template <std::size_t N, std::integral T>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator||(T lhs, const BasicBigInt<N>& rhs) noexcept -> bool;
 ```
 
 #### 注意事項
@@ -283,5 +286,4 @@ std::cout << "Value: " << a << std::endl;
 ---
 
 ## 適用於
-- 所有運算子相容於 **C++11** 及以上版本。
-- 算術、位元、位移、比較與邏輯運算子在 **C++20** 起支援 `constexpr`。
+- **C++23** 嚴格標準環境（所有核心運算子均支援 `std::integral` Concepts 約束與 `constexpr` 編譯期常數求值）。

@@ -12,8 +12,8 @@
 
 | 函式名稱 | 語法宣告摘要 | 說明 |
 | :--- | :--- | :--- |
-| `to_bitset<N>` | `template <size_t N> std::bitset<N> to_bitset(const bigint& b);` | 將任意精度整數轉換為固定寬度之 `std::bitset<N>`。 |
-| `to_bigint<N>` | `template <size_t N> bigint to_bigint(const std::bitset<N>& bs);` | 將 `std::bitset<N>` 轉換為非負任意精度整數。 |
+| `to_bitset<N>` | `template <std::size_t N, std::size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS> [[nodiscard]] auto to_bitset(const BasicBigInt<SboLimbs>& b) -> std::bitset<N>;` | 將任意精度整數轉換為固定寬度之 `std::bitset<N>`。 |
+| `to_bigint<N>` | `template <std::size_t N, std::size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS> [[nodiscard]] auto to_bigint(const std::bitset<N>& bs) -> BasicBigInt<SboLimbs>;` | 將 `std::bitset<N>` 轉換為非負任意精度整數。 |
 
 ---
 
@@ -21,18 +21,19 @@
 
 ### 1. `to_bitset<N>` 泛型函式
 
-將 `numeric::bigint` 依據二進位或二補數編碼格式映射至指定寬度之 `std::bitset<N>`。
+將 `numeric::BasicBigInt<SboLimbs>` 依據二進位或二補數編碼格式映射至指定寬度之 `std::bitset<N>`。
 
 #### 語法
 ```cpp
 namespace numeric {
-    template <size_t N>
-    inline std::bitset<N> to_bitset(const bigint& b);
+    template <std::size_t N, std::size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
+    NUMERIC_NODISCARD inline auto to_bitset(const BasicBigInt<SboLimbs>& b) -> std::bitset<N>;
 }
 ```
 
 #### 型別參數
-- `size_t N`: 目標 `std::bitset` 之位元寬度。可為任意正整數（如 8, 16, 32, 64, 128, 256, 1024 等）。
+- `std::size_t N`: 目標 `std::bitset` 之位元寬度。可為任意非負常數（如 8, 16, 32, 64, 128, 256, 1024 等）。
+- `std::size_t SboLimbs`: 來源 `BasicBigInt` 之 SBO 內聯容量（自動由引數推導）。
 
 #### 參數
 - `b`: `const bigint&`
@@ -82,24 +83,25 @@ int main() {
 #### 語法
 ```cpp
 namespace numeric {
-    template <size_t N>
-    inline bigint to_bigint(const std::bitset<N>& bs);
+    template <std::size_t N, std::size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
+    NUMERIC_NODISCARD inline auto to_bigint(const std::bitset<N>& bs) -> BasicBigInt<SboLimbs>;
 }
 ```
 
 #### 型別參數
-- `size_t N`: 來源 `std::bitset` 的位元寬度。
+- `std::size_t N`: 來源 `std::bitset` 的位元寬度。
+- `std::size_t SboLimbs`: 目標 `BasicBigInt` 之 SBO 內聯容量（預設 `NUMERIC_BIGINT_SBO_LIMBS`）。
 
 #### 參數
 - `bs`: `const std::bitset<N>&`
   待轉換之位元集合。
 
 #### 傳回值
-- `bigint`
-  非負的任意精度整數（數值恆大於或等於 0）。
+- `BasicBigInt<SboLimbs>`
+  非負的任意精度整數（內部呼叫 `explicit BasicBigInt<SboLimbs>{bs}`）。
 
 #### 備註
-此函式內部透過批次 64-bit 打包處理，能夠快速將超長（如 1024 位元、4096 位元）的位元集合轉換為 `bigint`。
+此函式透過 `std::span` 與無符號位元組/肢打包處理，並直接搭配顯式 `BasicBigInt` 建構子運作；於外部不欲重複撰寫建構轉型時建議使用 `numeric::to_bigint`。
 
 #### 範例
 ```cpp
@@ -121,4 +123,4 @@ int main() {
 ---
 
 ## 適用於
-- C++11 及以上版本。
+- **C++23** 嚴格標準環境（全面支援任意 `BasicBigInt<SboLimbs>` 與 `[[nodiscard]]`）。
