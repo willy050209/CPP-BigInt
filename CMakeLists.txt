@@ -1,31 +1,33 @@
 cmake_minimum_required(VERSION 3.15)
 project(CPP_BigInt VERSION 1.0.0 LANGUAGES C CXX)
 
-if(NOT DEFINED CMAKE_CXX_STANDARD)
-    set(CMAKE_CXX_STANDARD 20)
-endif()
-
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# HEADER-ONLY interface target
+# HEADER-ONLY interface target (C++23 strict profile)
 add_library(bigint INTERFACE)
 target_include_directories(bigint INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
 
-# Compiler warning flags
+# Compiler warning and safety flags
 if(MSVC)
     target_compile_options(bigint INTERFACE
+        $<$<COMPILE_LANGUAGE:CXX>:/std:c++latest>
         /W4
+        /WX
+        $<$<COMPILE_LANGUAGE:CXX>:/permissive->
+        $<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>
         /utf-8
-        /Zc:__cplusplus
+        /sdl
     )
 else()
     target_compile_options(bigint INTERFACE
         -Wall
         -Wextra
+        -Werror
     )
 endif()
 
@@ -52,9 +54,9 @@ if(BIGINT_BUILD_C_API)
     )
     target_compile_definitions(bigint_c PRIVATE BIGINT_C_BUILD_DLL)
     if(MSVC)
-        target_compile_options(bigint_c PRIVATE /W4 /utf-8 /O2 /Oi /Ot /Gy)
+        target_compile_options(bigint_c PRIVATE /W4 /WX /utf-8 /O2 /Oi /Ot /Gy /sdl)
     else()
-        target_compile_options(bigint_c PRIVATE -Wall -Wextra -O2)
+        target_compile_options(bigint_c PRIVATE -Wall -Wextra -Werror -O2)
     endif()
 
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_c_api.c")
@@ -71,4 +73,3 @@ option(BIGINT_BUILD_BENCHMARKS "Build benchmark suite" OFF)
 if(BIGINT_BUILD_BENCHMARKS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/CMakeLists.txt")
     add_subdirectory(benchmarks)
 endif()
-
