@@ -118,7 +118,7 @@ struct BigIntIntrinsics {
     }
 
     /// <summary>
-    /// Counts leading zero bits in a 64-bit unsigned integer via C++20/23 std::countl_zero.
+    /// Counts leading zero bits in a 64-bit unsigned integer via C++23 std::countl_zero.
     /// 透過標準庫 std::countl_zero 計算 64 位元無符號整數之前導零數量。
     /// </summary>
     /// <param name="x">Target 64-bit unsigned integer. / 目標 64 位元無符號整數。</param>

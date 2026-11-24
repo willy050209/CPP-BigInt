@@ -12,8 +12,6 @@
 #include <cstdint>
 #include <iostream>
 
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
-
 namespace test_ce_bigint {
 
 // 1. Constant construction and proxy checks / 常數建構與常數代理
@@ -165,22 +163,16 @@ static_assert(test_addmul_submul_ce(), "addmul_1_raw and submul_1_raw constexpr 
 
 } // namespace test_ce_bigint
 
-#endif // NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20
-
 /// <summary>
 /// Executes compile-time constant evaluation runtime compatibility tests.
-/// 執行編譯期常數求值之執行期相容性驗證測試。
+/// 執行編譯期常數求值之執行期驗證測試。
 /// </summary>
 auto run_test_constexpr() -> void {
-    std::cout << "[Testing Constexpr Evaluation (C++20+)]\n";
+    std::cout << "[Testing Constexpr Evaluation (C++23)]\n";
 
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
     TEST_ASSERT(test_ce_bigint::calc_factorial(10) == 3628800);
     TEST_ASSERT(test_ce_bigint::b_from_str > 0);
     TEST_ASSERT(numeric::abs(numeric::bigint{-42}) == 42);
     TEST_ASSERT(test_ce_bigint::test_addmul_submul_ce());
     std::cout << "  -> Constexpr static_assert and runtime verification passed.\n";
-#else
-    std::cout << "  -> Skipped on C++ < 20.\n";
-#endif
 }

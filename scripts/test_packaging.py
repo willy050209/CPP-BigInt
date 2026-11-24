@@ -57,8 +57,8 @@ def main():
     check("/// <summary>" in hpp_text, "dist/bigint.hpp retains XML documentation comments")
 
     check("#  undef NUMERIC_CPLUSPLUS" in hpp_text, "dist/bigint.hpp cleans up NUMERIC_CPLUSPLUS")
-    check("#  undef NUMERIC_CXX_11" in hpp_text, "dist/bigint.hpp cleans up NUMERIC_CXX_11")
     check("#  undef NUMERIC_CXX_23" in hpp_text, "dist/bigint.hpp cleans up NUMERIC_CXX_23")
+    check("Requires C++23 or later" in hpp_text, "dist/bigint.hpp declares C++23+ requirement")
     check("NUMERIC_NODISCARD" in hpp_text, "dist/bigint.hpp preserves public API macro NUMERIC_NODISCARD")
 
     print("\n=== Step 3: Run scripts/export_module.py ===")
@@ -78,7 +78,7 @@ def main():
     check("/// <summary>" in ixx_text, "dist/bigint.ixx retains XML documentation comments")
 
     check("#  undef NUMERIC_CPLUSPLUS" in ixx_text, "dist/bigint.ixx cleans up NUMERIC_CPLUSPLUS")
-    check("#  undef NUMERIC_CXX_11" in ixx_text, "dist/bigint.ixx cleans up NUMERIC_CXX_11")
+    check("#  undef NUMERIC_CXX_23" in ixx_text, "dist/bigint.ixx cleans up NUMERIC_CXX_23")
 
     print("\n[ALL CHECKS PASSED] Packaging artifacts and scripts are 100% verified!")
 

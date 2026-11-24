@@ -19,13 +19,15 @@
 #  define NUMERIC_CPLUSPLUS __cplusplus
 #endif
 
-// C++ standard version baseline constants
-// C++ 標準版本基準常數
-#define NUMERIC_CXX_11 201103L
-#define NUMERIC_CXX_14 201402L
-#define NUMERIC_CXX_17 201703L
-#define NUMERIC_CXX_20 202002L
+// C++23 standard version baseline constant
+// C++23 語言標準基準常數
 #define NUMERIC_CXX_23 202302L
+
+// Enforce C++23 or later (allows MSVC /std:c++latest >= 202004L and GCC/Clang -std=c++23 >= 202302L)
+// 強制要求 C++23 或更新標準；舊版 C++ (C++11~20) 或 C 專案請改用 C-ABI 匯出函式庫 (c_api.h / bigint_c.h)
+#if NUMERIC_CPLUSPLUS <= 202002L
+#  error "CPP-BigInt requires C++23 or later (use /std:c++latest on MSVC or -std=c++23 on GCC/Clang). For legacy C++11~20 or C projects, link against the exported C-API library."
+#endif
 
 // Small Buffer Optimization (SBO) limb capacity: default 4 limbs (256-bit, 64 bytes total)
 // 小型緩衝區最佳化 (SBO) 肢數量容量：預設 4 limbs（256 位元，總計 64 位元組剛好對齊單一 L1 快取行）
@@ -37,11 +39,9 @@
 // 純運算與狀態回傳之強制 [[nodiscard]] 屬性標註
 #define NUMERIC_NODISCARD [[nodiscard]]
 
-// Compile-time constexpr evaluation directives
-// 編譯期常數求值 (constexpr) 指令
-#define NUMERIC_CONSTEXPR_14 constexpr
+// Compile-time constexpr evaluation directive (C++23 baseline)
+// 編譯期常數求值 (constexpr) 指令（C++23 基準）
 #define NUMERIC_CONSTEXPR_20 constexpr
-#define NUMERIC_INLINE_VAR inline
 
 // Lifetimebound attribute for views/references bound to *this or parameters
 // 衍生視圖與參考生命週期綁定標註，防止懸空參考

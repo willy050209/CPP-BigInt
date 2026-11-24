@@ -144,8 +144,8 @@ private:
     alignas(std::uint64_t) std::array<std::uint64_t, ACTUAL_SBO> m_inline_storage{};
 
 public:
-    static NUMERIC_INLINE_VAR constexpr detail::BigIntConstantProxy zero{0};
-    static NUMERIC_INLINE_VAR constexpr detail::BigIntConstantProxy one{1};
+    static inline constexpr detail::BigIntConstantProxy zero{0};
+    static inline constexpr detail::BigIntConstantProxy one{1};
 
     /// <summary>
     /// Default constructor initializing value to 0 inside inline SBO buffer.
