@@ -8,28 +8,39 @@
 
 // --- Standard Library Includes ---
 #include <cassert>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <cstring>
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <bit>
 #include <bitset>
+#include <expected>
 #include <functional>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 // --- Begin Section: include/numeric/Config.hpp ---
-// Config.hpp
-// Configuration and compiler feature detection for numeric library.
-// Zero external dependencies, downward compatible from C++23 to C++11.
+// filepath: include/numeric/Config.hpp
+/**
+ * @file Config.hpp
+ * @brief Modern C++23 compiler feature detection, inline/constexpr attributes, and safety macros for CPP-BigInt.
+ *        Defines standard SBO capacity, hardware capability probes, and exception/abort fallbacks.
+ *        現代 C++23 編譯器特性檢測、內聯與常數屬性，以及 CPP-BigInt 安全巨集設定。
+ *        定義預設 SBO 容量、硬體指令集探測以及例外/中止回退機制。
+ */
 
 
 #if defined(_MSVC_LANG)
@@ -38,53 +49,40 @@
 #  define NUMERIC_CPLUSPLUS __cplusplus
 #endif
 
-// C++ standard level constants
+// C++ standard version baseline constants
+// C++ 標準版本基準常數
 #define NUMERIC_CXX_11 201103L
 #define NUMERIC_CXX_14 201402L
 #define NUMERIC_CXX_17 201703L
 #define NUMERIC_CXX_20 202002L
 #define NUMERIC_CXX_23 202302L
 
-// Small Buffer Optimization (SBO) Limb Capacity
-// Default: 4 limbs (256-bit), total sizeof(bigint) == 64 bytes (1 L1 cache line).
-// Users can define NUMERIC_BIGINT_SBO_LIMBS=8 (512-bit) for zero-allocation cryptography workloads.
+// Small Buffer Optimization (SBO) limb capacity: default 4 limbs (256-bit, 64 bytes total)
+// 小型緩衝區最佳化 (SBO) 肢數量容量：預設 4 limbs（256 位元，總計 64 位元組剛好對齊單一 L1 快取行）
 #ifndef NUMERIC_BIGINT_SBO_LIMBS
 #  define NUMERIC_BIGINT_SBO_LIMBS 4
 #endif
 
-// [[nodiscard]] attribute abstraction
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_17)
-#  define NUMERIC_NODISCARD [[nodiscard]]
-#elif defined(__GNUC__) || defined(__clang__)
-#  define NUMERIC_NODISCARD __attribute__((warn_unused_result))
-#elif defined(_MSC_VER) && (_MSC_VER >= 1700)
-#  define NUMERIC_NODISCARD _Check_return_
+// Mandatory [[nodiscard]] attribute for pure calculations and status values
+// 純運算與狀態回傳之強制 [[nodiscard]] 屬性標註
+#define NUMERIC_NODISCARD [[nodiscard]]
+
+// Compile-time constexpr evaluation directives
+// 編譯期常數求值 (constexpr) 指令
+#define NUMERIC_CONSTEXPR_14 constexpr
+#define NUMERIC_CONSTEXPR_20 constexpr
+#define NUMERIC_INLINE_VAR inline
+
+// Lifetimebound attribute for views/references bound to *this or parameters
+// 衍生視圖與參考生命週期綁定標註，防止懸空參考
+#if defined(_MSC_VER) && !defined(__clang__)
+#  define NUMERIC_LIFETIMEBOUND [[msvc::lifetimebound]]
 #else
-#  define NUMERIC_NODISCARD
+#  define NUMERIC_LIFETIMEBOUND
 #endif
 
-// Constexpr support for C++14+
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_14)
-#  define NUMERIC_CONSTEXPR_14 constexpr
-#else
-#  define NUMERIC_CONSTEXPR_14 inline
-#endif
-
-// Constexpr support for C++20+
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
-#  define NUMERIC_CONSTEXPR_20 constexpr
-#else
-#  define NUMERIC_CONSTEXPR_20 inline
-#endif
-
-// Inline variable support (C++17+)
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_17)
-#  define NUMERIC_INLINE_VAR inline
-#else
-#  define NUMERIC_INLINE_VAR
-#endif
-
-// Exception handling and throw-or-abort abstraction
+// Exception handling and fail-fast abort abstraction
+// 例外處理與無法啟用例外時之即刻中止 (Fail-Fast) 抽象
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || (defined(_MSC_VER) && defined(_CPPUNWIND))
 #  define NUMERIC_HAS_EXCEPTIONS 1
 #  define NUMERIC_THROW_OR_ABORT(ex) throw (ex)
@@ -93,35 +91,21 @@
 #  define NUMERIC_THROW_OR_ABORT(ex) std::abort()
 #endif
 
+// Force-inline hotpath directive
+// 熱路徑強制內聯指令
 #if defined(_MSC_VER)
 #  define NUMERIC_ALWAYS_INLINE __forceinline
+#  define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr __forceinline
 #elif defined(__GNUC__) || defined(__clang__)
 #  define NUMERIC_ALWAYS_INLINE __attribute__((always_inline)) inline
+#  define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr __attribute__((always_inline)) inline
 #else
 #  define NUMERIC_ALWAYS_INLINE inline
+#  define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr inline
 #endif
 
-// Combined constexpr (C++20+) and forced inline without duplicate 'inline'
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
-#  if defined(_MSC_VER)
-#    define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr __forceinline
-#  elif defined(__GNUC__) || defined(__clang__)
-#    define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr __attribute__((always_inline)) inline
-#  else
-#    define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr inline
-#  endif
-#else
-#  if defined(_MSC_VER)
-#    define NUMERIC_CONSTEXPR_20_FORCEINLINE __forceinline
-#  elif defined(__GNUC__) || defined(__clang__)
-#    define NUMERIC_CONSTEXPR_20_FORCEINLINE __attribute__((always_inline)) inline
-#  else
-#    define NUMERIC_CONSTEXPR_20_FORCEINLINE inline
-#  endif
-#endif
-
-
-// Pointer aliasing hint
+// Strict pointer non-aliasing hint
+// 嚴格指標無別名提示
 #if defined(_MSC_VER)
 #  define NUMERIC_RESTRICT __restrict
 #elif defined(__GNUC__) || defined(__clang__)
@@ -130,6 +114,8 @@
 #  define NUMERIC_RESTRICT
 #endif
 
+// Branch prediction hints
+// 分支預測提示
 #if defined(__GNUC__) || defined(__clang__)
 #  define NUMERIC_LIKELY(x)   __builtin_expect(!!(x), 1)
 #  define NUMERIC_UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -138,66 +124,53 @@
 #  define NUMERIC_UNLIKELY(x) (x)
 #endif
 
-// Probe standard library version header if available
+// Standard library feature probe
+// 標準程式庫特性探測
 #if defined(__has_include)
 #  if __has_include(<version>)
 #    include <version>
 #  endif
 #endif
 
-// Feature detection: std::format (C++20+)
+// Feature detection: std::format (C++20/23)
+// 特性偵測：std::format（C++20/23）
 #if defined(__cpp_lib_format) && (__cpp_lib_format >= 201907L)
 #  define NUMERIC_HAS_STD_FORMAT 1
-#elif (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20) && defined(_MSC_VER) && (_MSC_VER >= 1929)
+#elif defined(_MSC_VER) && (_MSC_VER >= 1929)
 #  define NUMERIC_HAS_STD_FORMAT 1
 #else
 #  define NUMERIC_HAS_STD_FORMAT 0
 #endif
 
-// 128-bit integer support detection
+// Native 128-bit integer extension detection
+// 原生 128 位元整數擴充偵測
 #if defined(__SIZEOF_INT128__)
 #  define NUMERIC_HAS_INT128 1
 #else
 #  define NUMERIC_HAS_INT128 0
 #endif
 
-// Lightweight string_view abstraction
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_17)
-#  include <string_view>
 namespace numeric {
-    using string_view = std::string_view;
-}
-#else
-namespace numeric {
-    class string_view {
-    private:
-        const char* data_;
-        size_t size_;
-    public:
-        constexpr string_view() noexcept : data_(nullptr), size_(0) {}
-        constexpr string_view(const char* s, size_t count) noexcept : data_(s), size_(count) {}
-        string_view(const char* s) noexcept : data_(s), size_(s ? std::strlen(s) : 0) {}
-        string_view(const std::string& s) noexcept : data_(s.data()), size_(s.size()) {}
 
-        constexpr const char* data() const noexcept { return data_; }
-        constexpr size_t size() const noexcept { return size_; }
-        constexpr size_t length() const noexcept { return size_; }
-        constexpr bool empty() const noexcept { return size_ == 0; }
-        constexpr char operator[](size_t pos) const noexcept { return data_[pos]; }
-        constexpr const char* begin() const noexcept { return data_; }
-        constexpr const char* end() const noexcept { return data_ + size_; }
-        constexpr string_view substr(size_t pos = 0, size_t count = static_cast<size_t>(-1)) const {
-            return (pos >= size_) ? string_view() : string_view(data_ + pos, (count > size_ - pos) ? (size_ - pos) : count);
-        }
-    };
-}
-#endif
+/// <summary>
+/// Read-only string view alias standardized on std::string_view in C++23.
+/// 在 C++23 下直接對齊 std::string_view 的唯讀字串視圖別名。
+/// </summary>
+using string_view = std::string_view;
+
+} // namespace numeric
 // --- End Section: include/numeric/Config.hpp ---
 
 // --- Begin Section: include/numeric/detail/Intrinsics.hpp ---
-// Intrinsics.hpp
-// Hardware-accelerated CPU intrinsics and bitwise primitive operations for CPP-BigInt.
-// Zero external dependencies, downward compatible from C++23 to C++11.
+// filepath: include/numeric/detail/Intrinsics.hpp
+/**
+ * @file Intrinsics.hpp
+ * @brief Hardware-accelerated CPU intrinsics and bitwise primitive operations for CPP-BigInt.
+ *        Provides constexpr-capable adc64, sbb64, clz64, mul64_wide, div128_64, shld64, shrd64,
+ *        and branchless mul_1_raw, addmul_1_raw, submul_1_raw primitives over std::span buffers.
+ *        硬體加速 CPU 原語與位元基礎運算模組。
+ *        提供支援 C++23 編譯期求值之進借位、前導零、乘除、雙字移位，以及基於 std::span 之單肢段乘加/乘減原語。
+ */
 
 
 #if defined(_MSC_VER)
@@ -210,197 +183,178 @@ namespace numeric {
 namespace detail {
 
 /// <summary>
+/// Low-level hardware instruction and register primitives helper structure.
 /// 底層硬體指令與暫存器原語輔助結構。
 /// </summary>
 struct BigIntIntrinsics {
     /// <summary>
-    /// 64-bit ADC 原語：out = a + b + carry_in，回傳 carry_out (0 或 1)。
-    /// 消除 C++ 純量條件判斷分支，並支援 C++20 constexpr 常數求值。
+    /// 64-bit Add-with-Carry (ADC) primitive: out = a + b + carry_in, returns carry_out (0 or 1).
+    /// 64 位元帶進位加法原語：out = a + b + carry_in，回傳進位輸出 (0 或 1)。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20_FORCEINLINE uint8_t adc64(
-        uint8_t carry_in, uint64_t a, uint64_t b, uint64_t* out) noexcept
+    /// <param name="carry_in">Input carry bit (0 or 1). / 輸入進位旗標 (0 或 1)。</param>
+    /// <param name="a">First 64-bit operand. / 第一個 64 位元運算元。</param>
+    /// <param name="b">Second 64-bit operand. / 第二個 64 位元運算元。</param>
+    /// <param name="out">Output sum reference. / 總和輸出參考。</param>
+    /// <returns>Output carry flag (0 or 1). / 輸出進位旗標 (0 或 1)。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20_FORCEINLINE auto adc64(
+        const std::uint8_t carry_in,
+        const std::uint64_t a,
+        const std::uint64_t b,
+        std::uint64_t& out) noexcept -> std::uint8_t
     {
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
         if (std::is_constant_evaluated()) {
-            uint64_t sum = a + carry_in;
-            uint8_t c1 = static_cast<uint8_t>(sum < a);
-            sum += b;
-            uint8_t c2 = static_cast<uint8_t>(sum < b);
-            *out = sum;
-            return c1 | c2;
+            const std::uint64_t sum1{a + carry_in};
+            const auto c1{static_cast<std::uint8_t>(sum1 < a)};
+            const std::uint64_t sum2{sum1 + b};
+            const auto c2{static_cast<std::uint8_t>(sum2 < b)};
+            out = sum2;
+            return static_cast<std::uint8_t>(c1 | c2);
         }
-#endif
 
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
-        unsigned __int64 temp = 0;
-        uint8_t c = _addcarry_u64(carry_in, a, b, &temp);
-        *out = static_cast<uint64_t>(temp);
+        std::uint64_t temp{0};
+        const auto c{static_cast<std::uint8_t>(_addcarry_u64(carry_in, a, b, &temp))};
+        out = temp;
         return c;
-#elif (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
-        unsigned long long temp = 0;
-        uint8_t c = _addcarry_u64(carry_in, a, b, &temp);
-        *out = static_cast<uint64_t>(temp);
-        return c;
-#elif (defined(__GNUC__) || defined(__clang__)) && defined(__SIZEOF_INT128__)
-        unsigned __int128 res = static_cast<unsigned __int128>(a) + b + carry_in;
-        *out = static_cast<uint64_t>(res);
-        return static_cast<uint8_t>(res >> 64);
+#elif defined(__SIZEOF_INT128__)
+        const unsigned __int128 res{static_cast<unsigned __int128>(a) + b + carry_in};
+        out = static_cast<std::uint64_t>(res);
+        return static_cast<std::uint8_t>(res >> 64);
 #else
-        uint64_t sum = a + carry_in;
-        uint8_t c1 = static_cast<uint8_t>(sum < a);
-        sum += b;
-        uint8_t c2 = static_cast<uint8_t>(sum < b);
-        *out = sum;
-        return c1 | c2;
+        const std::uint64_t sum1{a + carry_in};
+        const auto c1{static_cast<std::uint8_t>(sum1 < a)};
+        const std::uint64_t sum2{sum1 + b};
+        const auto c2{static_cast<std::uint8_t>(sum2 < b)};
+        out = sum2;
+        return static_cast<std::uint8_t>(c1 | c2);
 #endif
     }
 
     /// <summary>
-    /// 64-bit SBB 原語：out = a - b - borrow_in，回傳 borrow_out (0 或 1)。
-    /// 消除 C++ 純量條件判斷分支，並支援 C++20 constexpr 常數求值。
+    /// 64-bit Subtract-with-Borrow (SBB) primitive: out = a - b - borrow_in, returns borrow_out (0 or 1).
+    /// 64 位元帶借位減法原語：out = a - b - borrow_in，回傳借位輸出 (0 或 1)。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20_FORCEINLINE uint8_t sbb64(
-        uint8_t borrow_in, uint64_t a, uint64_t b, uint64_t* out) noexcept
+    /// <param name="borrow_in">Input borrow bit (0 or 1). / 輸入借位旗標 (0 或 1)。</param>
+    /// <param name="a">Minuend operand. / 被減數。</param>
+    /// <param name="b">Subtrahend operand. / 減數。</param>
+    /// <param name="out">Output difference reference. / 差值輸出參考。</param>
+    /// <returns>Output borrow flag (0 or 1). / 輸出借位旗標 (0 或 1)。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20_FORCEINLINE auto sbb64(
+        const std::uint8_t borrow_in,
+        const std::uint64_t a,
+        const std::uint64_t b,
+        std::uint64_t& out) noexcept -> std::uint8_t
     {
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
         if (std::is_constant_evaluated()) {
-            uint64_t diff = a - borrow_in;
-            uint8_t b1 = static_cast<uint8_t>(a < borrow_in);
-            uint64_t diff2 = diff - b;
-            uint8_t b2 = static_cast<uint8_t>(diff < b);
-            *out = diff2;
-            return b1 | b2;
+            const std::uint64_t diff1{a - borrow_in};
+            const auto b1{static_cast<std::uint8_t>(a < borrow_in)};
+            const std::uint64_t diff2{diff1 - b};
+            const auto b2{static_cast<std::uint8_t>(diff1 < b)};
+            out = diff2;
+            return static_cast<std::uint8_t>(b1 | b2);
         }
-#endif
 
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
-        unsigned __int64 temp = 0;
-        uint8_t b_out = _subborrow_u64(borrow_in, a, b, &temp);
-        *out = static_cast<uint64_t>(temp);
+        std::uint64_t temp{0};
+        const auto b_out{static_cast<std::uint8_t>(_subborrow_u64(borrow_in, a, b, &temp))};
+        out = temp;
         return b_out;
-#elif (defined(__GNUC__) || defined(__clang__)) && defined(__x86_64__)
-        unsigned long long temp = 0;
-        uint8_t b_out = _subborrow_u64(borrow_in, a, b, &temp);
-        *out = static_cast<uint64_t>(temp);
-        return b_out;
-#elif (defined(__GNUC__) || defined(__clang__)) && defined(__SIZEOF_INT128__)
-        unsigned __int128 res = static_cast<unsigned __int128>(a) - b - borrow_in;
-        *out = static_cast<uint64_t>(res);
-        return static_cast<uint8_t>((res >> 127) & 1);
+#elif defined(__SIZEOF_INT128__)
+        const unsigned __int128 res{static_cast<unsigned __int128>(a) - b - borrow_in};
+        out = static_cast<std::uint64_t>(res);
+        return static_cast<std::uint8_t>((res >> 127) & 1);
 #else
-        uint64_t diff = a - borrow_in;
-        uint8_t b1 = static_cast<uint8_t>(a < borrow_in);
-        uint64_t diff2 = diff - b;
-        uint8_t b2 = static_cast<uint8_t>(diff < b);
-        *out = diff2;
-        return b1 | b2;
+        const std::uint64_t diff1{a - borrow_in};
+        const auto b1{static_cast<std::uint8_t>(a < borrow_in)};
+        const std::uint64_t diff2{diff1 - b};
+        const auto b2{static_cast<std::uint8_t>(diff1 < b)};
+        out = diff2;
+        return static_cast<std::uint8_t>(b1 | b2);
 #endif
     }
 
     /// <summary>
-    /// 計算 64 位元整數之前導 0 數量 (Count Leading Zeros)。
+    /// Counts leading zero bits in a 64-bit unsigned integer via C++20/23 std::countl_zero.
+    /// 透過標準庫 std::countl_zero 計算 64 位元無符號整數之前導零數量。
     /// </summary>
-    /// <param name="x">目標 64 位元整數</param>
-    /// <returns>前導 0 數量 (0~64)</returns>
-    static NUMERIC_CONSTEXPR_20 int clz64(uint64_t x) noexcept {
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
-        if (std::is_constant_evaluated()) {
-            if (x == 0) return 64;
-            int n = 0;
-            if ((x >> 32) == 0) { n += 32; x <<= 32; }
-            if ((x >> 48) == 0) { n += 16; x <<= 16; }
-            if ((x >> 56) == 0) { n += 8;  x <<= 8;  }
-            if ((x >> 60) == 0) { n += 4;  x <<= 4;  }
-            if ((x >> 62) == 0) { n += 2;  x <<= 2;  }
-            if ((x >> 63) == 0) { n += 1; }
-            return n;
-        }
-#endif
-#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_ARM64))
-        unsigned long idx;
-        if (_BitScanReverse64(&idx, x)) {
-            return static_cast<int>(63 - idx);
-        }
-        return 64;
-#elif defined(__GNUC__) || defined(__clang__)
-        return (x == 0) ? 64 : __builtin_clzll(x);
-#else
-        if (x == 0) return 64;
-        int n = 0;
-        if ((x >> 32) == 0) { n += 32; x <<= 32; }
-        if ((x >> 48) == 0) { n += 16; x <<= 16; }
-        if ((x >> 56) == 0) { n += 8;  x <<= 8;  }
-        if ((x >> 60) == 0) { n += 4;  x <<= 4;  }
-        if ((x >> 62) == 0) { n += 2;  x <<= 2;  }
-        if ((x >> 63) == 0) { n += 1; }
-        return n;
-#endif
+    /// <param name="x">Target 64-bit unsigned integer. / 目標 64 位元無符號整數。</param>
+    /// <returns>Number of leading zeros (0..64). / 前導零位元數 (0 至 64)。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto clz64(const std::uint64_t x) noexcept -> std::int32_t {
+        return static_cast<std::int32_t>(std::countl_zero(x));
     }
 
     /// <summary>
-    /// 64 位元乘法運算，輸出低 64 位並回傳高 64 位進位。
+    /// 64-bit wide multiplication: returns low 64 bits and stores high 64 bits in hi.
+    /// 64 位元寬乘法運算：回傳低 64 位元乘積並將高 64 位元進位寫入 hi。
     /// </summary>
-    /// <param name="a">乘數 a</param>
-    /// <param name="b">乘數 b</param>
-    /// <param name="hi">輸出高 64 位進位參考</param>
-    /// <returns>乘積之低 64 位元</returns>
-    static NUMERIC_CONSTEXPR_20 uint64_t mul64_wide(uint64_t a, uint64_t b, uint64_t& hi) noexcept {
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+    /// <param name="a">First factor. / 乘數 a。</param>
+    /// <param name="b">Second factor. / 乘數 b。</param>
+    /// <param name="hi">Output reference for high 64 bits. / 高 64 位進位輸出參考。</param>
+    /// <returns>Low 64 bits of the 128-bit product. / 128 位元乘積之低 64 位元。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto mul64_wide(
+        const std::uint64_t a,
+        const std::uint64_t b,
+        std::uint64_t& hi) noexcept -> std::uint64_t
+    {
         if (std::is_constant_evaluated()) {
-            uint64_t a_lo = static_cast<uint32_t>(a);
-            uint64_t a_hi = a >> 32;
-            uint64_t b_lo = static_cast<uint32_t>(b);
-            uint64_t b_hi = b >> 32;
-            uint64_t p0 = a_lo * b_lo;
-            uint64_t p1 = a_lo * b_hi;
-            uint64_t p2 = a_hi * b_lo;
-            uint64_t p3 = a_hi * b_hi;
-            uint64_t mid = p1 + static_cast<uint32_t>(p0 >> 32) + static_cast<uint32_t>(p2);
+            const std::uint64_t a_lo{static_cast<std::uint32_t>(a)};
+            const std::uint64_t a_hi{a >> 32};
+            const std::uint64_t b_lo{static_cast<std::uint32_t>(b)};
+            const std::uint64_t b_hi{b >> 32};
+            const std::uint64_t p0{a_lo * b_lo};
+            const std::uint64_t p1{a_lo * b_hi};
+            const std::uint64_t p2{a_hi * b_lo};
+            const std::uint64_t p3{a_hi * b_hi};
+            const std::uint64_t mid{p1 + static_cast<std::uint32_t>(p0 >> 32) + static_cast<std::uint32_t>(p2)};
             hi = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32);
-            return (mid << 32) | static_cast<uint32_t>(p0);
+            return (mid << 32) | static_cast<std::uint32_t>(p0);
         }
-#endif
 #if defined(__SIZEOF_INT128__)
-        unsigned __int128 prod = static_cast<unsigned __int128>(a) * b;
-        hi = static_cast<uint64_t>(prod >> 64);
-        return static_cast<uint64_t>(prod);
+        const unsigned __int128 prod{static_cast<unsigned __int128>(a) * b};
+        hi = static_cast<std::uint64_t>(prod >> 64);
+        return static_cast<std::uint64_t>(prod);
 #elif defined(_MSC_VER) && defined(_M_ARM64)
         hi = __umulh(a, b);
         return a * b;
 #elif defined(_MSC_VER) && defined(_M_X64)
         return _umul128(a, b, &hi);
 #else
-        uint64_t a_lo = static_cast<uint32_t>(a);
-        uint64_t a_hi = a >> 32;
-        uint64_t b_lo = static_cast<uint32_t>(b);
-        uint64_t b_hi = b >> 32;
-        uint64_t p0 = a_lo * b_lo;
-        uint64_t p1 = a_lo * b_hi;
-        uint64_t p2 = a_hi * b_lo;
-        uint64_t p3 = a_hi * b_hi;
-        uint64_t mid = p1 + static_cast<uint32_t>(p0 >> 32) + static_cast<uint32_t>(p2);
+        const std::uint64_t a_lo{static_cast<std::uint32_t>(a)};
+        const std::uint64_t a_hi{a >> 32};
+        const std::uint64_t b_lo{static_cast<std::uint32_t>(b)};
+        const std::uint64_t b_hi{b >> 32};
+        const std::uint64_t p0{a_lo * b_lo};
+        const std::uint64_t p1{a_lo * b_hi};
+        const std::uint64_t p2{a_hi * b_lo};
+        const std::uint64_t p3{a_hi * b_hi};
+        const std::uint64_t mid{p1 + static_cast<std::uint32_t>(p0 >> 32) + static_cast<std::uint32_t>(p2)};
         hi = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32);
-        return (mid << 32) | static_cast<uint32_t>(p0);
+        return (mid << 32) | static_cast<std::uint32_t>(p0);
 #endif
     }
 
     /// <summary>
-    /// 128 位元除以 64 位元整數之除法（前置合約：d != 0 且 hi 小於 d，防止觸發硬體 #DE 異常中斷）。
+    /// Divides a 128-bit integer (hi:lo) by a 64-bit divisor d (Precondition: d != 0 and hi < d).
+    /// 128 位元除以 64 位元整數除法（前置合約：d != 0 且 hi < d，防止觸發硬體 #DE 異常）。
     /// </summary>
-    /// <param name="hi">被除數高 64 位元</param>
-    /// <param name="lo">被除數低 64 位元</param>
-    /// <param name="d">除數</param>
-    /// <param name="rem">輸出餘數參考</param>
-    /// <returns>商之 64 位元數值</returns>
-    static NUMERIC_CONSTEXPR_20 uint64_t div128_64(uint64_t hi, uint64_t lo, uint64_t d, uint64_t& rem) noexcept {
+    /// <param name="hi">High 64 bits of dividend. / 被除數高 64 位元。</param>
+    /// <param name="lo">Low 64 bits of dividend. / 被除數低 64 位元。</param>
+    /// <param name="d">Non-zero 64-bit divisor. / 非零 64 位元除數。</param>
+    /// <param name="rem">Output reference for remainder. / 餘數輸出參考。</param>
+    /// <returns>64-bit quotient. / 64 位元商數。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto div128_64(
+        const std::uint64_t hi,
+        const std::uint64_t lo,
+        const std::uint64_t d,
+        std::uint64_t& rem) noexcept -> std::uint64_t
+    {
         assert(d != 0 && "Division by zero!");
         assert(hi < d && "Hardware divide error: quotient exceeds 64 bits!");
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
         if (std::is_constant_evaluated()) {
-            uint64_t q = 0;
-            uint64_t r = hi;
-            for (int i = 63; i >= 0; --i) {
-                r = (r << 1) | ((lo >> i) & 1);
+            std::uint64_t q{0};
+            std::uint64_t r{hi};
+            for (std::int32_t i{63}; i >= 0; --i) {
+                r = (r << 1) | ((lo >> i) & 1ULL);
                 if (r >= d) {
                     r -= d;
                     q |= (1ULL << i);
@@ -409,24 +363,23 @@ struct BigIntIntrinsics {
             rem = r;
             return q;
         }
-#endif
 #if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(_M_X64))
-        uint64_t q = 0;
-        uint64_t r = 0;
+        std::uint64_t q{0};
+        std::uint64_t r{0};
         __asm__("divq %4" : "=a"(q), "=d"(r) : "d"(hi), "a"(lo), "rm"(d));
         rem = r;
         return q;
 #elif defined(_MSC_VER) && defined(_M_X64)
         return _udiv128(hi, lo, d, &rem);
 #elif defined(__SIZEOF_INT128__)
-        unsigned __int128 n = (static_cast<unsigned __int128>(hi) << 64) | lo;
-        rem = static_cast<uint64_t>(n % d);
-        return static_cast<uint64_t>(n / d);
+        const unsigned __int128 n{(static_cast<unsigned __int128>(hi) << 64) | lo};
+        rem = static_cast<std::uint64_t>(n % d);
+        return static_cast<std::uint64_t>(n / d);
 #else
-        uint64_t q = 0;
-        uint64_t r = hi;
-        for (int i = 63; i >= 0; --i) {
-            r = (r << 1) | ((lo >> i) & 1);
+        std::uint64_t q{0};
+        std::uint64_t r{hi};
+        for (std::int32_t i{63}; i >= 0; --i) {
+            r = (r << 1) | ((lo >> i) & 1ULL);
             if (r >= d) {
                 r -= d;
                 q |= (1ULL << i);
@@ -438,34 +391,39 @@ struct BigIntIntrinsics {
     }
 
     /// <summary>
-    /// 128 位元除以 10^19 (10000000000000000000) 之乘法求逆除法。
-    /// 預算逆元常數 v = floor((2^128 - 1) / 10^19) - 2^64 = 0xd83c94fb6d2ac34a。
-    /// 消除 _udiv128 硬體除法指令，將除法延遲自 ~40 cycles 降低至 ~6 cycles。
+    /// Reciprocal multiplication division of 128-bit integer by 10^19 (10000000000000000000).
+    /// Eliminates _udiv128 hardware latency using precomputed inverse v = 0xd83c94fb6d2ac34a.
+    /// 128 位元除以 10^19 之乘法求逆快速除法。
+    /// 利用預算逆元消除 _udiv128 硬體除法指令延遲。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20_FORCEINLINE uint64_t div_recip_radix10_19(
-        uint64_t nh, uint64_t nl, uint64_t& rem) noexcept
+    /// <param name="nh">High 64 bits of dividend. / 被除數高 64 位元。</param>
+    /// <param name="nl">Low 64 bits of dividend. / 被除數低 64 位元。</param>
+    /// <param name="rem">Output reference for remainder. / 餘數輸出參考。</param>
+    /// <returns>64-bit quotient. / 64 位元商數。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20_FORCEINLINE auto div_recip_radix10_19(
+        const std::uint64_t nh,
+        const std::uint64_t nl,
+        std::uint64_t& rem) noexcept -> std::uint64_t
     {
-        constexpr uint64_t d = 10000000000000000000ULL;
-        constexpr uint64_t v = 0xd83c94fb6d2ac34aULL;
+        constexpr std::uint64_t d{10000000000000000000ULL};
+        constexpr std::uint64_t v{0xd83c94fb6d2ac34aULL};
 
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
         if (std::is_constant_evaluated()) {
             return div128_64(nh, nl, d, rem);
         }
-#endif
 
-        uint64_t nh_v_hi = 0;
-        uint64_t nh_v_lo = mul64_wide(nh, v, nh_v_hi);
-        uint64_t nl_v_hi = 0;
-        mul64_wide(nl, v, nl_v_hi);
+        std::uint64_t nh_v_hi{0};
+        const std::uint64_t nh_v_lo{mul64_wide(nh, v, nh_v_hi)};
+        std::uint64_t nl_v_hi{0};
+        (void)mul64_wide(nl, v, nl_v_hi);
 
-        uint64_t mid1 = nh_v_lo + nl;
-        uint64_t carry1 = (mid1 < nl) ? 1 : 0;
-        uint64_t mid2 = mid1 + nl_v_hi;
-        uint64_t carry2 = (mid2 < mid1) ? 1 : 0;
+        const std::uint64_t mid1{nh_v_lo + nl};
+        const std::uint64_t carry1{(mid1 < nl) ? 1ULL : 0ULL};
+        const std::uint64_t mid2{mid1 + nl_v_hi};
+        const std::uint64_t carry2{(mid2 < mid1) ? 1ULL : 0ULL};
 
-        uint64_t q_est = nh + nh_v_hi + carry1 + carry2;
-        uint64_t r = nl - q_est * d;
+        std::uint64_t q_est{nh + nh_v_hi + carry1 + carry2};
+        std::uint64_t r{nl - q_est * d};
         if (r >= d) {
             ++q_est;
             r -= d;
@@ -475,103 +433,113 @@ struct BigIntIntrinsics {
     }
 
     /// <summary>
-    /// 雙字向左組合位移：將 high 向左移動 shift 位元，低位以 low 之高位補齊。
-    /// 要求 0 <= shift < 64。當 shift == 0 時直接回傳 high。
-    /// 等價於 ((high << 64 | low) << shift) 的高 64 位元。
+    /// Double-precision left funnel shift: computes high 64 bits of ((high << 64 | low) << shift).
+    /// Requires 0 <= shift < 64.
+    /// 雙字向左組合位移：計算 ((high << 64 | low) << shift) 的高 64 位元（要求 0 <= shift < 64）。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20_FORCEINLINE uint64_t shld64(
-        uint64_t high, uint64_t low, unsigned int shift) noexcept
+    /// <param name="high">High 64-bit word. / 高 64 位元字組。</param>
+    /// <param name="low">Low 64-bit word. / 低 64 位元字組。</param>
+    /// <param name="shift">Bit shift count (0..63). / 位移位元數 (0..63)。</param>
+    /// <returns>Shifted 64-bit result. / 位移後之 64 位元結果。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20_FORCEINLINE auto shld64(
+        const std::uint64_t high,
+        const std::uint64_t low,
+        const std::uint32_t shift) noexcept -> std::uint64_t
     {
-        assert(shift < 64);
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        assert(shift < 64U);
         if (std::is_constant_evaluated()) {
-            return (shift == 0) ? high : ((high << shift) | (low >> (64 - shift)));
+            return (shift == 0U) ? high : ((high << shift) | (low >> (64U - shift)));
         }
-#endif
 #if defined(_MSC_VER) && defined(_M_X64)
-        return (shift == 0) ? high : __shiftleft128(low, high, static_cast<unsigned char>(shift));
-#elif defined(__SIZEOF_INT128__)
-        return (shift == 0) ? high : ((high << shift) | (low >> (64 - shift)));
+        return (shift == 0U) ? high : __shiftleft128(low, high, static_cast<std::uint8_t>(shift));
 #else
-        return (shift == 0) ? high : ((high << shift) | (low >> (64 - shift)));
+        return (shift == 0U) ? high : ((high << shift) | (low >> (64U - shift)));
 #endif
     }
 
     /// <summary>
-    /// 雙字向右組合位移：將 low 向右移動 shift 位元，高位以 high 之低位補齊。
-    /// 要求 0 <= shift < 64。當 shift == 0 時直接回傳 low。
-    /// 等價於 ((high << 64 | low) >> shift) 的低 64 位元。
+    /// Double-precision right funnel shift: computes low 64 bits of ((high << 64 | low) >> shift).
+    /// Requires 0 <= shift < 64.
+    /// 雙字向右組合位移：計算 ((high << 64 | low) >> shift) 的低 64 位元（要求 0 <= shift < 64）。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20_FORCEINLINE uint64_t shrd64(
-        uint64_t high, uint64_t low, unsigned int shift) noexcept
+    /// <param name="high">High 64-bit word. / 高 64 位元字組。</param>
+    /// <param name="low">Low 64-bit word. / 低 64 位元字組。</param>
+    /// <param name="shift">Bit shift count (0..63). / 位移位元數 (0..63)。</param>
+    /// <returns>Shifted 64-bit result. / 位移後之 64 位元結果。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20_FORCEINLINE auto shrd64(
+        const std::uint64_t high,
+        const std::uint64_t low,
+        const std::uint32_t shift) noexcept -> std::uint64_t
     {
-        assert(shift < 64);
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        assert(shift < 64U);
         if (std::is_constant_evaluated()) {
-            return (shift == 0) ? low : ((low >> shift) | (high << (64 - shift)));
+            return (shift == 0U) ? low : ((low >> shift) | (high << (64U - shift)));
         }
-#endif
 #if defined(_MSC_VER) && defined(_M_X64)
-        return (shift == 0) ? low : __shiftright128(low, high, static_cast<unsigned char>(shift));
-#elif defined(__SIZEOF_INT128__)
-        return (shift == 0) ? low : ((low >> shift) | (high << (64 - shift)));
+        return (shift == 0U) ? low : __shiftright128(low, high, static_cast<std::uint8_t>(shift));
 #else
-        return (shift == 0) ? low : ((low >> shift) | (high << (64 - shift)));
+        return (shift == 0U) ? low : ((low >> shift) | (high << (64U - shift)));
 #endif
     }
 
     /// <summary>
-    /// 硬體友善無分支單肢段乘法原語：dst[0..n-1] = src[0..n-1] * multiplier。
-    /// Multiply primitive: dst[0..n-1] = src[0..n-1] * multiplier.
-    /// 回傳最終高位溢出進位 (carry)。
-    /// 依據編譯器能力自動分派至 __int128 或 _umul128 / _addcarry_u64 硬體指令管線。
+    /// Branchless single-limb multiplication primitive: dst[0..n-1] = src[0..n-1] * multiplier.
+    /// Returns the final high-order carry limb.
+    /// 無分支單肢段乘法原語：dst[0..n-1] = src[0..n-1] * multiplier，並回傳最終高位溢出進位。
     /// </summary>
-    /// <param name="dst">目標輸出緩衝區 / Destination buffer</param>
-    /// <param name="src">來源運算元陣列 / Source limb array</param>
-    /// <param name="n">運算 limb 長度 / Limb count</param>
-    /// <param name="multiplier">64 位元單字乘數 / 64-bit word multiplier</param>
-    /// <returns>最終高位溢出進位 / Final high overflow carry</returns>
-    static NUMERIC_CONSTEXPR_20 uint64_t mul_1_raw(
-        uint64_t* NUMERIC_RESTRICT dst,
-        const uint64_t* NUMERIC_RESTRICT src,
-        size_t n,
-        uint64_t multiplier) noexcept
+    /// <param name="dst">Destination span (size >= src.size()). / 目標輸出 span（長度須 >= src.size()）。</param>
+    /// <param name="src">Source limb span. / 來源運算元 span。</param>
+    /// <param name="multiplier">64-bit scalar multiplier. / 64 位元純量乘數。</param>
+    /// <returns>Final overflow carry limb. / 最終高位溢出進位。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto mul_1_raw(
+        const std::span<std::uint64_t> dst,
+        const std::span<const std::uint64_t> src,
+        const std::uint64_t multiplier) noexcept -> std::uint64_t
     {
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        const std::size_t n{src.size()};
+        assert(dst.size() >= n);
+
         if (std::is_constant_evaluated()) {
-            uint64_t carry = 0;
-            for (size_t i = 0; i < n; ++i) {
-                uint64_t hi = 0;
-                uint64_t lo = mul64_wide(src[i], multiplier, hi);
-                uint8_t c = adc64(0, lo, carry, &dst[i]);
+            std::uint64_t carry{0};
+            for (std::size_t i{0}; i < n; ++i) {
+                std::uint64_t hi{0};
+                const std::uint64_t lo{mul64_wide(src[i], multiplier, hi)};
+                std::uint64_t res_limb{0};
+                const std::uint8_t c{adc64(0, lo, carry, res_limb)};
+                dst[i] = res_limb;
                 carry = hi + c;
             }
             return carry;
         }
-#endif
 #if defined(__SIZEOF_INT128__)
-        unsigned __int128 carry = 0;
-        for (size_t i = 0; i < n; ++i) {
-            unsigned __int128 prod = static_cast<unsigned __int128>(src[i]) * multiplier + carry;
-            dst[i] = static_cast<uint64_t>(prod);
+        unsigned __int128 carry{0};
+        for (std::size_t i{0}; i < n; ++i) {
+            const unsigned __int128 prod{static_cast<unsigned __int128>(src[i]) * multiplier + carry};
+            dst[i] = static_cast<std::uint64_t>(prod);
             carry = prod >> 64;
         }
-        return static_cast<uint64_t>(carry);
+        return static_cast<std::uint64_t>(carry);
 #elif defined(_MSC_VER) && defined(_M_X64)
-        uint64_t carry = 0;
-        for (size_t i = 0; i < n; ++i) {
-            uint64_t hi = 0;
-            uint64_t lo = _umul128(src[i], multiplier, &hi);
-            unsigned char c = _addcarry_u64(0, lo, carry, reinterpret_cast<unsigned __int64*>(&dst[i]));
+        std::uint64_t carry{0};
+        std::uint64_t* NUMERIC_RESTRICT d{dst.data()};
+        const std::uint64_t* NUMERIC_RESTRICT s{src.data()};
+        for (std::size_t i{0}; i < n; ++i) {
+            std::uint64_t hi{0};
+            const std::uint64_t lo{_umul128(s[i], multiplier, &hi)};
+            std::uint64_t res_limb{0};
+            const std::uint8_t c{_addcarry_u64(0, lo, carry, &res_limb)};
+            d[i] = res_limb;
             carry = hi + c;
         }
         return carry;
 #else
-        uint64_t carry = 0;
-        for (size_t i = 0; i < n; ++i) {
-            uint64_t hi = 0;
-            uint64_t lo = mul64_wide(src[i], multiplier, hi);
-            uint8_t c = adc64(0, lo, carry, &dst[i]);
+        std::uint64_t carry{0};
+        for (std::size_t i{0}; i < n; ++i) {
+            std::uint64_t hi{0};
+            const std::uint64_t lo{mul64_wide(src[i], multiplier, hi)};
+            std::uint64_t res_limb{0};
+            const std::uint8_t c{adc64(0, lo, carry, res_limb)};
+            dst[i] = res_limb;
             carry = hi + c;
         }
         return carry;
@@ -579,61 +547,69 @@ struct BigIntIntrinsics {
     }
 
     /// <summary>
-    /// 硬體友善無分支乘加原語：dst[0..n-1] += src[0..n-1] * multiplier。
-    /// Multiply-accumulate primitive: dst[0..n-1] += src[0..n-1] * multiplier.
-    /// 回傳最終高位溢出進位 (carry)。
-    /// 依據編譯器能力自動分派至 __int128 或 _umul128 / _addcarry_u64 硬體指令管線。
+    /// Branchless multiply-accumulate primitive: dst[0..n-1] += src[0..n-1] * multiplier.
+    /// Returns the final high-order carry limb.
+    /// 無分支單肢段乘加原語：dst[0..n-1] += src[0..n-1] * multiplier，回傳最終高位進位。
     /// </summary>
-    /// <param name="dst">目標運算元與輸出緩衝區 / Target and destination buffer</param>
-    /// <param name="src">來源運算元陣列 / Source limb array</param>
-    /// <param name="n">運算 limb 長度 / Limb count</param>
-    /// <param name="multiplier">64 位元單字乘數 / 64-bit word multiplier</param>
-    /// <returns>最終高位溢出進位 / Final high overflow carry</returns>
-    static NUMERIC_CONSTEXPR_20 uint64_t addmul_1_raw(
-        uint64_t* NUMERIC_RESTRICT dst,
-        const uint64_t* NUMERIC_RESTRICT src,
-        size_t n,
-        uint64_t multiplier) noexcept
+    /// <param name="dst">Target accumulator span (size >= src.size()). / 目標累加輸出 span。</param>
+    /// <param name="src">Source limb span. / 來源運算元 span。</param>
+    /// <param name="multiplier">64-bit scalar multiplier. / 64 位元純量乘數。</param>
+    /// <returns>Final overflow carry limb. / 最終高位溢出進位。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto addmul_1_raw(
+        const std::span<std::uint64_t> dst,
+        const std::span<const std::uint64_t> src,
+        const std::uint64_t multiplier) noexcept -> std::uint64_t
     {
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        const std::size_t n{src.size()};
+        assert(dst.size() >= n);
+
         if (std::is_constant_evaluated()) {
-            uint64_t carry = 0;
-            for (size_t i = 0; i < n; ++i) {
-                uint64_t hi = 0;
-                uint64_t lo = mul64_wide(src[i], multiplier, hi);
-                uint8_t c1 = adc64(0, dst[i], lo, &dst[i]);
-                uint8_t c2 = adc64(0, dst[i], carry, &dst[i]);
+            std::uint64_t carry{0};
+            for (std::size_t i{0}; i < n; ++i) {
+                std::uint64_t hi{0};
+                const std::uint64_t lo{mul64_wide(src[i], multiplier, hi)};
+                std::uint64_t sum1{0};
+                const std::uint8_t c1{adc64(0, dst[i], lo, sum1)};
+                std::uint64_t sum2{0};
+                const std::uint8_t c2{adc64(0, sum1, carry, sum2)};
+                dst[i] = sum2;
                 carry = hi + c1 + c2;
             }
             return carry;
         }
-#endif
 #if defined(__SIZEOF_INT128__)
-        unsigned __int128 carry = 0;
-        for (size_t i = 0; i < n; ++i) {
-            unsigned __int128 prod = static_cast<unsigned __int128>(src[i]) * multiplier + dst[i] + carry;
-            dst[i] = static_cast<uint64_t>(prod);
+        unsigned __int128 carry{0};
+        for (std::size_t i{0}; i < n; ++i) {
+            const unsigned __int128 prod{static_cast<unsigned __int128>(src[i]) * multiplier + dst[i] + carry};
+            dst[i] = static_cast<std::uint64_t>(prod);
             carry = prod >> 64;
         }
-        return static_cast<uint64_t>(carry);
+        return static_cast<std::uint64_t>(carry);
 #elif defined(_MSC_VER) && defined(_M_X64)
-        uint64_t carry = 0;
-        for (size_t i = 0; i < n; ++i) {
-            uint64_t hi = 0;
-            uint64_t lo = _umul128(src[i], multiplier, &hi);
-            unsigned char c1 = _addcarry_u64(0, lo, carry, &lo);
+        std::uint64_t carry{0};
+        std::uint64_t* NUMERIC_RESTRICT d{dst.data()};
+        const std::uint64_t* NUMERIC_RESTRICT s{src.data()};
+        for (std::size_t i{0}; i < n; ++i) {
+            std::uint64_t hi{0};
+            std::uint64_t lo{_umul128(s[i], multiplier, &hi)};
+            const std::uint8_t c1{_addcarry_u64(0, lo, carry, &lo)};
             hi += c1;
-            unsigned char c2 = _addcarry_u64(0, dst[i], lo, reinterpret_cast<unsigned __int64*>(&dst[i]));
+            std::uint64_t sum_limb{0};
+            const std::uint8_t c2{_addcarry_u64(0, d[i], lo, &sum_limb)};
+            d[i] = sum_limb;
             carry = hi + c2;
         }
         return carry;
 #else
-        uint64_t carry = 0;
-        for (size_t i = 0; i < n; ++i) {
-            uint64_t hi = 0;
-            uint64_t lo = mul64_wide(src[i], multiplier, hi);
-            uint8_t c1 = adc64(0, dst[i], lo, &dst[i]);
-            uint8_t c2 = adc64(0, dst[i], carry, &dst[i]);
+        std::uint64_t carry{0};
+        for (std::size_t i{0}; i < n; ++i) {
+            std::uint64_t hi{0};
+            const std::uint64_t lo{mul64_wide(src[i], multiplier, hi)};
+            std::uint64_t sum1{0};
+            const std::uint8_t c1{adc64(0, dst[i], lo, sum1)};
+            std::uint64_t sum2{0};
+            const std::uint8_t c2{adc64(0, sum1, carry, sum2)};
+            dst[i] = sum2;
             carry = hi + c1 + c2;
         }
         return carry;
@@ -641,64 +617,72 @@ struct BigIntIntrinsics {
     }
 
     /// <summary>
-    /// 硬體友善無分支乘減原語：dst[0..n-1] -= src[0..n-1] * multiplier。
-    /// Multiply-subtract primitive: dst[0..n-1] -= src[0..n-1] * multiplier.
-    /// 回傳最終高位溢出借位 (borrow)。
-    /// 依據編譯器能力自動分派至 __int128 或 _umul128 / _subborrow_u64 硬體指令管線。
+    /// Branchless multiply-subtract primitive: dst[0..n-1] -= src[0..n-1] * multiplier.
+    /// Returns the final high-order borrow limb.
+    /// 無分支單肢段乘減原語：dst[0..n-1] -= src[0..n-1] * multiplier，回傳最終高位借位。
     /// </summary>
-    /// <param name="dst">目標運算元與輸出緩衝區 / Target and destination buffer</param>
-    /// <param name="src">來源運算元陣列 / Source limb array</param>
-    /// <param name="n">運算 limb 長度 / Limb count</param>
-    /// <param name="multiplier">64 位元單字乘數 / 64-bit word multiplier</param>
-    /// <returns>最終高位溢出借位 / Final high overflow borrow</returns>
-    static NUMERIC_CONSTEXPR_20 uint64_t submul_1_raw(
-        uint64_t* NUMERIC_RESTRICT dst,
-        const uint64_t* NUMERIC_RESTRICT src,
-        size_t n,
-        uint64_t multiplier) noexcept
+    /// <param name="dst">Target accumulator span (size >= src.size()). / 目標減數累加 span。</param>
+    /// <param name="src">Source limb span. / 來源運算元 span。</param>
+    /// <param name="multiplier">64-bit scalar multiplier. / 64 位元純量乘數。</param>
+    /// <returns>Final overflow borrow limb. / 最終高位溢出借位。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto submul_1_raw(
+        const std::span<std::uint64_t> dst,
+        const std::span<const std::uint64_t> src,
+        const std::uint64_t multiplier) noexcept -> std::uint64_t
     {
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+        const std::size_t n{src.size()};
+        assert(dst.size() >= n);
+
         if (std::is_constant_evaluated()) {
-            uint64_t borrow = 0;
-            for (size_t i = 0; i < n; ++i) {
-                uint64_t hi = 0;
-                uint64_t lo = mul64_wide(src[i], multiplier, hi);
-                uint8_t b1 = sbb64(0, dst[i], lo, &dst[i]);
-                uint8_t b2 = sbb64(0, dst[i], borrow, &dst[i]);
+            std::uint64_t borrow{0};
+            for (std::size_t i{0}; i < n; ++i) {
+                std::uint64_t hi{0};
+                const std::uint64_t lo{mul64_wide(src[i], multiplier, hi)};
+                std::uint64_t diff1{0};
+                const std::uint8_t b1{sbb64(0, dst[i], lo, diff1)};
+                std::uint64_t diff2{0};
+                const std::uint8_t b2{sbb64(0, diff1, borrow, diff2)};
+                dst[i] = diff2;
                 borrow = hi + b1 + b2;
             }
             return borrow;
         }
-#endif
 #if defined(__SIZEOF_INT128__)
-        uint64_t borrow = 0;
-        for (size_t i = 0; i < n; ++i) {
-            unsigned __int128 prod = static_cast<unsigned __int128>(src[i]) * multiplier + borrow;
-            uint64_t lo = static_cast<uint64_t>(prod);
-            uint64_t hi = static_cast<uint64_t>(prod >> 64);
-            uint64_t cur = dst[i];
+        std::uint64_t borrow{0};
+        for (std::size_t i{0}; i < n; ++i) {
+            const unsigned __int128 prod{static_cast<unsigned __int128>(src[i]) * multiplier + borrow};
+            const auto lo{static_cast<std::uint64_t>(prod)};
+            const auto hi{static_cast<std::uint64_t>(prod >> 64)};
+            const std::uint64_t cur{dst[i]};
             dst[i] = cur - lo;
-            borrow = hi + (cur < lo ? 1 : 0);
+            borrow = hi + (cur < lo ? 1ULL : 0ULL);
         }
         return borrow;
 #elif defined(_MSC_VER) && defined(_M_X64)
-        uint64_t borrow = 0;
-        for (size_t i = 0; i < n; ++i) {
-            uint64_t hi = 0;
-            uint64_t lo = _umul128(src[i], multiplier, &hi);
-            unsigned char c = _addcarry_u64(0, lo, borrow, &lo);
+        std::uint64_t borrow{0};
+        std::uint64_t* NUMERIC_RESTRICT d{dst.data()};
+        const std::uint64_t* NUMERIC_RESTRICT s{src.data()};
+        for (std::size_t i{0}; i < n; ++i) {
+            std::uint64_t hi{0};
+            std::uint64_t lo{_umul128(s[i], multiplier, &hi)};
+            const std::uint8_t c{_addcarry_u64(0, lo, borrow, &lo)};
             hi += c;
-            unsigned char b = _subborrow_u64(0, dst[i], lo, reinterpret_cast<unsigned __int64*>(&dst[i]));
+            std::uint64_t diff_limb{0};
+            const std::uint8_t b{_subborrow_u64(0, d[i], lo, &diff_limb)};
+            d[i] = diff_limb;
             borrow = hi + b;
         }
         return borrow;
 #else
-        uint64_t borrow = 0;
-        for (size_t i = 0; i < n; ++i) {
-            uint64_t hi = 0;
-            uint64_t lo = mul64_wide(src[i], multiplier, hi);
-            uint8_t b1 = sbb64(0, dst[i], lo, &dst[i]);
-            uint8_t b2 = sbb64(0, dst[i], borrow, &dst[i]);
+        std::uint64_t borrow{0};
+        for (std::size_t i{0}; i < n; ++i) {
+            std::uint64_t hi{0};
+            const std::uint64_t lo{mul64_wide(src[i], multiplier, hi)};
+            std::uint64_t diff1{0};
+            const std::uint8_t b1{sbb64(0, dst[i], lo, diff1)};
+            std::uint64_t diff2{0};
+            const std::uint8_t b2{sbb64(0, diff1, borrow, diff2)};
+            dst[i] = diff2;
             borrow = hi + b1 + b2;
         }
         return borrow;
@@ -711,10 +695,15 @@ struct BigIntIntrinsics {
 // --- End Section: include/numeric/detail/Intrinsics.hpp ---
 
 // --- Begin Section: include/numeric/detail/Storage.hpp ---
-// Storage.hpp
-// Decoupled storage and memory management base class (BigIntBase) for CPP-BigInt.
-// Employs LLVM SmallVector two-layer architecture with compile-time SBO parameterization.
-// Zero external dependencies, downward compatible from C++23 to C++11.
+// filepath: include/numeric/detail/Storage.hpp
+/**
+ * @file Storage.hpp
+ * @brief Decoupled storage and RAII memory management base class (BigIntBase) for CPP-BigInt.
+ *        Employs LLVM SmallVector two-layer architecture with compile-time SBO parameterization,
+ *        std::span limb manipulation, and C++23 constexpr RAII heap allocation guards.
+ *        解耦之儲存與 RAII 記憶體管理基底類別 (BigIntBase)。
+ *        採用 LLVM SmallVector 雙層架構、std::span 安全肢段存取與 C++23 constexpr RAII 堆積配置保護。
+ */
 
 
 namespace numeric {
@@ -727,459 +716,545 @@ namespace detail {
 } // namespace detail
 
 /// <summary>
-/// BigInt 基礎儲存與演算法基底類別，採用 LLVM SmallVector 雙層解耦架構。
-/// 支援動態指定 SBO 內聯容量，在 64 位元架構下基底大小嚴格控制為 32 位元組。
+/// Fundamental storage and buffer lifecycle base class using LLVM SmallVector two-layer decoupling.
+/// Maintains exact 32-byte layout on 64-bit platforms for zero-overhead inline SBO buffers.
+/// BigInt 基礎儲存與緩衝區生命週期基底類別，採用 LLVM SmallVector 雙層解耦架構，
+/// 於 64 位元平台嚴格維持 32 位元組結構大小。
 /// </summary>
 class BigIntBase {
 public:
-    uint64_t* m_data;
-    uint64_t* m_inline_data;
-    uint32_t  m_size;
-    uint32_t  m_capacity;
-    uint32_t  m_sbo_capacity;
-    int8_t    m_sign;
-    bool      m_is_sbo;
-    uint8_t   m_pad[2];
+    std::uint64_t* m_data{nullptr};
+    std::uint64_t* m_inline_data{nullptr};
+    std::uint32_t  m_size{0};
+    std::uint32_t  m_capacity{0};
+    std::uint32_t  m_sbo_capacity{0};
+    std::int8_t    m_sign{0};
+    bool           m_is_sbo{false};
+    std::array<std::uint8_t, 2> m_pad{0, 0};
 
     /// <summary>
-    /// 拷貝指定數量之 limbs，支援編譯期 constexpr 運算。
+    /// Allocates an uninitialized limb array using C++23 RAII std::make_unique.
+    /// 透過 C++23 RAII std::make_unique 配置 limbs 緩衝區。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void copy_limbs(uint64_t* dst, const uint64_t* src, size_t count) noexcept {
-        for (size_t i = 0; i < count; ++i) {
-            dst[i] = src[i];
-        }
+    /// <param name="count">Number of 64-bit limbs to allocate. / 欲配置之 limb 數量。</param>
+    /// <returns>Owning raw pointer transferred to BigIntBase. / 轉移擁有權至 BigIntBase 之指標。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto allocate_limbs(const std::size_t count) -> std::uint64_t* {
+        auto heap{std::make_unique<std::uint64_t[]>(count)};
+        return heap.release();
     }
 
     /// <summary>
-    /// 將指定數量之 limbs 清零，支援編譯期 constexpr 運算。
+    /// Releases an owned heap limb array safely through an RAII unique_ptr guard.
+    /// 透過 RAII std::unique_ptr 守衛安全釋放堆積配置之 limbs 緩衝區。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void zero_limbs(uint64_t* dst, size_t count) noexcept {
-        for (size_t i = 0; i < count; ++i) {
-            dst[i] = 0;
-        }
+    /// <param name="ptr">Heap pointer to release (nullptr is safe). / 欲釋放之堆積指標。</param>
+    static NUMERIC_CONSTEXPR_20 auto deallocate_limbs(std::uint64_t* const ptr) noexcept -> void {
+        const std::unique_ptr<std::uint64_t[]> guard{ptr};
     }
 
     /// <summary>
+    /// Copies limbs from source span into destination span (supports constexpr evaluation).
+    /// 拷貝指定來源 span 至目標 span，支援編譯期 constexpr 運算。
+    /// </summary>
+    /// <param name="dst">Destination span (must be >= src.size()). / 目標輸出 span。</param>
+    /// <param name="src">Source span. / 來源輸入 span。</param>
+    static NUMERIC_CONSTEXPR_20 auto copy_limbs(
+        const std::span<std::uint64_t> dst,
+        const std::span<const std::uint64_t> src) noexcept -> void
+    {
+        assert(dst.size() >= src.size());
+        std::ranges::copy(src, dst.begin());
+    }
+
+    /// <summary>
+    /// Zeroes all elements within the target limb span (supports constexpr evaluation).
+    /// 將目標 span 內所有 limbs 清零，支援編譯期 constexpr 運算。
+    /// </summary>
+    /// <param name="dst">Target span to clear. / 欲清零之目標 span。</param>
+    static NUMERIC_CONSTEXPR_20 auto zero_limbs(const std::span<std::uint64_t> dst) noexcept -> void {
+        std::ranges::fill(dst, std::uint64_t{0});
+    }
+
+    /// <summary>
+    /// Checks whether storage currently resides in the inline SBO buffer.
     /// 檢查當前是否使用 SBO 內建緩衝區儲存。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_sbo() const noexcept {
+    /// <returns>True if inline SBO is active. / 若處於 SBO 模式回傳 true。</returns>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto is_sbo() const noexcept -> bool {
         return m_is_sbo;
     }
 
     /// <summary>
-    /// 檢查是否為小整數（SBO 模式之別名）。
+    /// Alias for is_sbo(). / is_sbo() 之別名。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_small() const noexcept {
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto is_small() const noexcept -> bool {
         return is_sbo();
     }
 
     /// <summary>
+    /// Checks whether the data pointer currently points to the inline SBO array.
     /// 檢查當前資料指標是否指向內聯 SBO 陣列。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_inline() const noexcept {
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto is_inline() const noexcept -> bool {
         return m_is_sbo;
     }
 
     /// <summary>
-    /// 取得 limbs 資料指標（可修改）。
+    /// Returns mutable pointer to active limb buffer.
+    /// 取得可修改之 limbs 資料指標。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 uint64_t* data() noexcept {
+    NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto data() noexcept -> std::uint64_t* {
         return m_data;
     }
 
     /// <summary>
-    /// 取得 limbs 資料常數指標。
+    /// Returns const pointer to active limb buffer.
+    /// 取得唯讀之 limbs 資料常數指標。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t* data() const noexcept {
+    NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto data() const noexcept -> const std::uint64_t* {
         return m_data;
     }
 
     /// <summary>
-    /// 取得 limbs 資料常數指標。
+    /// Alias for const data(). / 唯讀 limbs 指標別名。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t* limbs() const noexcept {
+    NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto limbs() const noexcept -> const std::uint64_t* {
         return m_data;
     }
 
     /// <summary>
+    /// Returns a bounds-safe mutable std::span covering active limbs.
+    /// 取得涵蓋有效 limbs 的可寫 std::span 安全視圖。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto as_span() noexcept -> std::span<std::uint64_t> {
+        return std::span<std::uint64_t>{m_data, m_size};
+    }
+
+    /// <summary>
+    /// Returns a bounds-safe read-only std::span covering active limbs.
+    /// 取得涵蓋有效 limbs 的唯讀 std::span 安全視圖。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto as_span() const noexcept -> std::span<const std::uint64_t> {
+        return std::span<const std::uint64_t>{m_data, m_size};
+    }
+
+    /// <summary>
+    /// Returns a mutable std::span covering full allocated capacity.
+    /// 取得涵蓋完整配置容量的可寫 std::span 安全視圖。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto capacity_span() noexcept -> std::span<std::uint64_t> {
+        return std::span<std::uint64_t>{m_data, m_capacity};
+    }
+
+    /// <summary>
+    /// Returns a mutable std::span covering the inline SBO buffer.
+    /// 取得涵蓋內聯 SBO 緩衝區的 std::span 安全視圖。
+    /// </summary>
+    NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto inline_span() noexcept -> std::span<std::uint64_t> {
+        return std::span<std::uint64_t>{m_inline_data, m_sbo_capacity};
+    }
+
+    /// <summary>
+    /// Returns number of active 64-bit limbs.
     /// 取得有效 limbs 數量。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t size() const noexcept {
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto size() const noexcept -> std::size_t {
         return m_size;
     }
 
     /// <summary>
-    /// 取得有效 limbs 數量（size 之別名）。
+    /// Alias for size(). / size() 之別名。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t limb_count() const noexcept {
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto limb_count() const noexcept -> std::size_t {
         return m_size;
     }
 
     /// <summary>
+    /// Returns total allocated limb capacity.
     /// 取得目前配置之總容量。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t capacity() const noexcept {
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto capacity() const noexcept -> std::size_t {
         return m_capacity;
     }
 
     /// <summary>
+    /// Returns static inline SBO limb capacity.
     /// 取得物件之 SBO 靜態內聯容量。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t sbo_capacity() const noexcept {
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto sbo_capacity() const noexcept -> std::size_t {
         return m_sbo_capacity;
     }
 
     /// <summary>
+    /// Returns integer sign (-1 for negative, 0 for zero, 1 for positive).
     /// 取得整數符號：負數為 -1，零為 0，正數為 1。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 int8_t sign() const noexcept {
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto sign() const noexcept -> std::int8_t {
         return m_sign;
     }
 
     /// <summary>
+    /// Checks whether the integer is negative.
     /// 判斷是否為負數。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_negative() const noexcept {
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto is_negative() const noexcept -> bool {
         return m_sign < 0;
     }
 
     /// <summary>
+    /// Checks whether the integer equals zero.
     /// 判斷數值是否為 0。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 bool is_zero() const noexcept {
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto is_zero() const noexcept -> bool {
         return m_sign == 0 || m_size == 0;
     }
 
     /// <summary>
-    /// 下標運算子，直接存取指定索引之 limb。
+    /// Mutable element subscript access with bounds assertion in debug builds.
+    /// 可寫下標運算子（除錯模式下執行邊界斷言）。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 uint64_t& operator[](size_t idx) noexcept {
+    NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto operator[](const std::size_t idx) noexcept -> std::uint64_t& {
+        assert(idx < m_capacity);
         return m_data[idx];
     }
 
     /// <summary>
-    /// 下標常數運算子，直接唯讀存取指定索引之 limb。
+    /// Read-only element subscript access with bounds assertion in debug builds.
+    /// 唯讀下標運算子（除錯模式下執行邊界斷言）。
     /// </summary>
-    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t& operator[](size_t idx) const noexcept {
+    NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto operator[](const std::size_t idx) const noexcept -> const std::uint64_t& {
+        assert(idx < m_capacity);
         return m_data[idx];
     }
 
     /// <summary>
+    /// Releases any heap buffer and resets internal pointer back to inline SBO.
     /// 釋放堆積緩衝區並將內部指標重置回 SBO。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 void reset_heap() noexcept {
+    NUMERIC_CONSTEXPR_20 auto reset_heap() noexcept -> void {
         if (!m_is_sbo && m_data != nullptr && m_data != m_inline_data) {
-            delete[] m_data;
+            deallocate_limbs(m_data);
         }
         m_data = m_inline_data;
         m_capacity = m_sbo_capacity;
-        m_is_sbo = (m_sbo_capacity > 0);
+        m_is_sbo = (m_sbo_capacity > 0U);
     }
 
     /// <summary>
-    /// 預設建構子：未配置 SBO 緩衝區（一般由衍生類別提供，或作為演算法內部暫存）。
+    /// Default constructor: zero-initialized with no inline buffer.
+    /// 預設建構子：無內聯 SBO 緩衝區，供演算法內部暫存物件使用。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntBase() noexcept
-        : m_data(nullptr),
-          m_inline_data(nullptr),
-          m_size(0),
-          m_capacity(0),
-          m_sbo_capacity(0),
-          m_sign(0),
-          m_is_sbo(false),
+    NUMERIC_CONSTEXPR_20 BigIntBase() noexcept = default;
+
+    /// <summary>
+    /// Binds a derived class's inline SBO storage span after member initialization completes.
+    /// 於成員初始化完成後綁定衍生類別之內聯 SBO 緩衝區，確保嚴格符合 C++ constexpr 物件生命週期規範。
+    /// </summary>
+    /// <param name="inline_buf">Span covering derived class inline storage. / 衍生類別內聯緩衝區 span。</param>
+    NUMERIC_CONSTEXPR_20 auto bind_inline(const std::span<std::uint64_t> inline_buf) noexcept -> void {
+        m_inline_data = inline_buf.empty() ? nullptr : inline_buf.data();
+        m_data = m_inline_data;
+        m_capacity = static_cast<std::uint32_t>(inline_buf.size());
+        m_sbo_capacity = static_cast<std::uint32_t>(inline_buf.size());
+        m_is_sbo = !inline_buf.empty();
+    }
+
+    /// <summary>
+    /// Base constructor binding a derived class's inline SBO storage span.
+    /// 基底建構子：由衍生類別傳入 inline SBO 緩衝區 span。
+    /// </summary>
+    /// <param name="inline_buf">Span covering derived class inline storage. / 衍生類別內聯緩衝區 span。</param>
+    explicit NUMERIC_CONSTEXPR_20 BigIntBase(const std::span<std::uint64_t> inline_buf) noexcept
+        : m_data{inline_buf.empty() ? nullptr : inline_buf.data()},
+          m_inline_data{inline_buf.empty() ? nullptr : inline_buf.data()},
+          m_size{0},
+          m_capacity{static_cast<std::uint32_t>(inline_buf.size())},
+          m_sbo_capacity{static_cast<std::uint32_t>(inline_buf.size())},
+          m_sign{0},
+          m_is_sbo{!inline_buf.empty()},
           m_pad{0, 0} {}
 
     /// <summary>
-    /// 基底建構子：由衍生類別傳入 inline buffer 的位置與容量。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntBase(uint64_t* inline_ptr, uint32_t inline_cap) noexcept
-        : m_data(inline_cap > 0 ? inline_ptr : nullptr),
-          m_inline_data(inline_cap > 0 ? inline_ptr : nullptr),
-          m_size(0),
-          m_capacity(inline_cap),
-          m_sbo_capacity(inline_cap),
-          m_sign(0),
-          m_is_sbo(inline_cap > 0),
-          m_pad{0, 0} {}
-
-    /// <summary>
+    /// Copy constructor: deep-copies limbs from other.
     /// 複製建構子：深拷貝另一物件之 limbs。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntBase(const BigIntBase& other)
-        : m_data(nullptr),
-          m_inline_data(nullptr),
-          m_size(0),
-          m_capacity(0),
-          m_sbo_capacity(0),
-          m_sign(0),
-          m_is_sbo(false),
-          m_pad{0, 0} {
+    NUMERIC_CONSTEXPR_20 BigIntBase(const BigIntBase& other) {
         assign_from(other);
     }
 
     /// <summary>
-    /// 移動建構子。
+    /// Move constructor: transfers ownership or copies inline limbs.
+    /// 移動建構子：轉移堆積擁有權或複製內聯 limbs。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntBase(BigIntBase&& other) noexcept
-        : m_data(nullptr),
-          m_inline_data(nullptr),
-          m_size(0),
-          m_capacity(0),
-          m_sbo_capacity(0),
-          m_sign(0),
-          m_is_sbo(false),
-          m_pad{0, 0} {
+    NUMERIC_CONSTEXPR_20 BigIntBase(BigIntBase&& other) noexcept {
         move_from(std::move(other));
     }
 
     /// <summary>
-    /// 解構子：若已配置堆積記憶體則進行釋放。
+    /// Destructor: releases heap buffer via RAII guard if heap-allocated.
+    /// 解構子：若為堆積配置則透過 RAII 守衛釋放記憶體。
     /// </summary>
     NUMERIC_CONSTEXPR_20 ~BigIntBase() noexcept {
         if (!m_is_sbo && m_data != nullptr && m_data != m_inline_data) {
-            delete[] m_data;
+            deallocate_limbs(m_data);
             m_data = nullptr;
         }
     }
 
     /// <summary>
-    /// 複製賦值運算子。
+    /// Copy assignment operator. / 複製賦值運算子。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntBase& operator=(const BigIntBase& other) {
+    NUMERIC_CONSTEXPR_20 auto operator=(const BigIntBase& other) -> BigIntBase& {
         assign_from(other);
         return *this;
     }
 
     /// <summary>
-    /// 移動賦值運算子。
+    /// Move assignment operator. / 移動賦值運算子。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntBase& operator=(BigIntBase&& other) noexcept {
+    NUMERIC_CONSTEXPR_20 auto operator=(BigIntBase&& other) noexcept -> BigIntBase& {
         move_from(std::move(other));
         return *this;
     }
 
     /// <summary>
-    /// 複製賦值輔助函式：深拷貝另一物件之 limbs，支援跨 SBO 容量。
+    /// Deep-copies limbs from another BigIntBase, reusing buffer capacity whenever possible.
+    /// 複製賦值輔助函式：深拷貝另一物件之 limbs，盡可能重用既有緩衝區容量。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 void assign_from(const BigIntBase& other) {
-        if (this != &other) {
-            if (m_capacity >= other.m_size && m_data != nullptr) {
-                // 原有緩衝區容量充足，直接重用以消除記憶體重新配置與釋放開銷
-                if (other.m_size > 0) {
-                    copy_limbs(m_data, other.m_data, other.m_size);
-                }
-                if (m_is_sbo && m_sbo_capacity > other.m_size) {
-                    zero_limbs(m_data + other.m_size, m_sbo_capacity - other.m_size);
-                }
-            } else if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
-                // 原緩衝區不足，但符合 SBO 內聯容量
-                reset_heap();
-                if (other.m_size > 0) {
-                    copy_limbs(m_inline_data, other.m_data, other.m_size);
-                }
-                if (m_sbo_capacity > other.m_size) {
-                    zero_limbs(m_inline_data + other.m_size, m_sbo_capacity - other.m_size);
-                }
-                m_data = m_inline_data;
-                m_capacity = m_sbo_capacity;
-                m_is_sbo = true;
-            } else {
-                // 必須於堆積重新配置
-                size_t needed = (other.m_capacity > other.m_size) ? other.m_capacity : other.m_size;
-                if (needed == 0) needed = 1;
-                uint64_t* new_heap = new uint64_t[needed];
-                reset_heap();
-                m_data = new_heap;
-                m_capacity = static_cast<uint32_t>(needed);
-                m_is_sbo = false;
-                if (other.m_size > 0) {
-                    copy_limbs(m_data, other.m_data, other.m_size);
-                }
+    /// <param name="other">Source BigIntBase object. / 來源 BigIntBase 物件。</param>
+    NUMERIC_CONSTEXPR_20 auto assign_from(const BigIntBase& other) -> void {
+        if (this == &other) {
+            return;
+        }
+        if (m_capacity >= other.m_size && m_data != nullptr) {
+            if (other.m_size > 0U) {
+                copy_limbs(capacity_span(), other.as_span());
             }
-            m_size = other.m_size;
-            m_sign = other.m_sign;
-        }
-    }
-
-    /// <summary>
-    /// 移動賦值輔助函式：若來源在 SBO 內則 memcpy，超出 SBO 則直接竊取 heap 指標。
-    /// </summary>
-    /// <summary>
-    /// 複製並取負賦值輔助函式：深拷貝另一物件之 limbs 並將符號取負。
-    /// 若目前物件具備足夠容量則直接重用緩衝區，達成 0 次動態記憶體配置。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 void assign_negated(const BigIntBase& other) {
-        assign_from(other);
-        if (m_size > 0 && m_sign != 0) {
-            m_sign = -m_sign;
-        }
-    }
-
-    NUMERIC_CONSTEXPR_20 void move_from(BigIntBase&& other) noexcept {
-        if (this != &other) {
+            if (m_is_sbo && m_sbo_capacity > other.m_size) {
+                zero_limbs(inline_span().subspan(other.m_size));
+            }
+        } else if (m_sbo_capacity > 0U && other.m_size <= m_sbo_capacity) {
             reset_heap();
-            if (m_sbo_capacity > 0 && other.m_size <= m_sbo_capacity) {
-                if (other.m_size > 0) {
-                    copy_limbs(m_inline_data, other.m_data, other.m_size);
-                }
-                if (m_sbo_capacity > other.m_size) {
-                    zero_limbs(m_inline_data + other.m_size, m_sbo_capacity - other.m_size);
-                }
-                m_data = m_inline_data;
-                m_capacity = m_sbo_capacity;
-                m_is_sbo = true;
-                if (!other.m_is_sbo && other.m_data != nullptr && other.m_data != other.m_inline_data) {
-                    delete[] other.m_data;
-                }
-                other.m_data = other.m_inline_data;
-                other.m_capacity = other.m_sbo_capacity;
-                other.m_is_sbo = (other.m_sbo_capacity > 0);
-            } else if (other.m_is_sbo) {
-                if (other.m_size > 0) {
-                    m_data = new uint64_t[other.m_size];
-                    m_capacity = static_cast<uint32_t>(other.m_size);
-                    m_is_sbo = false;
-                    copy_limbs(m_data, other.m_inline_data, other.m_size);
-                } else {
-                    m_data = m_inline_data;
-                    m_capacity = m_sbo_capacity;
-                    m_is_sbo = (m_sbo_capacity > 0);
-                }
-            } else {
-                m_data = other.m_data;
-                m_capacity = other.m_capacity;
-                m_is_sbo = false;
-                other.m_data = other.m_inline_data;
-                other.m_capacity = other.m_sbo_capacity;
-                other.m_is_sbo = (other.m_sbo_capacity > 0);
+            if (other.m_size > 0U) {
+                copy_limbs(inline_span(), other.as_span());
             }
-            m_size = other.m_size;
-            m_sign = other.m_sign;
-            other.m_size = 0;
-            other.m_sign = 0;
-            if (other.m_sbo_capacity > 0) {
-                zero_limbs(other.m_inline_data, other.m_sbo_capacity);
+            if (m_sbo_capacity > other.m_size) {
+                zero_limbs(inline_span().subspan(other.m_size));
             }
+            m_data = m_inline_data;
+            m_capacity = m_sbo_capacity;
+            m_is_sbo = true;
+        } else {
+            const std::size_t needed{(other.m_capacity > other.m_size) ? other.m_capacity : (other.m_size > 0U ? other.m_size : 1U)};
+            std::uint64_t* const new_heap{allocate_limbs(needed)};
+            reset_heap();
+            m_data = new_heap;
+            m_capacity = static_cast<std::uint32_t>(needed);
+            m_is_sbo = false;
+            if (other.m_size > 0U) {
+                copy_limbs(capacity_span(), other.as_span());
+            }
+        }
+        m_size = other.m_size;
+        m_sign = other.m_sign;
+    }
+
+    /// <summary>
+    /// Deep-copies limbs from another BigIntBase and flips the sign bit.
+    /// Reuses existing capacity for zero-allocation negated copy when sufficient.
+    /// 複製並取負賦值輔助函式：深拷貝另一物件並反轉符號，容量充足時達成零記憶體配置。
+    /// </summary>
+    /// <param name="other">Source BigIntBase object. / 來源 BigIntBase 物件。</param>
+    NUMERIC_CONSTEXPR_20 auto assign_negated(const BigIntBase& other) -> void {
+        assign_from(other);
+        if (m_size > 0U && m_sign != 0) {
+            m_sign = static_cast<std::int8_t>(-m_sign);
         }
     }
 
     /// <summary>
+    /// Move assignment helper: steals heap pointer or copies inline SBO limbs.
+    /// 移動賦值輔助函式：若超出 SBO 直接轉移堆積指標所有權，否則複製 SBO 內容。
+    /// </summary>
+    /// <param name="other">Moved-from source object. / 被移動之來源物件。</param>
+    NUMERIC_CONSTEXPR_20 auto move_from(BigIntBase&& other) noexcept -> void {
+        if (this == &other) {
+            return;
+        }
+        reset_heap();
+        if (m_sbo_capacity > 0U && other.m_size <= m_sbo_capacity) {
+            if (other.m_size > 0U) {
+                copy_limbs(inline_span(), other.as_span());
+            }
+            if (m_sbo_capacity > other.m_size) {
+                zero_limbs(inline_span().subspan(other.m_size));
+            }
+            m_data = m_inline_data;
+            m_capacity = m_sbo_capacity;
+            m_is_sbo = true;
+            if (!other.m_is_sbo && other.m_data != nullptr && other.m_data != other.m_inline_data) {
+                deallocate_limbs(other.m_data);
+            }
+            other.m_data = other.m_inline_data;
+            other.m_capacity = other.m_sbo_capacity;
+            other.m_is_sbo = (other.m_sbo_capacity > 0U);
+        } else if (other.m_is_sbo) {
+            if (other.m_size > 0U) {
+                m_data = allocate_limbs(other.m_size);
+                m_capacity = static_cast<std::uint32_t>(other.m_size);
+                m_is_sbo = false;
+                copy_limbs(capacity_span(), other.as_span());
+            } else {
+                m_data = m_inline_data;
+                m_capacity = m_sbo_capacity;
+                m_is_sbo = (m_sbo_capacity > 0U);
+            }
+        } else {
+            m_data = other.m_data;
+            m_capacity = other.m_capacity;
+            m_is_sbo = false;
+            other.m_data = other.m_inline_data;
+            other.m_capacity = other.m_sbo_capacity;
+            other.m_is_sbo = (other.m_sbo_capacity > 0U);
+        }
+        m_size = other.m_size;
+        m_sign = other.m_sign;
+        other.m_size = 0;
+        other.m_sign = 0;
+        if (other.m_sbo_capacity > 0U) {
+            zero_limbs(other.inline_span());
+        }
+    }
+
+    /// <summary>
+    /// Performs in-place sign negation.
     /// 原地單元取負操作。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 void negate() noexcept {
-        if (m_size > 0 && m_sign != 0) {
-            m_sign = -m_sign;
+    NUMERIC_CONSTEXPR_20 auto negate() noexcept -> void {
+        if (m_size > 0U && m_sign != 0) {
+            m_sign = static_cast<std::int8_t>(-m_sign);
         }
     }
 
     /// <summary>
-    /// 預留緩衝區容量。
+    /// Reserves heap storage capacity to at least new_cap limbs.
+    /// 預留緩衝區容量至至少 new_cap 個 limbs。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 void reserve(size_t new_cap) {
-        if (new_cap <= m_capacity) return;
-        uint64_t* new_heap = new uint64_t[new_cap];
-        if (m_size > 0) {
-            copy_limbs(new_heap, m_data, m_size);
+    /// <param name="new_cap">Requested minimum capacity. / 請求之最小容量。</param>
+    NUMERIC_CONSTEXPR_20 auto reserve(const std::size_t new_cap) -> void {
+        if (new_cap <= m_capacity) {
+            return;
+        }
+        std::uint64_t* const new_heap{allocate_limbs(new_cap)};
+        if (m_size > 0U) {
+            copy_limbs(std::span<std::uint64_t>{new_heap, new_cap}, as_span());
         }
         if (!m_is_sbo && m_data != nullptr && m_data != m_inline_data) {
-            delete[] m_data;
+            deallocate_limbs(m_data);
         }
         m_data = new_heap;
-        m_capacity = static_cast<uint32_t>(new_cap);
+        m_capacity = static_cast<std::uint32_t>(new_cap);
         m_is_sbo = false;
     }
 
     /// <summary>
-    /// 調整 limbs 數量大小並可選填預設值。
+    /// Resizes active limb count, zero/value-filling newly added limbs if expanded.
+    /// 調整有效 limbs 數量大小，若擴張則填入預設值。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 void resize(size_t new_size, uint64_t init_val = 0) {
+    /// <param name="new_size">Target limb count. / 目標 limb 數量。</param>
+    /// <param name="init_val">Fill value for expanded limbs. / 擴張元素填充初值。</param>
+    NUMERIC_CONSTEXPR_20 auto resize(const std::size_t new_size, const std::uint64_t init_val = 0ULL) -> void {
         if (new_size > m_capacity) {
-            size_t next_cap = static_cast<size_t>(m_capacity) * 2;
-            if (next_cap < new_size) next_cap = new_size;
+            std::size_t next_cap{static_cast<std::size_t>(m_capacity) * 2U};
+            if (next_cap < new_size) {
+                next_cap = new_size;
+            }
             reserve(next_cap);
         }
-        uint64_t* d = data();
         if (new_size > m_size) {
-            for (size_t i = m_size; i < new_size; ++i) {
-                d[i] = init_val;
-            }
+            std::ranges::fill(capacity_span().subspan(m_size, new_size - m_size), init_val);
         }
-        m_size = static_cast<uint32_t>(new_size);
+        m_size = static_cast<std::uint32_t>(new_size);
     }
 
     /// <summary>
-    /// 規範化 limbs 陣列，移除高位無效之 0 limbs 並調整正負符號；若長度落回 SBO 則縮回 SBO。
+    /// Normalizes limb array by stripping leading zeros and retracting to inline SBO if eligible.
+    /// 規範化 limbs 陣列，移除高位無效零肢段；若長度落回 SBO 則縮回內聯緩衝區。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 void normalize() noexcept {
-        uint64_t* d = data();
-        while (m_size > 0 && d[m_size - 1] == 0) {
+    NUMERIC_CONSTEXPR_20 auto normalize() noexcept -> void {
+        const std::span<const std::uint64_t> limbs_view{m_data, m_size};
+        while (m_size > 0U && limbs_view[m_size - 1U] == 0ULL) {
             --m_size;
         }
-        if (m_size == 0) {
+        if (m_size == 0U) {
             m_sign = 0;
         }
         shrink_to_sbo_if_possible();
     }
 
     /// <summary>
-    /// 釋放未使用的緩衝區容量；若 limbs 數量小於等於 SBO 容量則縮回 SBO。
-    /// Shrink unused buffer capacity; retracts to inline SBO if limbs fit.
+    /// Releases unused capacity by shrinking back into inline SBO when possible.
+    /// 釋放未使用的堆積容量；若符合 SBO 大小則縮回內聯陣列。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 void shrink_to_fit() noexcept {
+    NUMERIC_CONSTEXPR_20 auto shrink_to_fit() noexcept -> void {
         shrink_to_sbo_if_possible();
     }
 
     /// <summary>
-    /// 當 limbs 數量小於等於 SBO 容量且當前為堆積配置時，縮回 SBO。
+    /// Moves heap data back to inline SBO storage if current size fits within m_sbo_capacity.
+    /// 當 limbs 數量小於等於 SBO 容量且目前為堆積配置時，縮回 SBO 緩衝區。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 void shrink_to_sbo_if_possible() noexcept {
-        if (!m_is_sbo && m_sbo_capacity > 0 && m_size <= m_sbo_capacity) {
-            uint64_t* old_heap = m_data;
-            for (size_t i = 0; i < m_sbo_capacity; ++i) {
-                m_inline_data[i] = (i < m_size && old_heap != nullptr) ? old_heap[i] : 0;
+    NUMERIC_CONSTEXPR_20 auto shrink_to_sbo_if_possible() noexcept -> void {
+        if (!m_is_sbo && m_sbo_capacity > 0U && m_size <= m_sbo_capacity) {
+            std::uint64_t* const old_heap{m_data};
+            const std::span<std::uint64_t> dst{inline_span()};
+            for (std::size_t i{0}; i < m_sbo_capacity; ++i) {
+                dst[i] = (i < m_size && old_heap != nullptr) ? old_heap[i] : 0ULL;
             }
             m_data = m_inline_data;
             m_capacity = m_sbo_capacity;
             m_is_sbo = true;
             if (old_heap != nullptr && old_heap != m_inline_data) {
-                delete[] old_heap;
+                deallocate_limbs(old_heap);
             }
         }
     }
 
     /// <summary>
-    /// 清空數值為 0。
+    /// Resets value to zero while preserving buffer allocation.
+    /// 清空數值為 0（保留既有配置空間）。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 void clear() noexcept {
+    NUMERIC_CONSTEXPR_20 auto clear() noexcept -> void {
         m_size = 0;
         m_sign = 0;
     }
 
     /// <summary>
+    /// Sets storage value from an unsigned 64-bit magnitude and explicit sign.
     /// 設定為 64 位元無符號整數與指定正負號。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 void set_uint64(uint64_t val, int8_t sign) {
-        if (val == 0) {
+    /// <param name="val">64-bit unsigned magnitude. / 64 位元無符號大小。</param>
+    /// <param name="sign">Sign (-1, 0, or 1). / 正負符號。</param>
+    NUMERIC_CONSTEXPR_20 auto set_uint64(const std::uint64_t val, const std::int8_t sign) -> void {
+        if (val == 0ULL) {
             m_size = 0;
             m_sign = 0;
             return;
         }
-        if (m_sbo_capacity > 0) {
+        if (m_sbo_capacity > 0U) {
             reset_heap();
-            for (size_t i = 0; i < m_sbo_capacity; ++i) {
-                m_inline_data[i] = 0;
-            }
+            zero_limbs(inline_span());
             m_size = 1;
             m_sign = sign;
-            m_inline_data[0] = val;
+            inline_span()[0] = val;
             m_is_sbo = true;
         } else {
-            if (m_capacity < 1 || m_data == nullptr) {
-                reserve(1);
+            if (m_capacity < 1U || m_data == nullptr) {
+                reserve(1U);
             }
             m_size = 1;
             m_sign = sign;
-            m_data[0] = val;
+            capacity_span()[0] = val;
             m_is_sbo = false;
         }
     }
@@ -1193,88 +1268,115 @@ static_assert(sizeof(BigIntBase) == 32, "BigIntBase must be exactly 32 bytes on 
 // --- End Section: include/numeric/detail/Storage.hpp ---
 
 // --- Begin Section: include/numeric/detail/Arithmetic.hpp ---
-// Arithmetic.hpp
-// Core addition, subtraction, and comparison algorithms for CPP-BigInt.
-// Features 256-bit unrolled SBO fast-paths, zero-allocation branch elimination, and signed dispatch.
-// Zero external dependencies, downward compatible from C++23 to C++11.
+// filepath: include/numeric/detail/Arithmetic.hpp
+/**
+ * @file Arithmetic.hpp
+ * @brief Core arbitrary-precision addition, subtraction, and comparison algorithms for CPP-BigInt.
+ *        Features 256-bit unrolled SBO fast paths, zero-allocation branch elimination,
+ *        std::span bounds safety, and signed dispatch with self-aliasing protection.
+ *        核心任意精度加法、減法與比較演算法模組。
+ *        具備 256 位元展開 SBO 快速路徑、無分支比較消除、std::span 邊界安全與自我別名防護。
+ */
 
 
 namespace numeric {
 namespace detail {
 
 /// <summary>
-/// 核心加法與減法演算法結構。
+/// Core unsigned/signed addition, subtraction, and magnitude comparison algorithms.
+/// 核心加法、減法與大小比較演算法結構。
 /// </summary>
 struct BigIntArithmetic : public BigIntIntrinsics {
     /// <summary>
-    /// 比較兩無符號 limbs 陣列之大小。
+    /// Compares the magnitudes of two unsigned limb spans.
+    /// Specialized branchless-friendly fast paths for 1, 2, and 4 limbs.
+    /// 比較兩無符號 limbs span 之數值大小，針對 1、2、4 limbs 提供展開快速路徑。
     /// </summary>
-    /// <param name="a">陣列 a</param>
-    /// <param name="a_len">陣列 a 長度</param>
-    /// <param name="b">陣列 b</param>
-    /// <param name="b_len">陣列 b 長度</param>
-    /// <returns>若 a &gt; b 回傳 1，a &lt; b 回傳 -1，相等回傳 0</returns>
-    static NUMERIC_CONSTEXPR_20 int compare_unsigned(const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
-        if (a_len != b_len) return (a_len > b_len) ? 1 : -1;
-        if (a_len == 1) {
+    /// <param name="a">First unsigned limb span. / 第一個無符號 limbs span。</param>
+    /// <param name="b">Second unsigned limb span. / 第二個無符號 limbs span。</param>
+    /// <returns>1 if a > b, -1 if a < b, 0 if equal. / 若 a > b 回傳 1，a < b 回傳 -1，相等回傳 0。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto compare_unsigned(
+        const std::span<const std::uint64_t> a,
+        const std::span<const std::uint64_t> b) noexcept -> std::int32_t
+    {
+        const std::size_t a_len{a.size()};
+        const std::size_t b_len{b.size()};
+        if (a_len != b_len) {
+            return (a_len > b_len) ? 1 : -1;
+        }
+        if (a_len == 1U) {
             if (a[0] != b[0]) return (a[0] > b[0]) ? 1 : -1;
             return 0;
         }
-        if (a_len == 2) {
+        if (a_len == 2U) {
             if (a[1] != b[1]) return (a[1] > b[1]) ? 1 : -1;
             if (a[0] != b[0]) return (a[0] > b[0]) ? 1 : -1;
             return 0;
         }
-        if (a_len == 4) {
+        if (a_len == 4U) {
             if (a[3] != b[3]) return (a[3] > b[3]) ? 1 : -1;
             if (a[2] != b[2]) return (a[2] > b[2]) ? 1 : -1;
             if (a[1] != b[1]) return (a[1] > b[1]) ? 1 : -1;
             if (a[0] != b[0]) return (a[0] > b[0]) ? 1 : -1;
             return 0;
         }
-        for (size_t i = a_len; i > 0; --i) {
-            if (a[i - 1] != b[i - 1]) return (a[i - 1] > b[i - 1]) ? 1 : -1;
+        for (std::size_t i{a_len}; i > 0U; --i) {
+            if (a[i - 1U] != b[i - 1U]) {
+                return (a[i - 1U] > b[i - 1U]) ? 1 : -1;
+            }
         }
         return 0;
     }
 
     /// <summary>
-    /// 256-bit SBO 靜態展開快路徑加法 (1 ~ 4 Limbs)。
-    /// 安全零填充提取，純暫存器 ADC 流水線，延遲進位擴容，保證自我別名與全零規格化安全。
+    /// Unrolled 256-bit SBO fast-path unsigned addition (1..4 limbs).
+    /// Pure register ADC pipeline with delayed carry expansion and self-aliasing safety.
+    /// 256-bit SBO 靜態展開快路徑加法 (1 ~ 4 Limbs)，純暫存器 ADC 流水線並保證自我別名安全。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void add_unsigned_sbo4(
-        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    /// <param name="res">Destination storage. / 目標輸出儲存體。</param>
+    /// <param name="a">First operand storage. / 運算元 a。</param>
+    /// <param name="b">Second operand storage. / 運算元 b。</param>
+    static NUMERIC_CONSTEXPR_20 auto add_unsigned_sbo4(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) noexcept -> void
     {
-        const uint64_t* a_data = a.data();
-        const uint64_t* b_data = b.data();
-        size_t a_size = a.m_size;
-        size_t b_size = b.m_size;
+        const std::span<const std::uint64_t> a_span{a.as_span()};
+        const std::span<const std::uint64_t> b_span{b.as_span()};
+        const std::size_t a_size{a_span.size()};
+        const std::size_t b_size{b_span.size()};
 
-        const uint64_t a0 = (0 < a_size) ? a_data[0] : 0;
-        const uint64_t a1 = (1 < a_size) ? a_data[1] : 0;
-        const uint64_t a2 = (2 < a_size) ? a_data[2] : 0;
-        const uint64_t a3 = (3 < a_size) ? a_data[3] : 0;
+        const std::uint64_t a0{(0U < a_size) ? a_span[0] : 0ULL};
+        const std::uint64_t a1{(1U < a_size) ? a_span[1] : 0ULL};
+        const std::uint64_t a2{(2U < a_size) ? a_span[2] : 0ULL};
+        const std::uint64_t a3{(3U < a_size) ? a_span[3] : 0ULL};
 
-        const uint64_t b0 = (0 < b_size) ? b_data[0] : 0;
-        const uint64_t b1 = (1 < b_size) ? b_data[1] : 0;
-        const uint64_t b2 = (2 < b_size) ? b_data[2] : 0;
-        const uint64_t b3 = (3 < b_size) ? b_data[3] : 0;
+        const std::uint64_t b0{(0U < b_size) ? b_span[0] : 0ULL};
+        const std::uint64_t b1{(1U < b_size) ? b_span[1] : 0ULL};
+        const std::uint64_t b2{(2U < b_size) ? b_span[2] : 0ULL};
+        const std::uint64_t b3{(3U < b_size) ? b_span[3] : 0ULL};
 
-        uint64_t r0 = 0, r1 = 0, r2 = 0, r3 = 0;
-        uint8_t c = 0;
-        c = adc64(c, a0, b0, &r0);
-        c = adc64(c, a1, b1, &r1);
-        c = adc64(c, a2, b2, &r2);
-        c = adc64(c, a3, b3, &r3);
+        std::uint64_t r0{0};
+        std::uint64_t r1{0};
+        std::uint64_t r2{0};
+        std::uint64_t r3{0};
+        std::uint8_t c{0};
+        c = adc64(c, a0, b0, r0);
+        c = adc64(c, a1, b1, r1);
+        c = adc64(c, a2, b2, r2);
+        c = adc64(c, a3, b3, r3);
 
-        if (c == 0) {
-            size_t s = 4;
-            if (r3 == 0) {
-                if (r2 == 0) {
-                    if (r1 == 0) s = (r0 == 0) ? 0 : 1;
-                    else s = 2;
+        if (c == 0U) {
+            std::size_t s{4U};
+            if (r3 == 0ULL) {
+                if (r2 == 0ULL) {
+                    if (r1 == 0ULL) {
+                        s = (r0 == 0ULL) ? 0U : 1U;
+                    } else {
+                        s = 2U;
+                    }
                 } else {
-                    s = 3;
+                    s = 3U;
                 }
             }
 
@@ -1286,67 +1388,81 @@ struct BigIntArithmetic : public BigIntIntrinsics {
                 res.reserve(s);
             }
 
-            uint64_t* d = res.data();
+            const std::span<std::uint64_t> d{res.capacity_span()};
             switch (s) {
-            case 4: d[3] = r3; /* fallthrough */
-            case 3: d[2] = r2; /* fallthrough */
-            case 2: d[1] = r1; /* fallthrough */
-            case 1: d[0] = r0; break;
+            case 4U: d[3] = r3; [[fallthrough]];
+            case 3U: d[2] = r2; [[fallthrough]];
+            case 2U: d[1] = r1; [[fallthrough]];
+            case 1U: d[0] = r0; break;
             default: break;
             }
 
-            res.m_size = static_cast<uint32_t>(s);
-            if (s == 0) {
+            res.m_size = static_cast<std::uint32_t>(s);
+            if (s == 0U) {
                 res.m_sign = 0;
             }
         } else {
-            if (res.capacity() < 5) {
-                res.reserve(5);
+            if (res.capacity() < 5U) {
+                res.reserve(5U);
             }
-            uint64_t* d = res.data();
-            d[0] = r0; d[1] = r1; d[2] = r2; d[3] = r3;
-            d[4] = 1;
-            res.m_size = 5;
+            const std::span<std::uint64_t> d{res.capacity_span()};
+            d[0] = r0;
+            d[1] = r1;
+            d[2] = r2;
+            d[3] = r3;
+            d[4] = 1ULL;
+            res.m_size = 5U;
         }
     }
 
     /// <summary>
-    /// 256-bit SBO 靜態展開快路徑減法 (1 ~ 4 Limbs)。
-    /// 前置條件：|a| >= |b| 且 a.m_size <= 4, b.m_size <= 4。
-    /// 純暫存器 SBB 流水線，直接輸出至 SBO 陣列，保證自我別名與全零規格化安全。
+    /// Unrolled 256-bit SBO fast-path unsigned subtraction (1..4 limbs).
+    /// Precondition: |a| >= |b| and a.size() <= 4, b.size() <= 4.
+    /// 256-bit SBO 靜態展開快路徑減法 (1 ~ 4 Limbs)，前置合約：|a| >= |b| 且皆 <= 4 limbs。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void sub_unsigned_sbo4(
-        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    /// <param name="res">Destination storage. / 目標輸出儲存體。</param>
+    /// <param name="a">Minuend storage. / 被減數儲存體。</param>
+    /// <param name="b">Subtrahend storage. / 減數儲存體。</param>
+    static NUMERIC_CONSTEXPR_20 auto sub_unsigned_sbo4(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) noexcept -> void
     {
-        const uint64_t* a_data = a.data();
-        const uint64_t* b_data = b.data();
-        size_t a_size = a.m_size;
-        size_t b_size = b.m_size;
+        const std::span<const std::uint64_t> a_span{a.as_span()};
+        const std::span<const std::uint64_t> b_span{b.as_span()};
+        const std::size_t a_size{a_span.size()};
+        const std::size_t b_size{b_span.size()};
 
-        const uint64_t a0 = (0 < a_size) ? a_data[0] : 0;
-        const uint64_t a1 = (1 < a_size) ? a_data[1] : 0;
-        const uint64_t a2 = (2 < a_size) ? a_data[2] : 0;
-        const uint64_t a3 = (3 < a_size) ? a_data[3] : 0;
+        const std::uint64_t a0{(0U < a_size) ? a_span[0] : 0ULL};
+        const std::uint64_t a1{(1U < a_size) ? a_span[1] : 0ULL};
+        const std::uint64_t a2{(2U < a_size) ? a_span[2] : 0ULL};
+        const std::uint64_t a3{(3U < a_size) ? a_span[3] : 0ULL};
 
-        const uint64_t b0 = (0 < b_size) ? b_data[0] : 0;
-        const uint64_t b1 = (1 < b_size) ? b_data[1] : 0;
-        const uint64_t b2 = (2 < b_size) ? b_data[2] : 0;
-        const uint64_t b3 = (3 < b_size) ? b_data[3] : 0;
+        const std::uint64_t b0{(0U < b_size) ? b_span[0] : 0ULL};
+        const std::uint64_t b1{(1U < b_size) ? b_span[1] : 0ULL};
+        const std::uint64_t b2{(2U < b_size) ? b_span[2] : 0ULL};
+        const std::uint64_t b3{(3U < b_size) ? b_span[3] : 0ULL};
 
-        uint64_t r0 = 0, r1 = 0, r2 = 0, r3 = 0;
-        uint8_t borrow = 0;
-        borrow = sbb64(borrow, a0, b0, &r0);
-        borrow = sbb64(borrow, a1, b1, &r1);
-        borrow = sbb64(borrow, a2, b2, &r2);
-        borrow = sbb64(borrow, a3, b3, &r3);
+        std::uint64_t r0{0};
+        std::uint64_t r1{0};
+        std::uint64_t r2{0};
+        std::uint64_t r3{0};
+        std::uint8_t borrow{0};
+        borrow = sbb64(borrow, a0, b0, r0);
+        borrow = sbb64(borrow, a1, b1, r1);
+        borrow = sbb64(borrow, a2, b2, r2);
+        (void)sbb64(borrow, a3, b3, r3);
 
-        size_t s = 4;
-        if (r3 == 0) {
-            if (r2 == 0) {
-                if (r1 == 0) s = (r0 == 0) ? 0 : 1;
-                else s = 2;
+        std::size_t s{4U};
+        if (r3 == 0ULL) {
+            if (r2 == 0ULL) {
+                if (r1 == 0ULL) {
+                    s = (r0 == 0ULL) ? 0U : 1U;
+                } else {
+                    s = 2U;
+                }
             } else {
-                s = 3;
+                s = 3U;
             }
         }
 
@@ -1358,96 +1474,109 @@ struct BigIntArithmetic : public BigIntIntrinsics {
             res.reserve(s);
         }
 
-        uint64_t* d = res.data();
+        const std::span<std::uint64_t> d{res.capacity_span()};
         switch (s) {
-        case 4: d[3] = r3; /* fallthrough */
-        case 3: d[2] = r2; /* fallthrough */
-        case 2: d[1] = r1; /* fallthrough */
-        case 1: d[0] = r0; break;
+        case 4U: d[3] = r3; [[fallthrough]];
+        case 3U: d[2] = r2; [[fallthrough]];
+        case 2U: d[1] = r1; [[fallthrough]];
+        case 1U: d[0] = r0; break;
         default: break;
         }
 
-        res.m_size = static_cast<uint32_t>(s);
-        if (s == 0) {
+        res.m_size = static_cast<std::uint32_t>(s);
+        if (s == 0U) {
             res.m_sign = 0;
         }
     }
 
     /// <summary>
-    /// 多肢段通用加法，含別名指針備份防護、空間預留與長邊 Early-Exit 進位鏈。
+    /// General multi-limb unsigned addition with alias backup, pre-reservation, and early-exit carry loop.
+    /// 多肢段通用加法，含別名備份防護、空間預留與長邊 Early-Exit 進位鏈。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void add_unsigned_general(
-        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    /// <param name="res">Destination storage. / 目標輸出儲存體。</param>
+    /// <param name="a">First operand storage. / 運算元 a。</param>
+    /// <param name="b">Second operand storage. / 運算元 b。</param>
+    static NUMERIC_CONSTEXPR_20 auto add_unsigned_general(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) noexcept -> void
     {
-        size_t a_len = a.m_size;
-        size_t b_len = b.m_size;
-        size_t min_len = std::min(a_len, b_len);
-        size_t max_len = std::max(a_len, b_len);
+        const std::size_t a_len{a.m_size};
+        const std::size_t b_len{b.m_size};
+        const std::size_t min_len{std::min(a_len, b_len)};
+        const std::size_t max_len{std::max(a_len, b_len)};
 
-        uint64_t a_stack[128], b_stack[128];
-        const uint64_t* a_ptr = a.data();
-        const uint64_t* b_ptr = b.data();
-        std::vector<uint64_t> a_heap, b_heap;
+        std::array<std::uint64_t, 128> a_stack{};
+        std::array<std::uint64_t, 128> b_stack{};
+        std::vector<std::uint64_t> a_heap{};
+        std::vector<std::uint64_t> b_heap{};
+
+        std::span<const std::uint64_t> a_span{a.as_span()};
+        std::span<const std::uint64_t> b_span{b.as_span()};
 
         if (&res == &a && a_len < b_len) {
-            if (a_len <= 128) {
-                std::copy_n(a.data(), a_len, a_stack);
-                a_ptr = a_stack;
+            if (a_len <= 128U) {
+                std::ranges::copy(a.as_span(), a_stack.begin());
+                a_span = std::span<const std::uint64_t>{a_stack.data(), a_len};
             } else {
-                a_heap.resize(a_len);
-                std::copy_n(a.data(), a_len, a_heap.data());
-                a_ptr = a_heap.data();
+                a_heap.assign(a.as_span().begin(), a.as_span().end());
+                a_span = std::span<const std::uint64_t>{a_heap};
             }
         } else if (&res == &b && b_len < a_len) {
-            if (b_len <= 128) {
-                std::copy_n(b.data(), b_len, b_stack);
-                b_ptr = b_stack;
+            if (b_len <= 128U) {
+                std::ranges::copy(b.as_span(), b_stack.begin());
+                b_span = std::span<const std::uint64_t>{b_stack.data(), b_len};
             } else {
-                b_heap.resize(b_len);
-                std::copy_n(b.data(), b_len, b_heap.data());
-                b_ptr = b_heap.data();
+                b_heap.assign(b.as_span().begin(), b.as_span().end());
+                b_span = std::span<const std::uint64_t>{b_heap};
             }
         }
 
         if (&res != &a && &res != &b) {
-            res.resize(max_len + 1, 0);
+            res.resize(max_len + 1U, 0ULL);
         } else if ((&res == &a && a_len < b_len) || (&res == &b && b_len < a_len)) {
-            res.resize(max_len + 1, 0);
+            res.resize(max_len + 1U, 0ULL);
         }
 
-        const uint64_t* longer_ptr = (a_len >= b_len) ? a_ptr : b_ptr;
+        const std::span<const std::uint64_t> longer_span{(a_len >= b_len) ? a_span : b_span};
+        const std::span<std::uint64_t> out_span{res.capacity_span()};
 
-        uint8_t carry = 0;
-        for (size_t i = 0; i < min_len; ++i) {
-            carry = adc64(carry, a_ptr[i], b_ptr[i], &res.data()[i]);
+        std::uint8_t carry{0};
+        for (std::size_t i{0}; i < min_len; ++i) {
+            carry = adc64(carry, a_span[i], b_span[i], out_span[i]);
         }
 
-        size_t i = min_len;
-        for (; i < max_len && carry != 0; ++i) {
-            carry = adc64(carry, longer_ptr[i], 0, &res.data()[i]);
+        std::size_t i{min_len};
+        for (; i < max_len && carry != 0U; ++i) {
+            carry = adc64(carry, longer_span[i], 0ULL, out_span[i]);
         }
 
-        if (carry == 0) {
-            if (res.data() != longer_ptr && i < max_len) {
-                std::copy_n(longer_ptr + i, max_len - i, res.data() + i);
+        if (carry == 0U) {
+            if (res.data() != longer_span.data() && i < max_len) {
+                BigIntStorage::copy_limbs(
+                    out_span.subspan(i),
+                    longer_span.subspan(i, max_len - i));
             }
-            res.m_size = static_cast<uint32_t>(max_len);
+            res.m_size = static_cast<std::uint32_t>(max_len);
         } else {
-            if (res.m_size < max_len + 1) {
-                res.resize(max_len + 1, 0);
+            if (res.m_size < max_len + 1U) {
+                res.resize(max_len + 1U, 0ULL);
             }
-            res.data()[max_len] = 1;
-            res.m_size = static_cast<uint32_t>(max_len + 1);
+            res[max_len] = 1ULL;
+            res.m_size = static_cast<std::uint32_t>(max_len + 1U);
         }
     }
 
     /// <summary>
-    /// 無符號 limbs 加法：res = a + b。純數值 (Magnitude) 運算。
+    /// Unsigned limb addition: res = a + b (magnitude only).
+    /// 無符號 limbs 加法：res = a + b（純數值大小運算）。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void add_unsigned(
-        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    static NUMERIC_CONSTEXPR_20 auto add_unsigned(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) noexcept -> void
     {
-        if (a.m_size <= 4 && b.m_size <= 4) {
+        if (a.m_size <= 4U && b.m_size <= 4U) {
             add_unsigned_sbo4(res, a, b);
         } else {
             add_unsigned_general(res, a, b);
@@ -1455,54 +1584,62 @@ struct BigIntArithmetic : public BigIntIntrinsics {
     }
 
     /// <summary>
-    /// 絕對值減法核心演算法：res = a - b (前置合約：|a| >= |b|)。
-    /// 支援小運算元別名備份 (&res == &b)、前置擴容與由高位向下快速規格化。
+    /// Core magnitude subtraction: res = a - b (Precondition: |a| >= |b|).
+    /// Supports alias backup (&res == &b), pre-allocation, and fast top-down normalization.
+    /// 絕對值減法核心演算法：res = a - b（前置合約：|a| >= |b|），支援別名安全與快速規格化。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void sub_magnitude_core(
-        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    static NUMERIC_CONSTEXPR_20 auto sub_magnitude_core(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) noexcept -> void
     {
-        size_t a_len = a.m_size;
-        size_t b_len = b.m_size;
+        const std::size_t a_len{a.m_size};
+        const std::size_t b_len{b.m_size};
 
-        if (a_len <= 4 && b_len <= 4) {
+        if (a_len <= 4U && b_len <= 4U) {
             sub_unsigned_sbo4(res, a, b);
             return;
         }
 
-        uint64_t b_stack[128];
-        const uint64_t* b_data = b.data();
-        std::vector<uint64_t> b_heap;
+        std::array<std::uint64_t, 128> b_stack{};
+        std::vector<std::uint64_t> b_heap{};
+        std::span<const std::uint64_t> b_span{b.as_span()};
+
         if (&res == &b) {
-            if (b_len <= 128) {
-                std::copy_n(b.data(), b_len, b_stack);
-                b_data = b_stack;
+            if (b_len <= 128U) {
+                std::ranges::copy(b.as_span(), b_stack.begin());
+                b_span = std::span<const std::uint64_t>{b_stack.data(), b_len};
             } else {
-                b_heap.resize(b_len);
-                std::copy_n(b.data(), b_len, b_heap.data());
-                b_data = b_heap.data();
+                b_heap.assign(b.as_span().begin(), b.as_span().end());
+                b_span = std::span<const std::uint64_t>{b_heap};
             }
         }
 
         if (&res != &a) {
-            res.resize(a_len, 0);
+            res.resize(a_len, 0ULL);
         }
 
-        uint8_t borrow = 0;
-        for (size_t i = 0; i < b_len; ++i) {
-            borrow = sbb64(borrow, a.data()[i], b_data[i], &res.data()[i]);
+        const std::span<const std::uint64_t> a_span{a.as_span()};
+        const std::span<std::uint64_t> out_span{res.as_span()};
+
+        std::uint8_t borrow{0};
+        for (std::size_t i{0}; i < b_len; ++i) {
+            borrow = sbb64(borrow, a_span[i], b_span[i], out_span[i]);
         }
-        size_t i = b_len;
-        for (; i < a_len && borrow != 0; ++i) {
-            borrow = sbb64(borrow, a.data()[i], 0, &res.data()[i]);
+        std::size_t i{b_len};
+        for (; i < a_len && borrow != 0U; ++i) {
+            borrow = sbb64(borrow, a_span[i], 0ULL, out_span[i]);
         }
-        if (borrow == 0 && &res != &a && i < a_len) {
-            std::copy_n(a.data() + i, a_len - i, res.data() + i);
+        if (borrow == 0U && &res != &a && i < a_len) {
+            BigIntStorage::copy_limbs(out_span.subspan(i), a_span.subspan(i, a_len - i));
         }
 
-        size_t sz = a_len;
-        while (sz > 0 && res.data()[sz - 1] == 0) --sz;
-        res.m_size = static_cast<uint32_t>(sz);
-        if (sz == 0) {
+        std::size_t sz{a_len};
+        while (sz > 0U && out_span[sz - 1U] == 0ULL) {
+            --sz;
+        }
+        res.m_size = static_cast<std::uint32_t>(sz);
+        if (sz == 0U) {
             res.m_sign = 0;
         }
         if (sz <= res.m_sbo_capacity) {
@@ -1511,21 +1648,31 @@ struct BigIntArithmetic : public BigIntIntrinsics {
     }
 
     /// <summary>
+    /// Unsigned limb subtraction: res = a - b (Precondition: a >= b).
     /// 無符號 limbs 減法：res = a - b（前置條件：a >= b）。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void sub_unsigned(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept {
-        if (a.m_size <= 4 && b.m_size <= 4) {
+    static NUMERIC_CONSTEXPR_20 auto sub_unsigned(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) noexcept -> void
+    {
+        if (a.m_size <= 4U && b.m_size <= 4U) {
             sub_unsigned_sbo4(res, a, b);
         } else {
             sub_magnitude_core(res, a, b);
         }
-        res.m_sign = (res.m_size > 0) ? 1 : 0;
+        res.m_sign = (res.m_size > 0U) ? 1 : 0;
     }
 
     /// <summary>
-    /// 帶符號加法：res = a + b。
+    /// Signed integer addition: res = a + b.
+    /// 帶符號整數加法：res = a + b。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void add_signed(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
+    static NUMERIC_CONSTEXPR_20 auto add_signed(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) -> void
+    {
         if (a.m_sign == 0) {
             res = b;
             return;
@@ -1536,67 +1683,72 @@ struct BigIntArithmetic : public BigIntIntrinsics {
         }
         if (a.m_sign == b.m_sign) {
             add_unsigned(res, a, b);
-            res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
+            res.m_sign = (res.m_size > 0U) ? a.m_sign : 0;
         } else {
-            int cmp = compare_unsigned(a.data(), a.m_size, b.data(), b.m_size);
+            const std::int32_t cmp{compare_unsigned(a.as_span(), b.as_span())};
             if (cmp == 0) {
                 res.reset_heap();
                 res.m_size = 0;
                 res.m_sign = 0;
             } else if (cmp > 0) {
-                if (a.m_size <= 4 && b.m_size <= 4) {
+                if (a.m_size <= 4U && b.m_size <= 4U) {
                     sub_unsigned_sbo4(res, a, b);
                 } else {
                     sub_magnitude_core(res, a, b);
                 }
-                res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
+                res.m_sign = (res.m_size > 0U) ? a.m_sign : 0;
             } else {
-                if (a.m_size <= 4 && b.m_size <= 4) {
+                if (a.m_size <= 4U && b.m_size <= 4U) {
                     sub_unsigned_sbo4(res, b, a);
                 } else {
                     sub_magnitude_core(res, b, a);
                 }
-                res.m_sign = (res.m_size > 0) ? b.m_sign : 0;
+                res.m_sign = (res.m_size > 0U) ? b.m_sign : 0;
             }
         }
     }
 
     /// <summary>
-    /// 帶符號減法：res = a - b。
+    /// Signed integer subtraction: res = a - b.
+    /// 帶符號整數減法：res = a - b。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void sub_signed(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
+    static NUMERIC_CONSTEXPR_20 auto sub_signed(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) -> void
+    {
         if (b.m_sign == 0) {
             res = a;
             return;
         }
         if (a.m_sign == 0) {
             res = b;
-            res.m_sign = -res.m_sign;
+            res.m_sign = static_cast<std::int8_t>(-res.m_sign);
             return;
         }
         if (a.m_sign != b.m_sign) {
             add_unsigned(res, a, b);
-            res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
+            res.m_sign = (res.m_size > 0U) ? a.m_sign : 0;
         } else {
-            int cmp = compare_unsigned(a.data(), a.m_size, b.data(), b.m_size);
+            const std::int32_t cmp{compare_unsigned(a.as_span(), b.as_span())};
             if (cmp == 0) {
                 res.reset_heap();
                 res.m_size = 0;
                 res.m_sign = 0;
             } else if (cmp > 0) {
-                if (a.m_size <= 4 && b.m_size <= 4) {
+                if (a.m_size <= 4U && b.m_size <= 4U) {
                     sub_unsigned_sbo4(res, a, b);
                 } else {
                     sub_magnitude_core(res, a, b);
                 }
-                res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
+                res.m_sign = (res.m_size > 0U) ? a.m_sign : 0;
             } else {
-                if (a.m_size <= 4 && b.m_size <= 4) {
+                if (a.m_size <= 4U && b.m_size <= 4U) {
                     sub_unsigned_sbo4(res, b, a);
                 } else {
                     sub_magnitude_core(res, b, a);
                 }
-                res.m_sign = (res.m_size > 0) ? -b.m_sign : 0;
+                res.m_sign = (res.m_size > 0U) ? static_cast<std::int8_t>(-b.m_sign) : 0;
             }
         }
     }
@@ -1607,27 +1759,38 @@ struct BigIntArithmetic : public BigIntIntrinsics {
 // --- End Section: include/numeric/detail/Arithmetic.hpp ---
 
 // --- Begin Section: include/numeric/detail/Bitwise.hpp ---
-// Bitwise.hpp
-// Arbitrary-precision bitwise logic and shifting operations for CPP-BigInt.
-// Part of the numeric::detail modular core.
+// filepath: include/numeric/detail/Bitwise.hpp
+/**
+ * @file Bitwise.hpp
+ * @brief Arbitrary-precision bitwise logic and hardware-accelerated shift operations for CPP-BigInt.
+ *        Features branchless shld64/shrd64 funnels, two-phase vectorized in-place AND/OR/XOR,
+ *        zero-allocation two's-complement NOT, and bounds-safe std::span slicing.
+ *        任意精度位元邏輯與硬體加速移位運算模組。
+ *        採用無分支 shld64/shrd64 雙字移位、兩階段向量化就地位元運算與零配置二補數 NOT。
+ */
 
 
 namespace numeric {
 namespace detail {
 
 /// <summary>
-/// BigInt 位元邏輯與位移演算法類別，繼承自 BigIntArithmetic。
-/// 支援左移、算術/邏輯右移、NOT、AND、OR、XOR 等完整位元運算。
+/// Arbitrary-precision bitwise logic and shifting algorithms inheriting BigIntArithmetic.
+/// 位元邏輯與位移演算法類別，繼承自 BigIntArithmetic，支援完整二補數邏輯與移位運算。
 /// </summary>
 struct BigIntBitwise : public BigIntArithmetic {
     /// <summary>
+    /// High-speed whole-limb left shift: res = a << (limbs * 64).
     /// limbs 級別的高效整區塊左移：res = a << (limbs * 64)。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">輸入數值</param>
-    /// <param name="limbs">移動 limbs 數量</param>
-    static NUMERIC_CONSTEXPR_20 void shift_left_limbs(BigIntStorage& res, const BigIntStorage& a, size_t limbs) {
-        if (a.m_size == 0) {
+    /// <param name="res">Output storage. / 輸出結果儲存體。</param>
+    /// <param name="a">Input storage. / 輸入數值儲存體。</param>
+    /// <param name="limbs">Number of 64-bit limbs to shift. / 移動之 limb 數量。</param>
+    static NUMERIC_CONSTEXPR_20 auto shift_left_limbs(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const std::size_t limbs) -> void
+    {
+        if (a.m_size == 0U) {
             res.m_size = 0;
             res.m_sign = 0;
             return;
@@ -1638,112 +1801,121 @@ struct BigIntBitwise : public BigIntArithmetic {
             res = std::move(tmp);
             return;
         }
-        res.resize(a.m_size + limbs, 0);
-        BigIntStorage::copy_limbs(res.data() + limbs, a.data(), a.m_size);
-        BigIntStorage::zero_limbs(res.data(), limbs);
+        res.resize(a.m_size + limbs, 0ULL);
+        BigIntStorage::copy_limbs(res.as_span().subspan(limbs), a.as_span());
+        BigIntStorage::zero_limbs(res.as_span().subspan(0U, limbs));
         res.m_sign = a.m_sign;
         res.normalize();
     }
 
     /// <summary>
-    /// 位元左移運算：res = a << shift。
-    /// 透過 shld64 硬體指令消除迴圈內分支與多餘運算。
+    /// Bitwise left shift: res = a << shift, eliminating inner branch stalls via shld64.
+    /// 位元左移運算：res = a << shift，透過 shld64 硬體指令消除迴圈內分支與多餘運算。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">運算元</param>
-    /// <param name="shift">位移位元數</param>
-    static NUMERIC_CONSTEXPR_20 void shift_left(BigIntStorage& res, const BigIntStorage& a, size_t shift) {
-        if (shift == 0 || a.m_size == 0) {
+    /// <param name="res">Output storage. / 輸出結果儲存體。</param>
+    /// <param name="a">Input operand storage. / 運算元儲存體。</param>
+    /// <param name="shift">Bit shift count. / 位移位元數。</param>
+    static NUMERIC_CONSTEXPR_20 auto shift_left(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const std::size_t shift) -> void
+    {
+        if (shift == 0U || a.m_size == 0U) {
             res = a;
             return;
         }
-        size_t limb_shift = shift / 64;
-        size_t bit_shift = shift % 64;
-        bool overflow = (bit_shift != 0) && ((a.data()[a.m_size - 1] >> (64 - bit_shift)) != 0);
-        size_t new_size = a.m_size + limb_shift + (overflow ? 1 : 0);
+        const std::size_t limb_shift{shift / 64U};
+        const std::size_t bit_shift{shift % 64U};
+        const bool overflow{(bit_shift != 0U) && ((a.as_span()[a.m_size - 1U] >> (64U - bit_shift)) != 0ULL)};
+        const std::size_t new_size{a.m_size + limb_shift + (overflow ? 1U : 0U)};
 
         if (&res == &a) {
-            const size_t old_size = a.m_size;
+            const std::size_t old_size{a.m_size};
             if (res.m_capacity < new_size) {
                 res.reserve(new_size);
             }
-            res.m_size = static_cast<uint32_t>(new_size);
-            uint64_t* d = res.data();
-            if (limb_shift == 0) {
-                if (old_size == 1) {
-                    uint64_t v0 = d[0];
-                    if (overflow) d[1] = v0 >> (64 - bit_shift);
-                    d[0] = v0 << bit_shift;
+            res.m_size = static_cast<std::uint32_t>(new_size);
+            const std::span<std::uint64_t> d{res.as_span()};
+
+            if (limb_shift == 0U) {
+                const auto bshift{static_cast<std::uint32_t>(bit_shift)};
+                if (old_size == 1U) {
+                    const std::uint64_t v0{d[0]};
+                    if (overflow) d[1] = v0 >> (64U - bit_shift);
+                    d[0] = v0 << bshift;
                     return;
                 }
-                if (old_size == 2) {
-                    uint64_t v0 = d[0], v1 = d[1];
-                    if (overflow) d[2] = v1 >> (64 - bit_shift);
-                    d[1] = shld64(v1, v0, static_cast<unsigned int>(bit_shift));
-                    d[0] = v0 << bit_shift;
+                if (old_size == 2U) {
+                    const std::uint64_t v0{d[0]};
+                    const std::uint64_t v1{d[1]};
+                    if (overflow) d[2] = v1 >> (64U - bit_shift);
+                    d[1] = shld64(v1, v0, bshift);
+                    d[0] = v0 << bshift;
                     return;
                 }
-                if (old_size == 4) {
-                    uint64_t v0 = d[0], v1 = d[1], v2 = d[2], v3 = d[3];
-                    if (overflow) d[4] = v3 >> (64 - bit_shift);
-                    d[3] = shld64(v3, v2, static_cast<unsigned int>(bit_shift));
-                    d[2] = shld64(v2, v1, static_cast<unsigned int>(bit_shift));
-                    d[1] = shld64(v1, v0, static_cast<unsigned int>(bit_shift));
-                    d[0] = v0 << bit_shift;
+                if (old_size == 4U) {
+                    const std::uint64_t v0{d[0]};
+                    const std::uint64_t v1{d[1]};
+                    const std::uint64_t v2{d[2]};
+                    const std::uint64_t v3{d[3]};
+                    if (overflow) d[4] = v3 >> (64U - bit_shift);
+                    d[3] = shld64(v3, v2, bshift);
+                    d[2] = shld64(v2, v1, bshift);
+                    d[1] = shld64(v1, v0, bshift);
+                    d[0] = v0 << bshift;
                     return;
                 }
-                const unsigned int bshift = static_cast<unsigned int>(bit_shift);
                 if (overflow) {
-                    d[old_size] = d[old_size - 1] >> (64 - bit_shift);
+                    d[old_size] = d[old_size - 1U] >> (64U - bit_shift);
                 }
-                for (size_t i = old_size - 1; i > 0; --i) {
-                    d[i] = shld64(d[i], d[i - 1], bshift);
+                for (std::size_t i{old_size - 1U}; i > 0U; --i) {
+                    d[i] = shld64(d[i], d[i - 1U], bshift);
                 }
                 d[0] <<= bshift;
                 return;
             }
-            if (bit_shift == 0) {
-                for (size_t i = old_size; i > 0; --i) {
-                    d[i - 1 + limb_shift] = d[i - 1];
+
+            if (bit_shift == 0U) {
+                for (std::size_t i{old_size}; i > 0U; --i) {
+                    d[i - 1U + limb_shift] = d[i - 1U];
                 }
-                if (limb_shift > 0) {
-                    BigIntStorage::zero_limbs(d, limb_shift);
-                }
+                BigIntStorage::zero_limbs(d.subspan(0U, limb_shift));
             } else {
-                const unsigned int bshift = static_cast<unsigned int>(bit_shift);
+                const auto bshift{static_cast<std::uint32_t>(bit_shift)};
                 if (overflow) {
-                    d[old_size + limb_shift] = d[old_size - 1] >> (64 - bit_shift);
+                    d[old_size + limb_shift] = d[old_size - 1U] >> (64U - bit_shift);
                 }
-                for (size_t i = old_size - 1; i > 0; --i) {
-                    d[i + limb_shift] = shld64(d[i], d[i - 1], bshift);
+                for (std::size_t i{old_size - 1U}; i > 0U; --i) {
+                    d[i + limb_shift] = shld64(d[i], d[i - 1U], bshift);
                 }
                 d[limb_shift] = d[0] << bshift;
-                if (limb_shift > 0) {
-                    BigIntStorage::zero_limbs(d, limb_shift);
-                }
+                BigIntStorage::zero_limbs(d.subspan(0U, limb_shift));
             }
             return;
         }
 
-        res.resize(new_size, 0);
+        res.resize(new_size, 0ULL);
+        const std::span<std::uint64_t> out{res.as_span()};
+        const std::span<const std::uint64_t> src{a.as_span()};
 
-        if (bit_shift == 0) {
-            BigIntStorage::copy_limbs(res.data() + limb_shift, a.data(), a.m_size);
-            if (limb_shift > 0) {
-                BigIntStorage::zero_limbs(res.data(), limb_shift);
+        if (bit_shift == 0U) {
+            BigIntStorage::copy_limbs(out.subspan(limb_shift), src);
+            if (limb_shift > 0U) {
+                BigIntStorage::zero_limbs(out.subspan(0U, limb_shift));
             }
         } else {
-            if (limb_shift > 0) {
-                BigIntStorage::zero_limbs(res.data(), limb_shift);
+            if (limb_shift > 0U) {
+                BigIntStorage::zero_limbs(out.subspan(0U, limb_shift));
             }
-            uint64_t prev = 0;
-            for (size_t i = 0; i < a.m_size; ++i) {
-                uint64_t cur = a.data()[i];
-                res.data()[i + limb_shift] = shld64(cur, prev, static_cast<unsigned int>(bit_shift));
+            const auto bshift{static_cast<std::uint32_t>(bit_shift)};
+            std::uint64_t prev{0};
+            for (std::size_t i{0}; i < src.size(); ++i) {
+                const std::uint64_t cur{src[i]};
+                out[i + limb_shift] = shld64(cur, prev, bshift);
                 prev = cur;
             }
             if (overflow) {
-                res.data()[a.m_size + limb_shift] = prev >> (64 - bit_shift);
+                out[src.size() + limb_shift] = prev >> (64U - bit_shift);
             }
         }
         res.m_sign = a.m_sign;
@@ -1751,19 +1923,24 @@ struct BigIntBitwise : public BigIntArithmetic {
     }
 
     /// <summary>
-    /// 位元右移運算：res = a >> shift（支援負數算術右移語意）。
+    /// Arithmetic bitwise right shift: res = a >> shift (supports signed two's complement semantics).
+    /// 位元右移運算：res = a >> shift（支援負數算術右移二補數語意）。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">運算元</param>
-    /// <param name="shift">位移位元數</param>
-    static NUMERIC_CONSTEXPR_20 void shift_right(BigIntStorage& res, const BigIntStorage& a, size_t shift) {
-        if (shift == 0 || a.m_size == 0) {
+    /// <param name="res">Output storage. / 輸出結果儲存體。</param>
+    /// <param name="a">Input operand storage. / 運算元儲存體。</param>
+    /// <param name="shift">Bit shift count. / 位移位元數。</param>
+    static NUMERIC_CONSTEXPR_20 auto shift_right(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const std::size_t shift) -> void
+    {
+        if (shift == 0U || a.m_size == 0U) {
             res = a;
             return;
         }
         if (a.m_sign < 0) {
-            // 負數算術右移：a >> shift = ~((~a) >> shift)
-            BigIntStorage u, shifted_u;
+            BigIntStorage u;
+            BigIntStorage shifted_u;
             bitwise_not(u, a);
             shift_right_positive(shifted_u, u, shift);
             bitwise_not(res, shifted_u);
@@ -1773,175 +1950,181 @@ struct BigIntBitwise : public BigIntArithmetic {
     }
 
     /// <summary>
-    /// 正整數無符號位元右移運算。
-    /// In-place unsigned bitwise right shift operation.
-    /// 透過 shrd64 硬體指令與原地前向搬移消除迴圈內分支與暫存物件配置。
+    /// In-place unsigned bitwise right shift using shrd64 and branchless forward sweeps.
+    /// 正整數無符號位元右移運算：透過 shrd64 硬體指令與原地前向搬移消除迴圈內分支。
     /// </summary>
-    /// <param name="res">輸出結果 / Output result</param>
-    /// <param name="a">運算元 / Operand a</param>
-    /// <param name="shift">位移位元數 / Bit shift count</param>
-    static NUMERIC_CONSTEXPR_20 void shift_right_positive(BigIntStorage& res, const BigIntStorage& a, size_t shift) {
-        size_t limb_shift = shift / 64;
-        size_t bit_shift = shift % 64;
-        const size_t old_size = a.m_size;
+    /// <param name="res">Output storage. / 輸出結果儲存體。</param>
+    /// <param name="a">Input operand storage. / 運算元儲存體。</param>
+    /// <param name="shift">Bit shift count. / 位移位元數。</param>
+    static NUMERIC_CONSTEXPR_20 auto shift_right_positive(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const std::size_t shift) -> void
+    {
+        const std::size_t limb_shift{shift / 64U};
+        const std::size_t bit_shift{shift % 64U};
+        const std::size_t old_size{a.m_size};
         if (limb_shift >= old_size) {
             res.m_size = 0;
             res.m_sign = 0;
             return;
         }
-        size_t new_size = old_size - limb_shift;
+        std::size_t new_size{old_size - limb_shift};
 
         if (&res == &a) {
-            uint64_t* d = res.data();
-            if (limb_shift == 0) {
-                if (old_size == 1) {
-                    d[0] >>= bit_shift;
-                    res.m_size = (d[0] != 0) ? 1 : 0;
-                    if (res.m_size == 0) res.m_sign = 0;
+            const std::span<std::uint64_t> d{res.as_span()};
+            const auto bshift{static_cast<std::uint32_t>(bit_shift)};
+            if (limb_shift == 0U) {
+                if (old_size == 1U) {
+                    d[0] >>= bshift;
+                    res.m_size = (d[0] != 0ULL) ? 1U : 0U;
+                    if (res.m_size == 0U) res.m_sign = 0;
                     return;
                 }
-                if (old_size == 2) {
-                    uint64_t v0 = d[0], v1 = d[1];
-                    d[0] = shrd64(v1, v0, static_cast<unsigned int>(bit_shift));
-                    uint64_t top = v1 >> bit_shift;
+                if (old_size == 2U) {
+                    const std::uint64_t v0{d[0]};
+                    const std::uint64_t v1{d[1]};
+                    d[0] = shrd64(v1, v0, bshift);
+                    const std::uint64_t top{v1 >> bshift};
                     d[1] = top;
-                    res.m_size = (top != 0) ? 2 : ((d[0] != 0) ? 1 : 0);
-                    if (res.m_size == 0) res.m_sign = 0;
+                    res.m_size = (top != 0ULL) ? 2U : ((d[0] != 0ULL) ? 1U : 0U);
+                    if (res.m_size == 0U) res.m_sign = 0;
                     return;
                 }
-                if (old_size == 4) {
-                    uint64_t v0 = d[0], v1 = d[1], v2 = d[2], v3 = d[3];
-                    d[0] = shrd64(v1, v0, static_cast<unsigned int>(bit_shift));
-                    d[1] = shrd64(v2, v1, static_cast<unsigned int>(bit_shift));
-                    d[2] = shrd64(v3, v2, static_cast<unsigned int>(bit_shift));
-                    uint64_t top = v3 >> bit_shift;
+                if (old_size == 4U) {
+                    const std::uint64_t v0{d[0]};
+                    const std::uint64_t v1{d[1]};
+                    const std::uint64_t v2{d[2]};
+                    const std::uint64_t v3{d[3]};
+                    d[0] = shrd64(v1, v0, bshift);
+                    d[1] = shrd64(v2, v1, bshift);
+                    d[2] = shrd64(v3, v2, bshift);
+                    const std::uint64_t top{v3 >> bshift};
                     d[3] = top;
-                    size_t sz = 4;
-                    while (sz > 0 && d[sz - 1] == 0) --sz;
-                    res.m_size = static_cast<uint32_t>(sz);
-                    if (sz == 0) res.m_sign = 0;
+                    std::size_t sz{4U};
+                    while (sz > 0U && d[sz - 1U] == 0ULL) {
+                        --sz;
+                    }
+                    res.m_size = static_cast<std::uint32_t>(sz);
+                    if (sz == 0U) res.m_sign = 0;
                     return;
                 }
             }
-            if (bit_shift == 0) {
-                if (limb_shift > 0) {
-                    for (size_t i = 0; i < new_size; ++i) {
+            if (bit_shift == 0U) {
+                if (limb_shift > 0U) {
+                    for (std::size_t i{0}; i < new_size; ++i) {
                         d[i] = d[i + limb_shift];
                     }
                 }
             } else {
-                const uint64_t* src = d + limb_shift;
-                for (size_t i = 0; i + 1 < new_size; ++i) {
-                    d[i] = shrd64(src[i + 1], src[i], static_cast<unsigned int>(bit_shift));
+                for (std::size_t i{0}; i + 1U < new_size; ++i) {
+                    d[i] = shrd64(d[i + limb_shift + 1U], d[i + limb_shift], bshift);
                 }
-                d[new_size - 1] = src[new_size - 1] >> bit_shift;
+                d[new_size - 1U] = d[old_size - 1U] >> bshift;
             }
-            if (new_size > 0 && d[new_size - 1] == 0) {
+            if (new_size > 0U && d[new_size - 1U] == 0ULL) {
                 --new_size;
             }
-            res.m_size = static_cast<uint32_t>(new_size);
-            if (new_size == 0) {
+            res.m_size = static_cast<std::uint32_t>(new_size);
+            if (new_size == 0U) {
                 res.m_sign = 0;
             }
             res.shrink_to_sbo_if_possible();
             return;
         }
 
-        res.resize(new_size, 0);
-        if (bit_shift == 0) {
-            BigIntStorage::copy_limbs(res.data(), a.data() + limb_shift, new_size);
+        res.resize(new_size, 0ULL);
+        const std::span<std::uint64_t> out{res.as_span()};
+        const std::span<const std::uint64_t> src{a.as_span().subspan(limb_shift)};
+
+        if (bit_shift == 0U) {
+            BigIntStorage::copy_limbs(out, src);
         } else {
-            const uint64_t* src = a.data() + limb_shift;
-            for (size_t i = 0; i + 1 < new_size; ++i) {
-                res.data()[i] = shrd64(src[i + 1], src[i], static_cast<unsigned int>(bit_shift));
+            const auto bshift{static_cast<std::uint32_t>(bit_shift)};
+            for (std::size_t i{0}; i + 1U < new_size; ++i) {
+                out[i] = shrd64(src[i + 1U], src[i], bshift);
             }
-            res.data()[new_size - 1] = src[new_size - 1] >> bit_shift;
+            out[new_size - 1U] = src[new_size - 1U] >> bshift;
         }
-        res.m_sign = (new_size > 0) ? a.m_sign : 0;
+        res.m_sign = (new_size > 0U) ? a.m_sign : 0;
         res.normalize();
     }
 
     /// <summary>
-    /// 位元非運算：~a = -a - 1。
-    /// Bitwise NOT: ~a = -a - 1.
-    /// 採快速進位/借位截斷技術，首個非溢位肢段後直接區塊拷貝，消除 $O(N)$ 逐肢段算術迴圈。
+    /// Two's complement bitwise NOT: ~a = -a - 1 with early-exit block copy.
+    /// 位元非運算：~a = -a - 1，採快速進/借位截斷技術直接區塊拷貝剩餘高階肢段。
     /// </summary>
-    /// <param name="res">輸出結果 / Output result</param>
-    /// <param name="a">輸入數值 / Input operand a</param>
-    static NUMERIC_CONSTEXPR_20 void bitwise_not(BigIntStorage& res, const BigIntStorage& a) {
-        if (a.m_size == 0 || a.m_sign == 0) {
-            // ~0 = -1
-            res.set_uint64(1, -1);
+    /// <param name="res">Output storage. / 輸出結果儲存體。</param>
+    /// <param name="a">Input operand storage. / 運算元儲存體。</param>
+    static NUMERIC_CONSTEXPR_20 auto bitwise_not(BigIntStorage& res, const BigIntStorage& a) -> void {
+        if (a.m_size == 0U || a.m_sign == 0) {
+            res.set_uint64(1ULL, -1);
             return;
         }
+        const std::span<const std::uint64_t> a_span{a.as_span()};
         if (a.m_sign > 0) {
-            // a > 0: ~a = -(a + 1)
-            size_t k = 0;
-            while (k < a.m_size && a.data()[k] == 0xFFFFFFFFFFFFFFFFULL) {
+            std::size_t k{0};
+            while (k < a.m_size && a_span[k] == 0xFFFFFFFFFFFFFFFFULL) {
                 ++k;
             }
-            size_t new_size = (k == a.m_size) ? (a.m_size + 1) : a.m_size;
+            const std::size_t new_size{(k == a.m_size) ? (a.m_size + 1U) : a.m_size};
 
             if (&res == &a) {
                 if (res.m_capacity < new_size) {
                     res.reserve(new_size);
                 }
-                for (size_t i = 0; i < k; ++i) {
-                    res.data()[i] = 0;
-                }
+                const std::span<std::uint64_t> out{res.capacity_span()};
+                BigIntStorage::zero_limbs(out.subspan(0U, k));
                 if (k < a.m_size) {
-                    res.data()[k] += 1;
+                    out[k] += 1ULL;
                 } else {
-                    res.data()[a.m_size] = 1;
+                    out[a.m_size] = 1ULL;
                 }
-                res.m_size = static_cast<uint32_t>(new_size);
+                res.m_size = static_cast<std::uint32_t>(new_size);
                 res.m_sign = -1;
                 res.normalize();
                 return;
             }
 
-            res.resize(new_size, 0);
-            for (size_t i = 0; i < k; ++i) {
-                res.data()[i] = 0;
-            }
+            res.resize(new_size, 0ULL);
+            const std::span<std::uint64_t> out{res.as_span()};
+            BigIntStorage::zero_limbs(out.subspan(0U, k));
             if (k < a.m_size) {
-                res.data()[k] = a.data()[k] + 1;
-                if (a.m_size > k + 1) {
-                    BigIntStorage::copy_limbs(res.data() + k + 1, a.data() + k + 1, a.m_size - (k + 1));
+                out[k] = a_span[k] + 1ULL;
+                if (a.m_size > k + 1U) {
+                    BigIntStorage::copy_limbs(out.subspan(k + 1U), a_span.subspan(k + 1U));
                 }
             } else {
-                res.data()[a.m_size] = 1;
+                out[a.m_size] = 1ULL;
             }
             res.m_sign = -1;
             res.normalize();
             return;
         }
 
-        // a < 0: a = -U => ~a = U - 1
-        size_t k = 0;
-        while (k < a.m_size && a.data()[k] == 0) {
+        // Negative case: a = -U => ~a = U - 1 / 負數情況：~(-U) = U - 1
+        std::size_t k{0};
+        while (k < a.m_size && a_span[k] == 0ULL) {
             ++k;
         }
         if (&res == &a) {
-            for (size_t i = 0; i < k; ++i) {
-                res.data()[i] = 0xFFFFFFFFFFFFFFFFULL;
-            }
+            const std::span<std::uint64_t> out{res.as_span()};
+            std::ranges::fill(out.subspan(0U, k), 0xFFFFFFFFFFFFFFFFULL);
             if (k < a.m_size) {
-                res.data()[k] -= 1;
+                out[k] -= 1ULL;
             }
             res.m_sign = 1;
             res.normalize();
             return;
         }
 
-        res.resize(a.m_size, 0);
-        for (size_t i = 0; i < k; ++i) {
-            res.data()[i] = 0xFFFFFFFFFFFFFFFFULL;
-        }
+        res.resize(a.m_size, 0ULL);
+        const std::span<std::uint64_t> out{res.as_span()};
+        std::ranges::fill(out.subspan(0U, k), 0xFFFFFFFFFFFFFFFFULL);
         if (k < a.m_size) {
-            res.data()[k] = a.data()[k] - 1;
-            if (a.m_size > k + 1) {
-                BigIntStorage::copy_limbs(res.data() + k + 1, a.data() + k + 1, a.m_size - (k + 1));
+            out[k] = a_span[k] - 1ULL;
+            if (a.m_size > k + 1U) {
+                BigIntStorage::copy_limbs(out.subspan(k + 1U), a_span.subspan(k + 1U));
             }
         }
         res.m_sign = 1;
@@ -1949,86 +2132,96 @@ struct BigIntBitwise : public BigIntArithmetic {
     }
 
     /// <summary>
-    /// 位元及運算：res = a & b。
+    /// Bitwise AND operation: res = a & b with signed two's complement support.
+    /// 位元及運算：res = a & b，完整支援二補數負數語意與 SBO 快速路徑。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">運算元 a</param>
-    /// <param name="b">運算元 b</param>
-    static NUMERIC_CONSTEXPR_20 void bitwise_and(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
+    static NUMERIC_CONSTEXPR_20 auto bitwise_and(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) -> void
+    {
         if (a.m_sign == 0 || b.m_sign == 0) {
             res.m_size = 0;
             res.m_sign = 0;
             return;
         }
         if (a.m_sign > 0 && b.m_sign > 0) {
-            size_t min_len = (a.m_size < b.m_size) ? a.m_size : b.m_size;
+            const std::size_t min_len{std::min<std::size_t>(a.m_size, b.m_size)};
+            const std::span<const std::uint64_t> a_span{a.as_span()};
+            const std::span<const std::uint64_t> b_span{b.as_span()};
+
             if (&res == &a) {
-                if (min_len == 1) {
-                    res.data()[0] &= b.data()[0];
-                    res.m_size = (res.data()[0] != 0) ? 1 : 0;
-                    res.m_sign = (res.m_size != 0) ? 1 : 0;
+                const std::span<std::uint64_t> out{res.as_span()};
+                if (min_len == 1U) {
+                    out[0] &= b_span[0];
+                    res.m_size = (out[0] != 0ULL) ? 1U : 0U;
+                    res.m_sign = (res.m_size != 0U) ? 1 : 0;
                     return;
                 }
-                if (min_len == 2) {
-                    res.data()[0] &= b.data()[0];
-                    res.data()[1] &= b.data()[1];
-                    res.m_size = (res.data()[1] != 0) ? 2 : ((res.data()[0] != 0) ? 1 : 0);
-                    res.m_sign = (res.m_size != 0) ? 1 : 0;
+                if (min_len == 2U) {
+                    out[0] &= b_span[0];
+                    out[1] &= b_span[1];
+                    res.m_size = (out[1] != 0ULL) ? 2U : ((out[0] != 0ULL) ? 1U : 0U);
+                    res.m_sign = (res.m_size != 0U) ? 1 : 0;
                     return;
                 }
-                if (min_len == 4) {
-                    res.data()[0] &= b.data()[0];
-                    res.data()[1] &= b.data()[1];
-                    res.data()[2] &= b.data()[2];
-                    res.data()[3] &= b.data()[3];
-                    size_t sz = 4;
-                    while (sz > 0 && res.data()[sz - 1] == 0) --sz;
-                    res.m_size = static_cast<uint32_t>(sz);
-                    res.m_sign = (sz != 0) ? 1 : 0;
+                if (min_len == 4U) {
+                    out[0] &= b_span[0];
+                    out[1] &= b_span[1];
+                    out[2] &= b_span[2];
+                    out[3] &= b_span[3];
+                    std::size_t sz{4U};
+                    while (sz > 0U && out[sz - 1U] == 0ULL) --sz;
+                    res.m_size = static_cast<std::uint32_t>(sz);
+                    res.m_sign = (sz != 0U) ? 1 : 0;
                     return;
                 }
-                for (size_t i = 0; i < min_len; ++i) {
-                    res.data()[i] &= b.data()[i];
+                for (std::size_t i{0}; i < min_len; ++i) {
+                    out[i] &= b_span[i];
                 }
-                res.m_size = static_cast<uint32_t>(min_len);
+                res.m_size = static_cast<std::uint32_t>(min_len);
                 res.m_sign = 1;
                 res.normalize();
                 return;
             }
             if (&res == &b) {
-                for (size_t i = 0; i < min_len; ++i) {
-                    res.data()[i] &= a.data()[i];
+                const std::span<std::uint64_t> out{res.as_span()};
+                for (std::size_t i{0}; i < min_len; ++i) {
+                    out[i] &= a_span[i];
                 }
-                res.m_size = static_cast<uint32_t>(min_len);
+                res.m_size = static_cast<std::uint32_t>(min_len);
                 res.m_sign = 1;
                 res.normalize();
                 return;
             }
-            res.resize(min_len, 0);
-            for (size_t i = 0; i < min_len; ++i) {
-                res.data()[i] = a.data()[i] & b.data()[i];
+            res.resize(min_len, 0ULL);
+            const std::span<std::uint64_t> out{res.as_span()};
+            for (std::size_t i{0}; i < min_len; ++i) {
+                out[i] = a_span[i] & b_span[i];
             }
             res.m_sign = 1;
             res.normalize();
             return;
         }
         if (a.m_sign > 0 && b.m_sign < 0) {
-            // a & b = a & ~(~b) = a & ~u
-            BigIntStorage not_b;
-            bitwise_not(not_b, b);
             if (&res == &a || &res == &b) {
                 BigIntStorage tmp;
                 bitwise_and(tmp, a, b);
                 res = std::move(tmp);
                 return;
             }
-            res.resize(a.m_size, 0);
-            size_t min_len = (a.m_size < not_b.m_size) ? a.m_size : not_b.m_size;
-            for (size_t i = 0; i < min_len; ++i) {
-                res.data()[i] = a.data()[i] & (~not_b.data()[i]);
+            BigIntStorage not_b;
+            bitwise_not(not_b, b);
+            res.resize(a.m_size, 0ULL);
+            const std::size_t min_len{std::min<std::size_t>(a.m_size, not_b.m_size)};
+            const std::span<std::uint64_t> out{res.as_span()};
+            const std::span<const std::uint64_t> a_span{a.as_span()};
+            const std::span<const std::uint64_t> nb_span{not_b.as_span()};
+            for (std::size_t i{0}; i < min_len; ++i) {
+                out[i] = a_span[i] & (~nb_span[i]);
             }
             if (a.m_size > min_len) {
-                BigIntStorage::copy_limbs(res.data() + min_len, a.data() + min_len, a.m_size - min_len);
+                BigIntStorage::copy_limbs(out.subspan(min_len), a_span.subspan(min_len));
             }
             res.m_sign = 1;
             res.normalize();
@@ -2038,8 +2231,9 @@ struct BigIntBitwise : public BigIntArithmetic {
             bitwise_and(res, b, a);
             return;
         }
-        // a < 0 && b < 0: ~(a & b) = (~a) | (~b) => a & b = ~( (~a) | (~b) )
-        BigIntStorage not_a, not_b, or_res;
+        BigIntStorage not_a;
+        BigIntStorage not_b;
+        BigIntStorage or_res;
         bitwise_not(not_a, a);
         bitwise_not(not_b, b);
         bitwise_or(or_res, not_a, not_b);
@@ -2047,38 +2241,43 @@ struct BigIntBitwise : public BigIntArithmetic {
     }
 
     /// <summary>
-    /// 位元或運算：res = a | b。
-    /// 採重疊區間無分支向量化 + 長餘肢段區塊拷貝兩階段架構。
+    /// Bitwise OR operation: res = a | b with two-phase branchless vectorization.
+    /// 位元或運算：res = a | b，採重疊區間無分支向量化與長邊區塊拷貝。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">運算元 a</param>
-    /// <param name="b">運算元 b</param>
-    static NUMERIC_CONSTEXPR_20 void bitwise_or(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
+    static NUMERIC_CONSTEXPR_20 auto bitwise_or(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) -> void
+    {
         if (a.m_sign == 0) { res = b; return; }
         if (b.m_sign == 0) { res = a; return; }
         if (a.m_sign > 0 && b.m_sign > 0) {
-            size_t min_len = (a.m_size < b.m_size) ? a.m_size : b.m_size;
-            size_t max_len = (a.m_size > b.m_size) ? a.m_size : b.m_size;
+            const std::size_t min_len{std::min<std::size_t>(a.m_size, b.m_size)};
+            const std::size_t max_len{std::max<std::size_t>(a.m_size, b.m_size)};
+            const std::span<const std::uint64_t> a_span{a.as_span()};
+            const std::span<const std::uint64_t> b_span{b.as_span()};
+
             if (&res == &a) {
                 if (a.m_size == b.m_size) {
-                    if (min_len == 1) {
-                        res.data()[0] |= b.data()[0];
-                        res.m_size = (res.data()[0] != 0) ? 1 : 0;
-                        res.m_sign = (res.m_size != 0) ? 1 : 0;
+                    const std::span<std::uint64_t> out{res.as_span()};
+                    if (min_len == 1U) {
+                        out[0] |= b_span[0];
+                        res.m_size = (out[0] != 0ULL) ? 1U : 0U;
+                        res.m_sign = (res.m_size != 0U) ? 1 : 0;
                         return;
                     }
-                    if (min_len == 2) {
-                        res.data()[0] |= b.data()[0];
-                        res.data()[1] |= b.data()[1];
-                        res.m_size = (res.data()[1] != 0) ? 2 : ((res.data()[0] != 0) ? 1 : 0);
-                        res.m_sign = (res.m_size != 0) ? 1 : 0;
+                    if (min_len == 2U) {
+                        out[0] |= b_span[0];
+                        out[1] |= b_span[1];
+                        res.m_size = (out[1] != 0ULL) ? 2U : ((out[0] != 0ULL) ? 1U : 0U);
+                        res.m_sign = (res.m_size != 0U) ? 1 : 0;
                         return;
                     }
-                    if (min_len == 4) {
-                        res.data()[0] |= b.data()[0];
-                        res.data()[1] |= b.data()[1];
-                        res.data()[2] |= b.data()[2];
-                        res.data()[3] |= b.data()[3];
+                    if (min_len == 4U) {
+                        out[0] |= b_span[0];
+                        out[1] |= b_span[1];
+                        out[2] |= b_span[2];
+                        out[3] |= b_span[3];
                         res.m_size = 4;
                         res.m_sign = 1;
                         return;
@@ -2087,13 +2286,14 @@ struct BigIntBitwise : public BigIntArithmetic {
                 if (res.m_capacity < max_len) {
                     res.reserve(max_len);
                 }
-                for (size_t i = 0; i < min_len; ++i) {
-                    res.data()[i] |= b.data()[i];
+                const std::span<std::uint64_t> out{res.capacity_span()};
+                for (std::size_t i{0}; i < min_len; ++i) {
+                    out[i] |= b_span[i];
                 }
                 if (b.m_size > a.m_size) {
-                    BigIntStorage::copy_limbs(res.data() + min_len, b.data() + min_len, b.m_size - min_len);
+                    BigIntStorage::copy_limbs(out.subspan(min_len), b_span.subspan(min_len));
                 }
-                res.m_size = static_cast<uint32_t>(max_len);
+                res.m_size = static_cast<std::uint32_t>(max_len);
                 res.m_sign = 1;
                 res.normalize();
                 return;
@@ -2102,32 +2302,35 @@ struct BigIntBitwise : public BigIntArithmetic {
                 if (res.m_capacity < max_len) {
                     res.reserve(max_len);
                 }
-                for (size_t i = 0; i < min_len; ++i) {
-                    res.data()[i] |= a.data()[i];
+                const std::span<std::uint64_t> out{res.capacity_span()};
+                for (std::size_t i{0}; i < min_len; ++i) {
+                    out[i] |= a_span[i];
                 }
                 if (a.m_size > b.m_size) {
-                    BigIntStorage::copy_limbs(res.data() + min_len, a.data() + min_len, a.m_size - min_len);
+                    BigIntStorage::copy_limbs(out.subspan(min_len), a_span.subspan(min_len));
                 }
-                res.m_size = static_cast<uint32_t>(max_len);
+                res.m_size = static_cast<std::uint32_t>(max_len);
                 res.m_sign = 1;
                 res.normalize();
                 return;
             }
-            res.resize(max_len, 0);
-            for (size_t i = 0; i < min_len; ++i) {
-                res.data()[i] = a.data()[i] | b.data()[i];
+            res.resize(max_len, 0ULL);
+            const std::span<std::uint64_t> out{res.as_span()};
+            for (std::size_t i{0}; i < min_len; ++i) {
+                out[i] = a_span[i] | b_span[i];
             }
             if (a.m_size > min_len) {
-                BigIntStorage::copy_limbs(res.data() + min_len, a.data() + min_len, a.m_size - min_len);
+                BigIntStorage::copy_limbs(out.subspan(min_len), a_span.subspan(min_len));
             } else if (b.m_size > min_len) {
-                BigIntStorage::copy_limbs(res.data() + min_len, b.data() + min_len, b.m_size - min_len);
+                BigIntStorage::copy_limbs(out.subspan(min_len), b_span.subspan(min_len));
             }
             res.m_sign = 1;
             res.normalize();
             return;
         }
-        // De Morgan: ~(a | b) = (~a) & (~b) => a | b = ~( (~a) & (~b) )
-        BigIntStorage not_a, not_b, and_res;
+        BigIntStorage not_a;
+        BigIntStorage not_b;
+        BigIntStorage and_res;
         bitwise_not(not_a, a);
         bitwise_not(not_b, b);
         bitwise_and(and_res, not_a, not_b);
@@ -2135,55 +2338,61 @@ struct BigIntBitwise : public BigIntArithmetic {
     }
 
     /// <summary>
-    /// 位元互斥或運算：res = a ^ b。
-    /// 採重疊區間無分支向量化 + 長餘肢段區塊拷貝兩階段架構。
+    /// Bitwise XOR operation: res = a ^ b with two-phase branchless vectorization.
+    /// 位元互斥或運算：res = a ^ b，採重疊區間無分支向量化與長邊區塊拷貝。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">運算元 a</param>
-    /// <param name="b">運算元 b</param>
-    static NUMERIC_CONSTEXPR_20 void bitwise_xor(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
+    static NUMERIC_CONSTEXPR_20 auto bitwise_xor(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) -> void
+    {
         if (a.m_sign == 0) { res = b; return; }
         if (b.m_sign == 0) { res = a; return; }
         if (a.m_sign > 0 && b.m_sign > 0) {
-            size_t min_len = (a.m_size < b.m_size) ? a.m_size : b.m_size;
-            size_t max_len = (a.m_size > b.m_size) ? a.m_size : b.m_size;
+            const std::size_t min_len{std::min<std::size_t>(a.m_size, b.m_size)};
+            const std::size_t max_len{std::max<std::size_t>(a.m_size, b.m_size)};
+            const std::span<const std::uint64_t> a_span{a.as_span()};
+            const std::span<const std::uint64_t> b_span{b.as_span()};
+
             if (&res == &a) {
                 if (a.m_size == b.m_size) {
-                    if (min_len == 1) {
-                        res.data()[0] ^= b.data()[0];
-                        res.m_size = (res.data()[0] != 0) ? 1 : 0;
-                        res.m_sign = (res.m_size != 0) ? 1 : 0;
+                    const std::span<std::uint64_t> out{res.as_span()};
+                    if (min_len == 1U) {
+                        out[0] ^= b_span[0];
+                        res.m_size = (out[0] != 0ULL) ? 1U : 0U;
+                        res.m_sign = (res.m_size != 0U) ? 1 : 0;
                         return;
                     }
-                    if (min_len == 2) {
-                        res.data()[0] ^= b.data()[0];
-                        res.data()[1] ^= b.data()[1];
-                        res.m_size = (res.data()[1] != 0) ? 2 : ((res.data()[0] != 0) ? 1 : 0);
-                        res.m_sign = (res.m_size != 0) ? 1 : 0;
+                    if (min_len == 2U) {
+                        out[0] ^= b_span[0];
+                        out[1] ^= b_span[1];
+                        res.m_size = (out[1] != 0ULL) ? 2U : ((out[0] != 0ULL) ? 1U : 0U);
+                        res.m_sign = (res.m_size != 0U) ? 1 : 0;
                         return;
                     }
-                    if (min_len == 4) {
-                        res.data()[0] ^= b.data()[0];
-                        res.data()[1] ^= b.data()[1];
-                        res.data()[2] ^= b.data()[2];
-                        res.data()[3] ^= b.data()[3];
-                        size_t sz = 4;
-                        while (sz > 0 && res.data()[sz - 1] == 0) --sz;
-                        res.m_size = static_cast<uint32_t>(sz);
-                        res.m_sign = (sz != 0) ? 1 : 0;
+                    if (min_len == 4U) {
+                        out[0] ^= b_span[0];
+                        out[1] ^= b_span[1];
+                        out[2] ^= b_span[2];
+                        out[3] ^= b_span[3];
+                        std::size_t sz{4U};
+                        while (sz > 0U && out[sz - 1U] == 0ULL) --sz;
+                        res.m_size = static_cast<std::uint32_t>(sz);
+                        res.m_sign = (sz != 0U) ? 1 : 0;
                         return;
                     }
                 }
                 if (res.m_capacity < max_len) {
                     res.reserve(max_len);
                 }
-                for (size_t i = 0; i < min_len; ++i) {
-                    res.data()[i] ^= b.data()[i];
+                const std::span<std::uint64_t> out{res.capacity_span()};
+                for (std::size_t i{0}; i < min_len; ++i) {
+                    out[i] ^= b_span[i];
                 }
                 if (b.m_size > a.m_size) {
-                    BigIntStorage::copy_limbs(res.data() + min_len, b.data() + min_len, b.m_size - min_len);
+                    BigIntStorage::copy_limbs(out.subspan(min_len), b_span.subspan(min_len));
                 }
-                res.m_size = static_cast<uint32_t>(max_len);
+                res.m_size = static_cast<std::uint32_t>(max_len);
                 res.m_sign = 1;
                 res.normalize();
                 return;
@@ -2192,33 +2401,35 @@ struct BigIntBitwise : public BigIntArithmetic {
                 if (res.m_capacity < max_len) {
                     res.reserve(max_len);
                 }
-                for (size_t i = 0; i < min_len; ++i) {
-                    res.data()[i] ^= a.data()[i];
+                const std::span<std::uint64_t> out{res.capacity_span()};
+                for (std::size_t i{0}; i < min_len; ++i) {
+                    out[i] ^= a_span[i];
                 }
                 if (a.m_size > b.m_size) {
-                    BigIntStorage::copy_limbs(res.data() + min_len, a.data() + min_len, a.m_size - min_len);
+                    BigIntStorage::copy_limbs(out.subspan(min_len), a_span.subspan(min_len));
                 }
-                res.m_size = static_cast<uint32_t>(max_len);
+                res.m_size = static_cast<std::uint32_t>(max_len);
                 res.m_sign = 1;
                 res.normalize();
                 return;
             }
-            res.resize(max_len, 0);
-            for (size_t i = 0; i < min_len; ++i) {
-                res.data()[i] = a.data()[i] ^ b.data()[i];
+            res.resize(max_len, 0ULL);
+            const std::span<std::uint64_t> out{res.as_span()};
+            for (std::size_t i{0}; i < min_len; ++i) {
+                out[i] = a_span[i] ^ b_span[i];
             }
             if (a.m_size > min_len) {
-                BigIntStorage::copy_limbs(res.data() + min_len, a.data() + min_len, a.m_size - min_len);
+                BigIntStorage::copy_limbs(out.subspan(min_len), a_span.subspan(min_len));
             } else if (b.m_size > min_len) {
-                BigIntStorage::copy_limbs(res.data() + min_len, b.data() + min_len, b.m_size - min_len);
+                BigIntStorage::copy_limbs(out.subspan(min_len), b_span.subspan(min_len));
             }
             res.m_sign = 1;
             res.normalize();
             return;
         }
         if (a.m_sign > 0 && b.m_sign < 0) {
-            // a ^ b = ~(a ^ ~b)
-            BigIntStorage not_b, xor_res;
+            BigIntStorage not_b;
+            BigIntStorage xor_res;
             bitwise_not(not_b, b);
             bitwise_xor(xor_res, a, not_b);
             bitwise_not(res, xor_res);
@@ -2228,8 +2439,8 @@ struct BigIntBitwise : public BigIntArithmetic {
             bitwise_xor(res, b, a);
             return;
         }
-        // a < 0 && b < 0: a ^ b = (~a) ^ (~b)
-        BigIntStorage not_a, not_b;
+        BigIntStorage not_a;
+        BigIntStorage not_b;
         bitwise_not(not_a, a);
         bitwise_not(not_b, b);
         bitwise_xor(res, not_a, not_b);
@@ -2241,726 +2452,797 @@ struct BigIntBitwise : public BigIntArithmetic {
 // --- End Section: include/numeric/detail/Bitwise.hpp ---
 
 // --- Begin Section: include/numeric/detail/Multiplication.hpp ---
-// Multiplication.hpp
-// High-performance arbitrary-precision multiplication algorithms for CPP-BigInt:
-// Schoolbook, Karatsuba, Toom-Cook 3-way, and ScratchArena allocator.
-// Part of the numeric::detail modular core.
+// filepath: include/numeric/detail/Multiplication.hpp
+/**
+ * @file Multiplication.hpp
+ * @brief High-performance arbitrary-precision multiplication algorithms for CPP-BigInt.
+ *        Implements Schoolbook, Block Karatsuba, subtraction-variant Karatsuba, Toom-Cook 3-way,
+ *        and the pointer-stable chunked ScratchArena allocator over bounds-safe std::span slices.
+ *        高效能任意精度乘法演算法模組，整合 std::span 邊界安全介面與指標穩定分塊 ScratchArena。
+ *        涵蓋 Schoolbook、非對稱 Block Karatsuba、減法變體 Karatsuba 與 Toom-Cook 3 五點插值法。
+ */
 
 
 namespace numeric {
 namespace detail {
 
 /// <summary>
+/// Arbitrary-precision multiplication core inheriting BigIntBitwise.
 /// BigInt 乘法運算核心類別，繼承自 BigIntBitwise。
-/// 提供 Schoolbook、Karatsuba、Toom-3 以及 ScratchArena 高效無鎖記憶體池。
 /// </summary>
 struct BigIntMultiplication : public BigIntBitwise {
-    static constexpr size_t KARATSUBA_THRESHOLD = 16;
+    static constexpr std::size_t KARATSUBA_THRESHOLD{16U};
 #ifndef NUMERIC_TOOM3_THRESHOLD
-    static constexpr size_t TOOM3_THRESHOLD = 64; // Tuned threshold for zero-heap Toom-3 (4096-bit)
+    static constexpr std::size_t TOOM3_THRESHOLD{64U}; // 4,096-bit zero-heap Toom-3 threshold / 4096 位元零堆積門檻
 #else
-    static constexpr size_t TOOM3_THRESHOLD = NUMERIC_TOOM3_THRESHOLD;
+    static constexpr std::size_t TOOM3_THRESHOLD{NUMERIC_TOOM3_THRESHOLD};
 #endif
 
     /// <summary>
-    /// 原生 Schoolbook 乘法：out = a * b。out 長度至少為 a_len + b_len。
-    /// Raw Schoolbook multiplication: out = a * b. out capacity must be >= a_len + b_len.
-    /// 首趟採用 mul_1_raw 直寫輸出，消除零填充與無效累加；外層對齊較短運算元消除迴圈開銷。
+    /// Raw Schoolbook multiplication: out = a * b.
+    /// First pass uses mul_1_raw directly to avoid redundant zero-fill and accumulation reads.
+    /// 原生 Schoolbook 乘法：out = a * b。首趟採用 mul_1_raw 直寫輸出消除零填充與重複累加。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void mul_schoolbook_raw(uint64_t* NUMERIC_RESTRICT out,
-                                                        const uint64_t* a, size_t a_len,
-                                                        const uint64_t* b, size_t b_len) noexcept {
-        if (a_len == 0 || b_len == 0) {
-            BigIntStorage::zero_limbs(out, a_len + b_len);
+    /// <param name="out">Output span (size >= a.size() + b.size()). / 輸出乘積 span。</param>
+    /// <param name="a">First factor span. / 乘數 a span。</param>
+    /// <param name="b">Second factor span. / 乘數 b span。</param>
+    static NUMERIC_CONSTEXPR_20 auto mul_schoolbook_raw(
+        const std::span<std::uint64_t> out,
+        std::span<const std::uint64_t> a,
+        std::span<const std::uint64_t> b) noexcept -> void
+    {
+        if (a.empty() || b.empty()) {
+            BigIntStorage::zero_limbs(out.subspan(0U, a.size() + b.size()));
             return;
         }
-        if (a_len == 1 && b_len == 1) {
-            out[0] = mul64_wide(a[0], b[0], out[1]);
+        assert(out.size() >= a.size() + b.size());
+        if (a.size() == 1U && b.size() == 1U) {
+            std::uint64_t hi{0};
+            out[0] = mul64_wide(a[0], b[0], hi);
+            out[1] = hi;
             return;
         }
-        // 確保外層迴圈遍歷較短之運算元以減少累加輪數
-        if (a_len > b_len) {
-            const uint64_t* tmp_ptr = a; a = b; b = tmp_ptr;
-            size_t tmp_len = a_len; a_len = b_len; b_len = tmp_len;
+        if (a.size() > b.size()) {
+            const auto tmp{a};
+            a = b;
+            b = tmp;
         }
 
-        // 首趟單肢段乘法直寫 out[0..b_len]，消除全域歸零與讀取零值累加
-        out[b_len] = mul_1_raw(out, b, b_len, a[0]);
-        if (a_len > 1) {
-            BigIntStorage::zero_limbs(out + b_len + 1, a_len - 1);
-            for (size_t i = 1; i < a_len; ++i) {
-                if (a[i] == 0) continue;
-                uint64_t carry = addmul_1_raw(out + i, b, b_len, a[i]);
+        const std::size_t a_len{a.size()};
+        const std::size_t b_len{b.size()};
+        out[b_len] = mul_1_raw(out, b, a[0]);
+        if (a_len > 1U) {
+            BigIntStorage::zero_limbs(out.subspan(b_len + 1U, a_len - 1U));
+            for (std::size_t i{1U}; i < a_len; ++i) {
+                if (a[i] == 0ULL) {
+                    continue;
+                }
+                const std::uint64_t carry{addmul_1_raw(out.subspan(i), b, a[i])};
                 out[i + b_len] += carry;
             }
         }
     }
 
     /// <summary>
-    /// 原生原地加法：dst += src。回傳溢出進位。
+    /// Raw in-place limb addition: dst += src. Returns final carry limb.
+    /// 原生原地加法：dst += src，回傳最終溢出進位。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 uint64_t add_to_raw(uint64_t* dst, size_t dst_len, const uint64_t* src, size_t src_len) noexcept {
-        uint8_t carry = 0;
-        size_t min_len = (dst_len < src_len) ? dst_len : src_len;
-        for (size_t i = 0; i < min_len; ++i) {
-            carry = adc64(carry, dst[i], src[i], &dst[i]);
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto add_to_raw(
+        const std::span<std::uint64_t> dst,
+        const std::span<const std::uint64_t> src) noexcept -> std::uint64_t
+    {
+        std::uint8_t carry{0};
+        const std::size_t dst_len{dst.size()};
+        const std::size_t min_len{std::min(dst_len, src.size())};
+        for (std::size_t i{0}; i < min_len; ++i) {
+            carry = adc64(carry, dst[i], src[i], dst[i]);
         }
-        for (size_t i = min_len; i < dst_len && carry != 0; ++i) {
-            carry = adc64(carry, dst[i], 0, &dst[i]);
+        for (std::size_t i{min_len}; i < dst_len && carry != 0U; ++i) {
+            carry = adc64(carry, dst[i], 0ULL, dst[i]);
         }
         return carry;
     }
 
     /// <summary>
-    /// 原生原地減法：dst -= src。回傳借位。
+    /// Raw in-place limb subtraction: dst -= src. Returns final borrow limb.
+    /// 原生原地減法：dst -= src，回傳最終借位。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 uint64_t sub_from_raw(uint64_t* dst, size_t dst_len, const uint64_t* src, size_t src_len) noexcept {
-        uint8_t borrow = 0;
-        size_t min_len = (dst_len < src_len) ? dst_len : src_len;
-        for (size_t i = 0; i < min_len; ++i) {
-            borrow = sbb64(borrow, dst[i], src[i], &dst[i]);
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto sub_from_raw(
+        const std::span<std::uint64_t> dst,
+        const std::span<const std::uint64_t> src) noexcept -> std::uint64_t
+    {
+        std::uint8_t borrow{0};
+        const std::size_t dst_len{dst.size()};
+        const std::size_t min_len{std::min(dst_len, src.size())};
+        for (std::size_t i{0}; i < min_len; ++i) {
+            borrow = sbb64(borrow, dst[i], src[i], dst[i]);
         }
-        for (size_t i = min_len; i < dst_len && borrow != 0; ++i) {
-            borrow = sbb64(borrow, dst[i], 0, &dst[i]);
+        for (std::size_t i{min_len}; i < dst_len && borrow != 0U; ++i) {
+            borrow = sbb64(borrow, dst[i], 0ULL, dst[i]);
         }
         return borrow;
     }
 
     /// <summary>
-    /// 原生相減差值絕對值：out = a - b (要求 a >= b)。回傳正規化長度。
+    /// Raw magnitude difference: out = a - b (Precondition: a >= b). Returns normalized length.
+    /// 原生相減差值絕對值：out = a - b（前置條件 a >= b），回傳正規化長度。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 size_t sub_limbs_diff_raw(uint64_t* NUMERIC_RESTRICT out, const uint64_t* NUMERIC_RESTRICT a, size_t a_len, const uint64_t* NUMERIC_RESTRICT b, size_t b_len) noexcept {
-        uint8_t borrow = 0;
-        size_t min_len = (a_len < b_len) ? a_len : b_len;
-        for (size_t i = 0; i < min_len; ++i) {
-            borrow = sbb64(borrow, a[i], b[i], &out[i]);
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto sub_limbs_diff_raw(
+        const std::span<std::uint64_t> out,
+        const std::span<const std::uint64_t> a,
+        const std::span<const std::uint64_t> b) noexcept -> std::size_t
+    {
+        const std::size_t a_len{a.size()};
+        const std::size_t min_len{std::min(a_len, b.size())};
+        assert(out.size() >= a_len);
+
+        std::uint8_t borrow{0};
+        for (std::size_t i{0}; i < min_len; ++i) {
+            borrow = sbb64(borrow, a[i], b[i], out[i]);
         }
-        for (size_t i = min_len; i < a_len; ++i) {
-            borrow = sbb64(borrow, a[i], 0, &out[i]);
+        for (std::size_t i{min_len}; i < a_len; ++i) {
+            borrow = sbb64(borrow, a[i], 0ULL, out[i]);
         }
-        size_t len = a_len;
-        while (len > 0 && out[len - 1] == 0) {
+        std::size_t len{a_len};
+        while (len > 0U && out[len - 1U] == 0ULL) {
             --len;
         }
         return len;
     }
 
     /// <summary>
-    /// 原生加法：dst = a + b。回傳正規化長度。
+    /// Raw limb addition: dst = a + b. Returns normalized length.
+    /// 原生加法：dst = a + b，回傳正規化長度。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 size_t add_limbs_raw(uint64_t* dst, const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
-        size_t max_len = (a_len > b_len) ? a_len : b_len;
-        size_t min_len = (a_len < b_len) ? a_len : b_len;
-        const uint64_t* longer = (a_len >= b_len) ? a : b;
-        uint8_t carry = 0;
-        for (size_t i = 0; i < min_len; ++i) {
-            carry = adc64(carry, a[i], b[i], &dst[i]);
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto add_limbs_raw(
+        const std::span<std::uint64_t> dst,
+        const std::span<const std::uint64_t> a,
+        const std::span<const std::uint64_t> b) noexcept -> std::size_t
+    {
+        const std::size_t a_len{a.size()};
+        const std::size_t b_len{b.size()};
+        const std::size_t max_len{std::max(a_len, b_len)};
+        const std::size_t min_len{std::min(a_len, b_len)};
+        const std::span<const std::uint64_t> longer{(a_len >= b_len) ? a : b};
+        assert(dst.size() >= max_len);
+
+        std::uint8_t carry{0};
+        for (std::size_t i{0}; i < min_len; ++i) {
+            carry = adc64(carry, a[i], b[i], dst[i]);
         }
-        for (size_t i = min_len; i < max_len; ++i) {
-            carry = adc64(carry, longer[i], 0, &dst[i]);
+        for (std::size_t i{min_len}; i < max_len; ++i) {
+            carry = adc64(carry, longer[i], 0ULL, dst[i]);
         }
-        if (carry != 0) {
+        if (carry != 0U) {
+            assert(dst.size() > max_len);
             dst[max_len] = carry;
-            return max_len + 1;
+            return max_len + 1U;
         }
-        size_t r_len = max_len;
-        while (r_len > 0 && dst[r_len - 1] == 0) --r_len;
+        std::size_t r_len{max_len};
+        while (r_len > 0U && dst[r_len - 1U] == 0ULL) {
+            --r_len;
+        }
         return r_len;
     }
 
     /// <summary>
-    /// 原生減法：dst = a - b (要求 a >= b)。回傳正規化長度。
+    /// Raw limb subtraction: dst = a - b (Precondition: a >= b). Returns normalized length.
+    /// 原生減法：dst = a - b（前置條件 a >= b），回傳正規化長度。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 size_t sub_limbs_raw(uint64_t* dst, const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
-        uint8_t borrow = 0;
-        for (size_t i = 0; i < b_len; ++i) {
-            borrow = sbb64(borrow, a[i], b[i], &dst[i]);
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto sub_limbs_raw(
+        const std::span<std::uint64_t> dst,
+        const std::span<const std::uint64_t> a,
+        const std::span<const std::uint64_t> b) noexcept -> std::size_t
+    {
+        const std::size_t a_len{a.size()};
+        const std::size_t b_len{b.size()};
+        assert(dst.size() >= a_len && a_len >= b_len);
+
+        std::uint8_t borrow{0};
+        for (std::size_t i{0}; i < b_len; ++i) {
+            borrow = sbb64(borrow, a[i], b[i], dst[i]);
         }
-        for (size_t i = b_len; i < a_len; ++i) {
-            borrow = sbb64(borrow, a[i], 0, &dst[i]);
+        for (std::size_t i{b_len}; i < a_len; ++i) {
+            borrow = sbb64(borrow, a[i], 0ULL, dst[i]);
         }
-        size_t r_len = a_len;
-        while (r_len > 0 && dst[r_len - 1] == 0) --r_len;
+        std::size_t r_len{a_len};
+        while (r_len > 0U && dst[r_len - 1U] == 0ULL) {
+            --r_len;
+        }
         return r_len;
     }
 
     /// <summary>
-    /// 原生右移 1 位 (原地運算)：buf = buf >> 1。
+    /// In-place 1-bit right shift: buf >>= 1.
+    /// 原地右移 1 位：buf >>= 1。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void shift_right_1_raw(uint64_t* buf, size_t len) noexcept {
-        uint64_t carry = 0;
-        for (size_t i = len; i > 0; --i) {
-            uint64_t cur = buf[i - 1];
-            buf[i - 1] = (cur >> 1) | carry;
-            carry = cur << 63;
+    static NUMERIC_CONSTEXPR_20 auto shift_right_1_raw(const std::span<std::uint64_t> buf) noexcept -> void {
+        std::uint64_t carry{0};
+        for (std::size_t i{buf.size()}; i > 0U; --i) {
+            const std::uint64_t cur{buf[i - 1U]};
+            buf[i - 1U] = (cur >> 1U) | carry;
+            carry = cur << 63U;
         }
     }
 
     /// <summary>
-    /// 原生左移 bits 位：dst = src << shift (shift < 64)。回傳新長度。
+    /// Left bit shift within limb word: dst = src << shift (1 <= shift < 64). Returns new length.
+    /// 原生左移 bits 位元：dst = src << shift（1 <= shift < 64），回傳新長度。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 size_t shift_left_bits_raw(uint64_t* dst, const uint64_t* src, size_t len, unsigned int shift) noexcept {
-        if (len == 0) return 0;
-        uint64_t carry = 0;
-        for (size_t i = 0; i < len; ++i) {
-            uint64_t cur = src[i];
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto shift_left_bits_raw(
+        const std::span<std::uint64_t> dst,
+        const std::span<const std::uint64_t> src,
+        const std::uint32_t shift) noexcept -> std::size_t
+    {
+        const std::size_t len{src.size()};
+        if (len == 0U) {
+            return 0U;
+        }
+        assert(dst.size() >= len && shift > 0U && shift < 64U);
+        std::uint64_t carry{0};
+        for (std::size_t i{0}; i < len; ++i) {
+            const std::uint64_t cur{src[i]};
             dst[i] = (cur << shift) | carry;
-            carry = cur >> (64 - shift);
+            carry = cur >> (64U - shift);
         }
-        if (carry != 0) {
+        if (carry != 0ULL) {
+            assert(dst.size() > len);
             dst[len] = carry;
-            return len + 1;
+            return len + 1U;
         }
         return len;
     }
 
     /// <summary>
-    /// 線程局部暫存記憶體池（Bump Allocator with stable chunks）。
-    /// 提供長整數乘除法運算無鎖、0 堆積重配置之 scratch 空間。
-    /// 採用分塊 (Chunked) 策略，任何額外的分塊配置均不會導致先前分塊的指針失效 (Pointer Stability)。
-    /// 支援 RAII Scope 機制，遞迴或巢狀調用時自動安全回滾偏移指標。
+    /// Thread-local chunked bump allocator providing pointer-stable scratch spans for deep recursions.
+    /// 線程局部暫存記憶體池（具備指標穩定分塊與 RAII Scope 自動回滾功能）。
     /// </summary>
-    class ScratchArena {
+    class ScratchArena final {
     public:
-        static ScratchArena& instance() noexcept {
-            static thread_local ScratchArena arena;
+        NUMERIC_NODISCARD static auto instance() noexcept -> ScratchArena& {
+            static thread_local ScratchArena arena{};
             return arena;
         }
 
-        struct Marker {
-            size_t chunk_idx;
-            size_t offset;
+        struct Marker final {
+            std::size_t chunk_idx{0};
+            std::size_t offset{0};
         };
 
-        class Scope {
+        class Scope final {
         public:
-            explicit NUMERIC_CONSTEXPR_20 Scope(ScratchArena& arena, bool active = true) noexcept
-                : m_arena(active ? &arena : nullptr),
-                  m_saved(active ? arena.get_marker() : Marker{0, 0}) {}
+            explicit NUMERIC_CONSTEXPR_20 Scope(ScratchArena& arena, const bool active = true) noexcept
+                : m_arena{active ? &arena : nullptr},
+                  m_saved{active ? arena.get_marker() : Marker{0U, 0U}} {}
 
             NUMERIC_CONSTEXPR_20 ~Scope() noexcept {
-                if (m_arena) {
+                if (m_arena != nullptr) {
                     m_arena->restore_marker(m_saved);
                 }
             }
 
             Scope(const Scope&) = delete;
-            Scope& operator=(const Scope&) = delete;
+            auto operator=(const Scope&) -> Scope& = delete;
             Scope(Scope&&) = delete;
-            Scope& operator=(Scope&&) = delete;
+            auto operator=(Scope&&) -> Scope& = delete;
 
         private:
-            ScratchArena* m_arena;
-            Marker m_saved;
+            ScratchArena* m_arena{nullptr};
+            Marker m_saved{};
         };
 
-        NUMERIC_CONSTEXPR_20 Marker get_marker() const noexcept {
-            return { m_current_chunk, m_current_offset };
+        NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto get_marker() const noexcept -> Marker {
+            return {m_current_chunk, m_current_offset};
         }
 
-        NUMERIC_CONSTEXPR_20 void restore_marker(Marker m) noexcept {
+        NUMERIC_CONSTEXPR_20 auto restore_marker(const Marker m) noexcept -> void {
             m_current_chunk = m.chunk_idx;
             m_current_offset = m.offset;
         }
 
-        uint64_t* allocate(size_t count) {
-            if (count == 0) count = 1;
+        /// <summary>
+        /// Allocates a contiguous scratch span of count 64-bit limbs.
+        /// 配置包含 count 個 64 位元 limbs 的連續暫存 span。
+        /// </summary>
+        NUMERIC_NODISCARD auto allocate(std::size_t count) -> std::span<std::uint64_t> {
+            if (count == 0U) {
+                count = 1U;
+            }
 
             if (m_current_chunk < m_chunks.size()) {
-                if (m_current_offset + count <= m_chunks[m_current_chunk].size) {
-                    uint64_t* ptr = m_chunks[m_current_chunk].buffer.get() + m_current_offset;
+                auto& cur_chunk{m_chunks[m_current_chunk]};
+                if (m_current_offset + count <= cur_chunk.size) {
+                    const std::size_t offset{m_current_offset};
                     m_current_offset += count;
-                    return ptr;
+                    return std::span<std::uint64_t>{cur_chunk.buffer.get(), cur_chunk.size}.subspan(offset, count);
                 }
                 ++m_current_chunk;
-                m_current_offset = 0;
+                m_current_offset = 0U;
             }
 
             if (m_current_chunk < m_chunks.size()) {
-                if (m_chunks[m_current_chunk].size >= count) {
-                    uint64_t* ptr = m_chunks[m_current_chunk].buffer.get();
+                auto& cur_chunk{m_chunks[m_current_chunk]};
+                if (cur_chunk.size >= count) {
                     m_current_offset = count;
-                    return ptr;
+                    return std::span<std::uint64_t>{cur_chunk.buffer.get(), cur_chunk.size}.subspan(0U, count);
                 }
-                size_t new_cap = (std::max)(count, DEFAULT_CHUNK_SIZE);
-                m_chunks[m_current_chunk].buffer.reset(new uint64_t[new_cap]);
-                m_chunks[m_current_chunk].size = new_cap;
-                uint64_t* ptr = m_chunks[m_current_chunk].buffer.get();
+                const std::size_t new_cap{(std::max)(count, DEFAULT_CHUNK_SIZE)};
+                cur_chunk.buffer = std::make_unique<std::uint64_t[]>(new_cap);
+                cur_chunk.size = new_cap;
                 m_current_offset = count;
-                return ptr;
+                return std::span<std::uint64_t>{cur_chunk.buffer.get(), cur_chunk.size}.subspan(0U, count);
             }
 
-            size_t new_cap = (std::max)(count, DEFAULT_CHUNK_SIZE);
-            Chunk chunk;
-            chunk.buffer.reset(new uint64_t[new_cap]);
+            const std::size_t new_cap{(std::max)(count, DEFAULT_CHUNK_SIZE)};
+            Chunk chunk{};
+            chunk.buffer = std::make_unique<std::uint64_t[]>(new_cap);
             chunk.size = new_cap;
             m_chunks.push_back(std::move(chunk));
-            uint64_t* ptr = m_chunks.back().buffer.get();
+            auto& back_chunk{m_chunks.back()};
             m_current_offset = count;
-            return ptr;
+            return std::span<std::uint64_t>{back_chunk.buffer.get(), back_chunk.size}.subspan(0U, count);
         }
 
     private:
         ScratchArena() = default;
-        static constexpr size_t DEFAULT_CHUNK_SIZE = 65536;
+        static constexpr std::size_t DEFAULT_CHUNK_SIZE{65536U};
 
-        struct Chunk {
-            std::unique_ptr<uint64_t[]> buffer;
-            size_t size = 0;
+        struct Chunk final {
+            std::unique_ptr<std::uint64_t[]> buffer{};
+            std::size_t size{0};
         };
 
-        std::vector<Chunk> m_chunks;
-        size_t m_current_chunk = 0;
-        size_t m_current_offset = 0;
+        std::vector<Chunk> m_chunks{};
+        std::size_t m_current_chunk{0};
+        std::size_t m_current_offset{0};
     };
 
     /// <summary>
+    /// Subtraction-variant scratchpad Karatsuba multiplication: out = a * b.
     /// 減法變體 Scratchpad Karatsuba 核心演算法：out = a * b。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void mul_karatsuba_raw(uint64_t* NUMERIC_RESTRICT out,
-                                                       const uint64_t* a, size_t a_len,
-                                                       const uint64_t* b, size_t b_len,
-                                                       uint64_t* scratch) noexcept {
+    static NUMERIC_CONSTEXPR_20 auto mul_karatsuba_raw(
+        const std::span<std::uint64_t> out,
+        const std::span<const std::uint64_t> a,
+        const std::span<const std::uint64_t> b,
+        const std::span<std::uint64_t> scratch) noexcept -> void
+    {
+        const std::size_t a_len{a.size()};
+        const std::size_t b_len{b.size()};
         if (a_len < KARATSUBA_THRESHOLD || b_len < KARATSUBA_THRESHOLD) {
-            mul_schoolbook_raw(out, a, a_len, b, b_len);
+            mul_schoolbook_raw(out, a, b);
             return;
         }
 
-        size_t n = (a_len > b_len) ? a_len : b_len;
-        size_t m = (n + 1) / 2;
+        const std::size_t n{(a_len > b_len) ? a_len : b_len};
+        const std::size_t m{(n + 1U) / 2U};
 
-        const uint64_t* a0 = a;
-        size_t a0_len = (a_len < m) ? a_len : m;
-        while (a0_len > 0 && a0[a0_len - 1] == 0) --a0_len;
+        std::size_t a0_len{std::min(a_len, m)};
+        while (a0_len > 0U && a[a0_len - 1U] == 0ULL) --a0_len;
+        const std::span<const std::uint64_t> a0{a.subspan(0U, a0_len)};
 
-        const uint64_t* a1 = a + m;
-        size_t a1_len = (a_len > m) ? (a_len - m) : 0;
-        while (a1_len > 0 && a1[a1_len - 1] == 0) --a1_len;
+        std::size_t a1_len{(a_len > m) ? (a_len - m) : 0U};
+        while (a1_len > 0U && a[m + a1_len - 1U] == 0ULL) --a1_len;
+        const std::span<const std::uint64_t> a1{(a_len > m) ? a.subspan(m, a1_len) : std::span<const std::uint64_t>{}};
 
-        const uint64_t* b0 = b;
-        size_t b0_len = (b_len < m) ? b_len : m;
-        while (b0_len > 0 && b0[b0_len - 1] == 0) --b0_len;
+        std::size_t b0_len{std::min(b_len, m)};
+        while (b0_len > 0U && b[b0_len - 1U] == 0ULL) --b0_len;
+        const std::span<const std::uint64_t> b0{b.subspan(0U, b0_len)};
 
-        const uint64_t* b1 = b + m;
-        size_t b1_len = (b_len > m) ? (b_len - m) : 0;
-        while (b1_len > 0 && b1[b1_len - 1] == 0) --b1_len;
+        std::size_t b1_len{(b_len > m) ? (b_len - m) : 0U};
+        while (b1_len > 0U && b[m + b1_len - 1U] == 0ULL) --b1_len;
+        const std::span<const std::uint64_t> b1{(b_len > m) ? b.subspan(m, b1_len) : std::span<const std::uint64_t>{}};
 
-        // Scratchpad 分配：
-        // da: m
-        // db: m
-        // p:  2*m
-        // t:  2*m + 2
-        // next_scratch: scratch + 6*m + 2
-        uint64_t* da = scratch;
-        uint64_t* db = da + m;
-        uint64_t* p = db + m;
-        uint64_t* t = p + (2 * m);
-        uint64_t* next_scratch = t + (2 * m + 2);
+        const std::span<std::uint64_t> da{scratch.subspan(0U, m)};
+        const std::span<std::uint64_t> db{scratch.subspan(m, m)};
+        const std::span<std::uint64_t> p{scratch.subspan(2U * m, 2U * m)};
+        const std::span<std::uint64_t> t{scratch.subspan(4U * m, 2U * m + 2U)};
+        const std::span<std::uint64_t> next_scratch{scratch.subspan(6U * m + 2U)};
 
-        // 1. z0 = a0 * b0 寫入 out[0 .. 2*m - 1]
-        BigIntStorage::zero_limbs(out, a_len + b_len);
-        size_t z0_len = 0;
-        if (a0_len > 0 && b0_len > 0) {
-            z0_len = a0_len + b0_len;
-            mul_karatsuba_raw(out, a0, a0_len, b0, b0_len, next_scratch);
+        BigIntStorage::zero_limbs(out.subspan(0U, a_len + b_len));
+        std::size_t z0_len{0};
+        if (!a0.empty() && !b0.empty()) {
+            z0_len = a0.size() + b0.size();
+            mul_karatsuba_raw(out, a0, b0, next_scratch);
         }
 
-        // 2. z2 = a1 * b1 寫入 out[2*m .. a_len + b_len - 1]
-        size_t z2_len = 0;
-        if (a1_len > 0 && b1_len > 0) {
-            z2_len = a1_len + b1_len;
-            mul_karatsuba_raw(out + 2 * m, a1, a1_len, b1, b1_len, next_scratch);
+        std::size_t z2_len{0};
+        if (!a1.empty() && !b1.empty()) {
+            z2_len = a1.size() + b1.size();
+            mul_karatsuba_raw(out.subspan(2U * m), a1, b1, next_scratch);
         }
 
-        // 3. 計算 Da = |a0 - a1|, Db = |b0 - b1|
-        int cmp_a = compare_unsigned(a0, a0_len, a1, a1_len);
-        int8_t s_a = 0;
-        size_t da_len = 0;
+        const std::int32_t cmp_a{compare_unsigned(a0, a1)};
+        std::int8_t s_a{0};
+        std::size_t da_len{0};
         if (cmp_a > 0) {
             s_a = 1;
-            da_len = sub_limbs_diff_raw(da, a0, a0_len, a1, a1_len);
+            da_len = sub_limbs_diff_raw(da, a0, a1);
         } else if (cmp_a < 0) {
             s_a = -1;
-            da_len = sub_limbs_diff_raw(da, a1, a1_len, a0, a0_len);
+            da_len = sub_limbs_diff_raw(da, a1, a0);
         }
 
-        int cmp_b = compare_unsigned(b0, b0_len, b1, b1_len);
-        int8_t s_b = 0;
-        size_t db_len = 0;
+        const std::int32_t cmp_b{compare_unsigned(b0, b1)};
+        std::int8_t s_b{0};
+        std::size_t db_len{0};
         if (cmp_b > 0) {
             s_b = 1;
-            db_len = sub_limbs_diff_raw(db, b0, b0_len, b1, b1_len);
+            db_len = sub_limbs_diff_raw(db, b0, b1);
         } else if (cmp_b < 0) {
             s_b = -1;
-            db_len = sub_limbs_diff_raw(db, b1, b1_len, b0, b0_len);
+            db_len = sub_limbs_diff_raw(db, b1, b0);
         }
 
-        int8_t s_p = static_cast<int8_t>(s_a * s_b);
-        size_t p_len = 0;
-        if (s_p != 0 && da_len > 0 && db_len > 0) {
+        std::int8_t s_p{static_cast<std::int8_t>(s_a * s_b)};
+        std::size_t p_len{0};
+        if (s_p != 0 && da_len > 0U && db_len > 0U) {
             p_len = da_len + db_len;
-            mul_karatsuba_raw(p, da, da_len, db, db_len, next_scratch);
+            mul_karatsuba_raw(p, da.subspan(0U, da_len), db.subspan(0U, db_len), next_scratch);
         } else {
             s_p = 0;
         }
 
-        // 4. 在 t 緩衝區中合成 z1 = z0 + z2 - s_p * p
-        if (z0_len > 2 * m) z0_len = 2 * m;
-        if (z0_len > 0) {
-            BigIntStorage::copy_limbs(t, out, z0_len);
+        if (z0_len > 2U * m) {
+            z0_len = 2U * m;
         }
-        BigIntStorage::zero_limbs(t + z0_len, (2 * m + 2) - z0_len);
-
-        // 累加 z2
-        if (z2_len > 0) {
-            add_to_raw(t, 2 * m + 2, out + 2 * m, z2_len);
+        if (z0_len > 0U) {
+            BigIntStorage::copy_limbs(t, out.subspan(0U, z0_len));
         }
+        BigIntStorage::zero_limbs(t.subspan(z0_len));
 
-        // 減法變體符號修正：
-        if (s_p > 0 && p_len > 0) {
-            sub_from_raw(t, 2 * m + 2, p, p_len);
-        } else if (s_p < 0 && p_len > 0) {
-            add_to_raw(t, 2 * m + 2, p, p_len);
+        if (z2_len > 0U) {
+            (void)add_to_raw(t, out.subspan(2U * m, z2_len));
         }
 
-        // 5. 將 z1 累加至 out + m
-        add_to_raw(out + m, (a_len + b_len) - m, t, 2 * m + 2);
+        if (s_p > 0 && p_len > 0U) {
+            (void)sub_from_raw(t, p.subspan(0U, p_len));
+        } else if (s_p < 0 && p_len > 0U) {
+            (void)add_to_raw(t, p.subspan(0U, p_len));
+        }
+
+        (void)add_to_raw(out.subspan(m, (a_len + b_len) - m), t);
     }
 
     /// <summary>
-    /// 精確除以 3：out = out / 3 (前置合約：out 能被 3 整除)。
+    /// Exact division by 3: out = out / 3 (Precondition: out is divisible by 3).
+    /// 精確除以 3：out = out / 3（前置合約：out 可被 3 整除）。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void div_exact_3_raw(uint64_t* out, size_t len) noexcept {
-        uint64_t rem = 0;
-        for (size_t i = len; i > 0; --i) {
-            uint64_t next_rem = 0;
-            out[i - 1] = div128_64(rem, out[i - 1], 3, next_rem);
+    static NUMERIC_CONSTEXPR_20 auto div_exact_3_raw(const std::span<std::uint64_t> out) noexcept -> void {
+        std::uint64_t rem{0};
+        for (std::size_t i{out.size()}; i > 0U; --i) {
+            std::uint64_t next_rem{0};
+            out[i - 1U] = div128_64(rem, out[i - 1U], 3ULL, next_rem);
             rem = next_rem;
         }
     }
 
     /// <summary>
-    /// 非平衡乘法分塊演算法 (Block Karatsuba)：
-    /// 當 a_len >= 2 * b_len (或反向) 時，將長乘數以短乘數長度為基準進行切塊乘加，
-    /// 將時間複雜度由 O(N * M) 降低至 O(N * M^0.585)。
+    /// Unbalanced Block Karatsuba multiplication reducing asymmetric O(N*M) to O(N*M^0.585).
+    /// 非平衡乘法分塊演算法 (Block Karatsuba)：將長乘數依短乘數長度切塊乘加。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void mul_block_karatsuba_raw(
-        uint64_t* NUMERIC_RESTRICT out,
-        const uint64_t* a, size_t a_len,
-        const uint64_t* b, size_t b_len,
-        uint64_t* scratch) noexcept
+    static NUMERIC_CONSTEXPR_20 auto mul_block_karatsuba_raw(
+        const std::span<std::uint64_t> out,
+        const std::span<const std::uint64_t> a,
+        const std::span<const std::uint64_t> b,
+        const std::span<std::uint64_t> scratch) noexcept -> void
     {
-        if (b_len > a_len) {
-            mul_block_karatsuba_raw(out, b, b_len, a, a_len, scratch);
+        if (b.size() > a.size()) {
+            mul_block_karatsuba_raw(out, b, a, scratch);
             return;
         }
-        BigIntStorage::zero_limbs(out, a_len + b_len);
-        if (b_len < KARATSUBA_THRESHOLD || b_len < 4) {
-            mul_schoolbook_raw(out, a, a_len, b, b_len);
+        const std::size_t a_len{a.size()};
+        const std::size_t b_len{b.size()};
+        BigIntStorage::zero_limbs(out.subspan(0U, a_len + b_len));
+        if (b_len < KARATSUBA_THRESHOLD || b_len < 4U) {
+            mul_schoolbook_raw(out, a, b);
             return;
         }
 
-        size_t block_sz = b_len;
-        size_t num_blocks = a_len / block_sz;
-        size_t rem = a_len % block_sz;
+        const std::size_t block_sz{b_len};
+        const std::size_t num_blocks{a_len / block_sz};
+        const std::size_t rem{a_len % block_sz};
 
-        uint64_t* prod_buf = scratch;
-        uint64_t* next_scratch = scratch + 2 * block_sz + 8;
+        const std::span<std::uint64_t> prod_buf{scratch.subspan(0U, 2U * block_sz + 8U)};
+        const std::span<std::uint64_t> next_scratch{scratch.subspan(2U * block_sz + 8U)};
 
-        for (size_t i = 0; i < num_blocks; ++i) {
-            const uint64_t* a_block = a + i * block_sz;
-            mul_dispatch_raw(prod_buf, a_block, block_sz, b, b_len, next_scratch);
-            size_t out_offset = i * block_sz;
-            size_t max_out = (a_len + b_len) - out_offset;
-            add_to_raw(out + out_offset, max_out, prod_buf, 2 * block_sz);
+        for (std::size_t i{0}; i < num_blocks; ++i) {
+            const std::span<const std::uint64_t> a_block{a.subspan(i * block_sz, block_sz)};
+            mul_dispatch_raw(prod_buf, a_block, b, next_scratch);
+            const std::size_t out_offset{i * block_sz};
+            (void)add_to_raw(out.subspan(out_offset, (a_len + b_len) - out_offset), prod_buf.subspan(0U, 2U * block_sz));
         }
 
-        if (rem > 0) {
-            const uint64_t* a_block = a + num_blocks * block_sz;
-            if (rem < 4) {
-                mul_schoolbook_raw(prod_buf, a_block, rem, b, b_len);
+        if (rem > 0U) {
+            const std::span<const std::uint64_t> a_block{a.subspan(num_blocks * block_sz, rem)};
+            if (rem < 4U) {
+                mul_schoolbook_raw(prod_buf, a_block, b);
             } else {
-                mul_dispatch_raw(prod_buf, a_block, rem, b, b_len, next_scratch);
+                mul_dispatch_raw(prod_buf, a_block, b, next_scratch);
             }
-            size_t out_offset = num_blocks * block_sz;
-            size_t max_out = (a_len + b_len) - out_offset;
-            add_to_raw(out + out_offset, max_out, prod_buf, rem + b_len);
+            const std::size_t out_offset{num_blocks * block_sz};
+            (void)add_to_raw(out.subspan(out_offset, (a_len + b_len) - out_offset), prod_buf.subspan(0U, rem + b_len));
         }
     }
 
     /// <summary>
-    /// 乘法內部遞迴派發：依據運算元規模派發至 Schoolbook, Block Karatsuba, Karatsuba 或 Toom-3。
+    /// Recursive multiplication dispatcher selecting Schoolbook, Block Karatsuba, Karatsuba, or Toom-3.
+    /// 乘法內部遞迴派發函式，依運算元規模分派至最佳演算法。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void mul_dispatch_raw(
-        uint64_t* NUMERIC_RESTRICT out,
-        const uint64_t* a, size_t a_len,
-        const uint64_t* b, size_t b_len,
-        uint64_t* scratch) noexcept
+    static NUMERIC_CONSTEXPR_20 auto mul_dispatch_raw(
+        const std::span<std::uint64_t> out,
+        const std::span<const std::uint64_t> a,
+        const std::span<const std::uint64_t> b,
+        const std::span<std::uint64_t> scratch) noexcept -> void
     {
-        size_t n = (a_len > b_len) ? a_len : b_len;
-        if (a_len == 0 || b_len == 0) {
-            BigIntStorage::zero_limbs(out, a_len + b_len);
+        const std::size_t a_len{a.size()};
+        const std::size_t b_len{b.size()};
+        const std::size_t n{std::max(a_len, b_len)};
+        if (a_len == 0U || b_len == 0U) {
+            BigIntStorage::zero_limbs(out.subspan(0U, a_len + b_len));
             return;
         }
-        if (n < KARATSUBA_THRESHOLD || a_len < 4 || b_len < 4) {
-            mul_schoolbook_raw(out, a, a_len, b, b_len);
-        } else if (a_len >= 2 * b_len || b_len >= 2 * a_len) {
-            mul_block_karatsuba_raw(out, a, a_len, b, b_len, scratch);
+        if (n < KARATSUBA_THRESHOLD || a_len < 4U || b_len < 4U) {
+            mul_schoolbook_raw(out, a, b);
+        } else if (a_len >= 2U * b_len || b_len >= 2U * a_len) {
+            mul_block_karatsuba_raw(out, a, b, scratch);
         } else if (n < TOOM3_THRESHOLD) {
-            mul_karatsuba_raw(out, a, a_len, b, b_len, scratch);
+            mul_karatsuba_raw(out, a, b, scratch);
         } else {
-            mul_toom3_raw(out, a, a_len, b, b_len, scratch);
+            mul_toom3_raw(out, a, b, scratch);
         }
     }
 
     /// <summary>
-    /// 生產級 Toom-Cook 3 (Toom-3) 乘法核心演算法：out = a * b。
-    /// 漸近時間複雜度 O(N^(log3 5)) ≈ O(N^1.465)，採用 5 點插值法 (0, 1, -1, 2, inf)。
-    /// 搭配 ScratchArena 達成全程 0 堆積記憶體配置。
+    /// Production Toom-Cook 3-way (Toom-3) multiplication: out = a * b.
+    /// Asymptotic complexity O(N^1.465) via 5-point evaluation and zero-heap raw limb interpolation.
+    /// 生產級 Toom-Cook 3 乘法核心演算法，採用五點插值法與零堆積原生插值重構。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void mul_toom3_raw(
-        uint64_t* NUMERIC_RESTRICT out,
-        const uint64_t* a, size_t a_len,
-        const uint64_t* b, size_t b_len,
-        uint64_t* scratch) noexcept
+    static NUMERIC_CONSTEXPR_20 auto mul_toom3_raw(
+        const std::span<std::uint64_t> out,
+        const std::span<const std::uint64_t> a,
+        const std::span<const std::uint64_t> b,
+        const std::span<std::uint64_t> scratch) noexcept -> void
     {
-        size_t n = (a_len > b_len) ? a_len : b_len;
-        size_t m = (n + 2) / 3;
+        const std::size_t a_len{a.size()};
+        const std::size_t b_len{b.size()};
+        const std::size_t n{std::max(a_len, b_len)};
+        const std::size_t m{(n + 2U) / 3U};
 
-        const uint64_t* a0 = a;
-        size_t a0_len = (a_len < m) ? a_len : m;
-        while (a0_len > 0 && a0[a0_len - 1] == 0) --a0_len;
+        std::size_t a0_len{std::min(a_len, m)};
+        while (a0_len > 0U && a[a0_len - 1U] == 0ULL) --a0_len;
+        const std::span<const std::uint64_t> a0{a.subspan(0U, a0_len)};
 
-        const uint64_t* a1 = (a_len > m) ? (a + m) : nullptr;
-        size_t a1_len = (a_len > m) ? ((a_len < 2 * m) ? (a_len - m) : m) : 0;
-        while (a1_len > 0 && a1[a1_len - 1] == 0) --a1_len;
+        std::size_t a1_len{(a_len > m) ? ((a_len < 2U * m) ? (a_len - m) : m) : 0U};
+        while (a1_len > 0U && a[m + a1_len - 1U] == 0ULL) --a1_len;
+        const std::span<const std::uint64_t> a1{(a_len > m) ? a.subspan(m, a1_len) : std::span<const std::uint64_t>{}};
 
-        const uint64_t* a2 = (a_len > 2 * m) ? (a + 2 * m) : nullptr;
-        size_t a2_len = (a_len > 2 * m) ? (a_len - 2 * m) : 0;
-        while (a2_len > 0 && a2[a2_len - 1] == 0) --a2_len;
+        std::size_t a2_len{(a_len > 2U * m) ? (a_len - 2U * m) : 0U};
+        while (a2_len > 0U && a[2U * m + a2_len - 1U] == 0ULL) --a2_len;
+        const std::span<const std::uint64_t> a2{(a_len > 2U * m) ? a.subspan(2U * m, a2_len) : std::span<const std::uint64_t>{}};
 
-        const uint64_t* b0 = b;
-        size_t b0_len = (b_len < m) ? b_len : m;
-        while (b0_len > 0 && b0[b0_len - 1] == 0) --b0_len;
+        std::size_t b0_len{std::min(b_len, m)};
+        while (b0_len > 0U && b[b0_len - 1U] == 0ULL) --b0_len;
+        const std::span<const std::uint64_t> b0{b.subspan(0U, b0_len)};
 
-        const uint64_t* b1 = (b_len > m) ? (b + m) : nullptr;
-        size_t b1_len = (b_len > m) ? ((b_len < 2 * m) ? (b_len - m) : m) : 0;
-        while (b1_len > 0 && b1[b1_len - 1] == 0) --b1_len;
+        std::size_t b1_len{(b_len > m) ? ((b_len < 2U * m) ? (b_len - m) : m) : 0U};
+        while (b1_len > 0U && b[m + b1_len - 1U] == 0ULL) --b1_len;
+        const std::span<const std::uint64_t> b1{(b_len > m) ? b.subspan(m, b1_len) : std::span<const std::uint64_t>{}};
 
-        const uint64_t* b2 = (b_len > 2 * m) ? (b + 2 * m) : nullptr;
-        size_t b2_len = (b_len > 2 * m) ? (b_len - 2 * m) : 0;
-        while (b2_len > 0 && b2[b2_len - 1] == 0) --b2_len;
+        std::size_t b2_len{(b_len > 2U * m) ? (b_len - 2U * m) : 0U};
+        while (b2_len > 0U && b[2U * m + b2_len - 1U] == 0ULL) --b2_len;
+        const std::span<const std::uint64_t> b2{(b_len > 2U * m) ? b.subspan(2U * m, b2_len) : std::span<const std::uint64_t>{}};
 
-        size_t ev_sz = m + 2;
-        size_t pr_sz = 2 * m + 4;
+        const std::size_t ev_sz{m + 2U};
+        const std::size_t pr_sz{2U * m + 4U};
 
-        uint64_t* p1   = scratch;
-        uint64_t* q1   = p1 + ev_sz;
-        uint64_t* p_m1 = q1 + ev_sz;
-        uint64_t* q_m1 = p_m1 + ev_sz;
-        uint64_t* p2   = q_m1 + ev_sz;
-        uint64_t* q2   = p2 + ev_sz;
+        const std::span<std::uint64_t> p1{scratch.subspan(0U, ev_sz)};
+        const std::span<std::uint64_t> q1{scratch.subspan(ev_sz, ev_sz)};
+        const std::span<std::uint64_t> p_m1{scratch.subspan(2U * ev_sz, ev_sz)};
+        const std::span<std::uint64_t> q_m1{scratch.subspan(3U * ev_sz, ev_sz)};
+        const std::span<std::uint64_t> p2{scratch.subspan(4U * ev_sz, ev_sz)};
+        const std::span<std::uint64_t> q2{scratch.subspan(5U * ev_sz, ev_sz)};
 
-        uint64_t* v1   = q2 + ev_sz;
-        uint64_t* v_m1 = v1 + pr_sz;
-        uint64_t* v2   = v_m1 + pr_sz;
-        uint64_t* next_scratch = v2 + pr_sz;
+        const std::span<std::uint64_t> v1{scratch.subspan(6U * ev_sz, pr_sz)};
+        const std::span<std::uint64_t> v_m1{scratch.subspan(6U * ev_sz + pr_sz, pr_sz)};
+        const std::span<std::uint64_t> v2{scratch.subspan(6U * ev_sz + 2U * pr_sz, pr_sz)};
+        const std::span<std::uint64_t> next_scratch{scratch.subspan(6U * ev_sz + 3U * pr_sz)};
 
-        BigIntStorage::zero_limbs(scratch, (v2 + pr_sz) - scratch);
-        BigIntStorage::zero_limbs(out, a_len + b_len);
+        BigIntStorage::zero_limbs(scratch.subspan(0U, 6U * ev_sz + 3U * pr_sz));
+        BigIntStorage::zero_limbs(out.subspan(0U, a_len + b_len));
 
-        if (a0_len > 0 && b0_len > 0) {
-            mul_dispatch_raw(out, a0, a0_len, b0, b0_len, next_scratch);
+        if (!a0.empty() && !b0.empty()) {
+            mul_dispatch_raw(out, a0, b0, next_scratch);
         }
 
-        uint64_t* v_inf = out + 4 * m;
-        if (a2_len > 0 && b2_len > 0) {
-            mul_dispatch_raw(v_inf, a2, a2_len, b2, b2_len, next_scratch);
+        const std::span<std::uint64_t> v_inf{out.subspan(4U * m)};
+        if (!a2.empty() && !b2.empty()) {
+            mul_dispatch_raw(v_inf, a2, b2, next_scratch);
         }
 
-        BigIntStorage::copy_limbs(p1, a0, a0_len);
-        if (a2_len > 0) add_to_raw(p1, ev_sz, a2, a2_len);
-        BigIntStorage::copy_limbs(p_m1, p1, ev_sz);
-        if (a1_len > 0) add_to_raw(p1, ev_sz, a1, a1_len);
+        if (!a0.empty()) {
+            BigIntStorage::copy_limbs(p1, a0);
+        }
+        if (!a2.empty()) (void)add_to_raw(p1, a2);
+        BigIntStorage::copy_limbs(p_m1, p1);
+        if (!a1.empty()) (void)add_to_raw(p1, a1);
 
-        int8_t s_a = 1;
-        size_t a0_a2_len = ev_sz;
-        while (a0_a2_len > 0 && p_m1[a0_a2_len - 1] == 0) --a0_a2_len;
-        int cmp_a = compare_unsigned(p_m1, a0_a2_len, a1, a1_len);
+        std::int8_t s_a{1};
+        std::size_t a0_a2_len{ev_sz};
+        while (a0_a2_len > 0U && p_m1[a0_a2_len - 1U] == 0ULL) --a0_a2_len;
+        const std::int32_t cmp_a{compare_unsigned(p_m1.subspan(0U, a0_a2_len), a1)};
         if (cmp_a >= 0) {
-            if (a1_len > 0) sub_from_raw(p_m1, ev_sz, a1, a1_len);
+            if (!a1.empty()) (void)sub_from_raw(p_m1, a1);
             s_a = 1;
         } else {
-            uint64_t tmp[256];
-            uint64_t* t_ptr = (ev_sz <= 256) ? tmp : next_scratch;
-            BigIntStorage::copy_limbs(t_ptr, a1, a1_len);
-            BigIntStorage::zero_limbs(t_ptr + a1_len, ev_sz - a1_len);
-            sub_from_raw(t_ptr, ev_sz, p_m1, a0_a2_len);
-            BigIntStorage::copy_limbs(p_m1, t_ptr, ev_sz);
+            std::array<std::uint64_t, 256> tmp{};
+            const std::span<std::uint64_t> t_span{(ev_sz <= 256U) ? std::span<std::uint64_t>{tmp}.subspan(0U, ev_sz) : next_scratch.subspan(0U, ev_sz)};
+            BigIntStorage::copy_limbs(t_span, a1);
+            BigIntStorage::zero_limbs(t_span.subspan(a1.size()));
+            (void)sub_from_raw(t_span, p_m1.subspan(0U, a0_a2_len));
+            BigIntStorage::copy_limbs(p_m1, t_span);
             s_a = -1;
         }
 
-        if (a2_len > 0) {
-            add_to_raw(p2, ev_sz, a2, a2_len);
-            add_to_raw(p2, ev_sz, a2, a2_len);
+        if (!a2.empty()) {
+            (void)add_to_raw(p2, a2);
+            (void)add_to_raw(p2, a2);
         }
-        if (a1_len > 0) add_to_raw(p2, ev_sz, a1, a1_len);
-        uint64_t carry = 0;
-        for (size_t i = 0; i < ev_sz; ++i) {
-            uint64_t cur = p2[i];
-            p2[i] = (cur << 1) | carry;
-            carry = cur >> 63;
+        if (!a1.empty()) (void)add_to_raw(p2, a1);
+        std::uint64_t carry{0};
+        for (std::size_t i{0}; i < ev_sz; ++i) {
+            const std::uint64_t cur{p2[i]};
+            p2[i] = (cur << 1U) | carry;
+            carry = cur >> 63U;
         }
-        if (a0_len > 0) add_to_raw(p2, ev_sz, a0, a0_len);
+        if (!a0.empty()) (void)add_to_raw(p2, a0);
 
-        BigIntStorage::copy_limbs(q1, b0, b0_len);
-        if (b2_len > 0) add_to_raw(q1, ev_sz, b2, b2_len);
-        BigIntStorage::copy_limbs(q_m1, q1, ev_sz);
-        if (b1_len > 0) add_to_raw(q1, ev_sz, b1, b1_len);
+        if (!b0.empty()) {
+            BigIntStorage::copy_limbs(q1, b0);
+        }
+        if (!b2.empty()) (void)add_to_raw(q1, b2);
+        BigIntStorage::copy_limbs(q_m1, q1);
+        if (!b1.empty()) (void)add_to_raw(q1, b1);
 
-        int8_t s_b = 1;
-        size_t b0_b2_len = ev_sz;
-        while (b0_b2_len > 0 && q_m1[b0_b2_len - 1] == 0) --b0_b2_len;
-        int cmp_b = compare_unsigned(q_m1, b0_b2_len, b1, b1_len);
+        std::int8_t s_b{1};
+        std::size_t b0_b2_len{ev_sz};
+        while (b0_b2_len > 0U && q_m1[b0_b2_len - 1U] == 0ULL) --b0_b2_len;
+        const std::int32_t cmp_b{compare_unsigned(q_m1.subspan(0U, b0_b2_len), b1)};
         if (cmp_b >= 0) {
-            if (b1_len > 0) sub_from_raw(q_m1, ev_sz, b1, b1_len);
+            if (!b1.empty()) (void)sub_from_raw(q_m1, b1);
             s_b = 1;
         } else {
-            uint64_t tmp[256];
-            uint64_t* t_ptr = (ev_sz <= 256) ? tmp : next_scratch;
-            BigIntStorage::copy_limbs(t_ptr, b1, b1_len);
-            BigIntStorage::zero_limbs(t_ptr + b1_len, ev_sz - b1_len);
-            sub_from_raw(t_ptr, ev_sz, q_m1, b0_b2_len);
-            BigIntStorage::copy_limbs(q_m1, t_ptr, ev_sz);
+            std::array<std::uint64_t, 256> tmp{};
+            const std::span<std::uint64_t> t_span{(ev_sz <= 256U) ? std::span<std::uint64_t>{tmp}.subspan(0U, ev_sz) : next_scratch.subspan(0U, ev_sz)};
+            BigIntStorage::copy_limbs(t_span, b1);
+            BigIntStorage::zero_limbs(t_span.subspan(b1.size()));
+            (void)sub_from_raw(t_span, q_m1.subspan(0U, b0_b2_len));
+            BigIntStorage::copy_limbs(q_m1, t_span);
             s_b = -1;
         }
 
-        if (b2_len > 0) {
-            add_to_raw(q2, ev_sz, b2, b2_len);
-            add_to_raw(q2, ev_sz, b2, b2_len);
+        if (!b2.empty()) {
+            (void)add_to_raw(q2, b2);
+            (void)add_to_raw(q2, b2);
         }
-        if (b1_len > 0) add_to_raw(q2, ev_sz, b1, b1_len);
-        carry = 0;
-        for (size_t i = 0; i < ev_sz; ++i) {
-            uint64_t cur = q2[i];
-            q2[i] = (cur << 1) | carry;
-            carry = cur >> 63;
+        if (!b1.empty()) (void)add_to_raw(q2, b1);
+        carry = 0ULL;
+        for (std::size_t i{0}; i < ev_sz; ++i) {
+            const std::uint64_t cur{q2[i]};
+            q2[i] = (cur << 1U) | carry;
+            carry = cur >> 63U;
         }
-        if (b0_len > 0) add_to_raw(q2, ev_sz, b0, b0_len);
+        if (!b0.empty()) (void)add_to_raw(q2, b0);
 
-        size_t p1_len = ev_sz; while (p1_len > 0 && p1[p1_len - 1] == 0) --p1_len;
-        size_t q1_len = ev_sz; while (q1_len > 0 && q1[q1_len - 1] == 0) --q1_len;
-        if (p1_len > 0 && q1_len > 0) {
-            mul_dispatch_raw(v1, p1, p1_len, q1, q1_len, next_scratch);
-        }
-
-        size_t pm1_len = ev_sz; while (pm1_len > 0 && p_m1[pm1_len - 1] == 0) --pm1_len;
-        size_t qm1_len = ev_sz; while (qm1_len > 0 && q_m1[qm1_len - 1] == 0) --qm1_len;
-        if (pm1_len > 0 && qm1_len > 0) {
-            mul_dispatch_raw(v_m1, p_m1, pm1_len, q_m1, qm1_len, next_scratch);
-        }
-        int8_t s_vm1 = static_cast<int8_t>(s_a * s_b);
-
-        size_t p2_len = ev_sz; while (p2_len > 0 && p2[p2_len - 1] == 0) --p2_len;
-        size_t q2_len = ev_sz; while (q2_len > 0 && q2[q2_len - 1] == 0) --q2_len;
-        if (p2_len > 0 && q2_len > 0) {
-            mul_dispatch_raw(v2, p2, p2_len, q2, q2_len, next_scratch);
+        std::size_t p1_len{ev_sz}; while (p1_len > 0U && p1[p1_len - 1U] == 0ULL) --p1_len;
+        std::size_t q1_len{ev_sz}; while (q1_len > 0U && q1[q1_len - 1U] == 0ULL) --q1_len;
+        if (p1_len > 0U && q1_len > 0U) {
+            mul_dispatch_raw(v1, p1.subspan(0U, p1_len), q1.subspan(0U, q1_len), next_scratch);
         }
 
-        // 5. 補間多項式重構 (Zero-Heap Raw Limb Interpolation)
-        // 劃分 scratch 緩衝區，杜絕任何 BigIntStorage 堆積物件配置
-        size_t sz = pr_sz + 4;
-        uint64_t* t1 = next_scratch;
-        uint64_t* t2 = t1 + sz;
-        uint64_t* c2 = t2 + sz;
-        uint64_t* v2_step = c2 + sz;
-        uint64_t* v2_step2 = v2_step + sz;
-        uint64_t* eight_v_inf = v2_step2 + sz;
-        uint64_t* two_c2 = eight_v_inf + sz;
-        uint64_t* c3 = two_c2 + sz;
-        uint64_t* c1 = c3 + sz;
-        BigIntStorage::zero_limbs(next_scratch, 9 * sz);
+        std::size_t pm1_len{ev_sz}; while (pm1_len > 0U && p_m1[pm1_len - 1U] == 0ULL) --pm1_len;
+        std::size_t qm1_len{ev_sz}; while (qm1_len > 0U && q_m1[qm1_len - 1U] == 0ULL) --qm1_len;
+        if (pm1_len > 0U && qm1_len > 0U) {
+            mul_dispatch_raw(v_m1, p_m1.subspan(0U, pm1_len), q_m1.subspan(0U, qm1_len), next_scratch);
+        }
+        const std::int8_t s_vm1{static_cast<std::int8_t>(s_a * s_b)};
 
-        size_t v0_len = 2 * m;
-        while (v0_len > 0 && out[v0_len - 1] == 0) --v0_len;
+        std::size_t p2_len{ev_sz}; while (p2_len > 0U && p2[p2_len - 1U] == 0ULL) --p2_len;
+        std::size_t q2_len{ev_sz}; while (q2_len > 0U && q2[q2_len - 1U] == 0ULL) --q2_len;
+        if (p2_len > 0U && q2_len > 0U) {
+            mul_dispatch_raw(v2, p2.subspan(0U, p2_len), q2.subspan(0U, q2_len), next_scratch);
+        }
 
-        size_t vinf_len = (a_len + b_len > 4 * m) ? (a_len + b_len - 4 * m) : 0;
-        while (vinf_len > 0 && v_inf[vinf_len - 1] == 0) --vinf_len;
+        const std::size_t sz{pr_sz + 4U};
+        const std::span<std::uint64_t> t1{next_scratch.subspan(0U, sz)};
+        const std::span<std::uint64_t> t2{next_scratch.subspan(sz, sz)};
+        const std::span<std::uint64_t> c2{next_scratch.subspan(2U * sz, sz)};
+        const std::span<std::uint64_t> v2_step{next_scratch.subspan(3U * sz, sz)};
+        const std::span<std::uint64_t> v2_step2{next_scratch.subspan(4U * sz, sz)};
+        const std::span<std::uint64_t> eight_v_inf{next_scratch.subspan(5U * sz, sz)};
+        const std::span<std::uint64_t> two_c2{next_scratch.subspan(6U * sz, sz)};
+        const std::span<std::uint64_t> c3{next_scratch.subspan(7U * sz, sz)};
+        const std::span<std::uint64_t> c1{next_scratch.subspan(8U * sz, sz)};
+        BigIntStorage::zero_limbs(next_scratch.subspan(0U, 9U * sz));
 
-        size_t v1_len = pr_sz;
-        while (v1_len > 0 && v1[v1_len - 1] == 0) --v1_len;
+        std::size_t v0_len{2U * m};
+        while (v0_len > 0U && out[v0_len - 1U] == 0ULL) --v0_len;
+        const std::span<const std::uint64_t> v0_span{out.subspan(0U, v0_len)};
 
-        size_t vm1_len = pr_sz;
-        while (vm1_len > 0 && v_m1[vm1_len - 1] == 0) --vm1_len;
+        std::size_t vinf_len{(a_len + b_len > 4U * m) ? (a_len + b_len - 4U * m) : 0U};
+        while (vinf_len > 0U && v_inf[vinf_len - 1U] == 0ULL) --vinf_len;
+        const std::span<const std::uint64_t> vinf_span{v_inf.subspan(0U, vinf_len)};
 
-        size_t v2_len = pr_sz;
-        while (v2_len > 0 && v2[v2_len - 1] == 0) --v2_len;
+        std::size_t v1_len{pr_sz};
+        while (v1_len > 0U && v1[v1_len - 1U] == 0ULL) --v1_len;
+        const std::span<const std::uint64_t> v1_span{v1.subspan(0U, v1_len)};
 
-        size_t t1_len = 0;
-        size_t t2_len = 0;
+        std::size_t vm1_len{pr_sz};
+        while (vm1_len > 0U && v_m1[vm1_len - 1U] == 0ULL) --vm1_len;
+        const std::span<const std::uint64_t> vm1_span{v_m1.subspan(0U, vm1_len)};
+
+        std::size_t v2_len{pr_sz};
+        while (v2_len > 0U && v2[v2_len - 1U] == 0ULL) --v2_len;
+        const std::span<const std::uint64_t> v2_span{v2.subspan(0U, v2_len)};
+
+        std::size_t t1_len{0};
+        std::size_t t2_len{0};
         if (s_vm1 >= 0) {
-            t1_len = add_limbs_raw(t1, v1, v1_len, v_m1, vm1_len);
-            shift_right_1_raw(t1, t1_len);
-            while (t1_len > 0 && t1[t1_len - 1] == 0) --t1_len;
+            t1_len = add_limbs_raw(t1, v1_span, vm1_span);
+            shift_right_1_raw(t1.subspan(0U, t1_len));
+            while (t1_len > 0U && t1[t1_len - 1U] == 0ULL) --t1_len;
 
-            t2_len = sub_limbs_raw(t2, v1, v1_len, v_m1, vm1_len);
-            shift_right_1_raw(t2, t2_len);
-            while (t2_len > 0 && t2[t2_len - 1] == 0) --t2_len;
+            t2_len = sub_limbs_raw(t2, v1_span, vm1_span);
+            shift_right_1_raw(t2.subspan(0U, t2_len));
+            while (t2_len > 0U && t2[t2_len - 1U] == 0ULL) --t2_len;
         } else {
-            t1_len = sub_limbs_raw(t1, v1, v1_len, v_m1, vm1_len);
-            shift_right_1_raw(t1, t1_len);
-            while (t1_len > 0 && t1[t1_len - 1] == 0) --t1_len;
+            t1_len = sub_limbs_raw(t1, v1_span, vm1_span);
+            shift_right_1_raw(t1.subspan(0U, t1_len));
+            while (t1_len > 0U && t1[t1_len - 1U] == 0ULL) --t1_len;
 
-            t2_len = add_limbs_raw(t2, v1, v1_len, v_m1, vm1_len);
-            shift_right_1_raw(t2, t2_len);
-            while (t2_len > 0 && t2[t2_len - 1] == 0) --t2_len;
+            t2_len = add_limbs_raw(t2, v1_span, vm1_span);
+            shift_right_1_raw(t2.subspan(0U, t2_len));
+            while (t2_len > 0U && t2[t2_len - 1U] == 0ULL) --t2_len;
         }
 
-        // c2 = t1 - v0 - v_inf
-        size_t c2_len = sub_limbs_raw(c2, t1, t1_len, out, v0_len);
-        sub_from_raw(c2, c2_len, v_inf, vinf_len);
-        while (c2_len > 0 && c2[c2_len - 1] == 0) --c2_len;
+        std::size_t c2_len{sub_limbs_raw(c2, t1.subspan(0U, t1_len), v0_span)};
+        (void)sub_from_raw(c2.subspan(0U, c2_len), vinf_span);
+        while (c2_len > 0U && c2[c2_len - 1U] == 0ULL) --c2_len;
 
-        // v2_step = (v2 - v0) / 2
-        size_t v2_step_len = sub_limbs_raw(v2_step, v2, v2_len, out, v0_len);
-        shift_right_1_raw(v2_step, v2_step_len);
-        while (v2_step_len > 0 && v2_step[v2_step_len - 1] == 0) --v2_step_len;
+        std::size_t v2_step_len{sub_limbs_raw(v2_step, v2_span, v0_span)};
+        shift_right_1_raw(v2_step.subspan(0U, v2_step_len));
+        while (v2_step_len > 0U && v2_step[v2_step_len - 1U] == 0ULL) --v2_step_len;
 
-        // v2_step2 = v2_step - t2
-        size_t v2_step2_len = sub_limbs_raw(v2_step2, v2_step, v2_step_len, t2, t2_len);
+        const std::size_t v2_step2_len{sub_limbs_raw(v2_step2, v2_step.subspan(0U, v2_step_len), t2.subspan(0U, t2_len))};
+        const std::size_t eight_vinf_len{shift_left_bits_raw(eight_v_inf, vinf_span, 3U)};
+        (void)sub_from_raw(v2_step2.subspan(0U, v2_step2_len), eight_v_inf.subspan(0U, eight_vinf_len));
+        std::size_t v2_step3_len{v2_step2_len};
+        while (v2_step3_len > 0U && v2_step2[v2_step3_len - 1U] == 0ULL) --v2_step3_len;
 
-        // eight_v_inf = v_inf << 3
-        size_t eight_vinf_len = shift_left_bits_raw(eight_v_inf, v_inf, vinf_len, 3);
-        sub_from_raw(v2_step2, v2_step2_len, eight_v_inf, eight_vinf_len);
-        size_t v2_step3_len = v2_step2_len;
-        while (v2_step3_len > 0 && v2_step2[v2_step3_len - 1] == 0) --v2_step3_len;
+        const std::size_t two_c2_len{shift_left_bits_raw(two_c2, c2.subspan(0U, c2_len), 1U)};
+        const std::size_t three_c3_len{sub_limbs_raw(c3, v2_step2.subspan(0U, v2_step3_len), two_c2.subspan(0U, two_c2_len))};
 
-        // two_c2 = c2 << 1
-        size_t two_c2_len = shift_left_bits_raw(two_c2, c2, c2_len, 1);
-        // three_c3 = v2_step3 - two_c2
-        size_t three_c3_len = sub_limbs_raw(c3, v2_step2, v2_step3_len, two_c2, two_c2_len);
+        div_exact_3_raw(c3.subspan(0U, three_c3_len));
+        std::size_t c3_len{three_c3_len};
+        while (c3_len > 0U && c3[c3_len - 1U] == 0ULL) --c3_len;
 
-        // c3 = three_c3 / 3
-        div_exact_3_raw(c3, three_c3_len);
-        size_t c3_len = three_c3_len;
-        while (c3_len > 0 && c3[c3_len - 1] == 0) --c3_len;
+        const std::size_t c1_len{sub_limbs_raw(c1, t2.subspan(0U, t2_len), c3.subspan(0U, c3_len))};
 
-        // c1 = t2 - c3
-        size_t c1_len = sub_limbs_raw(c1, t2, t2_len, c3, c3_len);
-
-        if (c1_len > 0) add_to_raw(out + m, (a_len + b_len) - m, c1, c1_len);
-        if (c2_len > 0) add_to_raw(out + 2 * m, (a_len + b_len) - 2 * m, c2, c2_len);
-        if (c3_len > 0) add_to_raw(out + 3 * m, (a_len + b_len) - 3 * m, c3, c3_len);
+        if (c1_len > 0U) (void)add_to_raw(out.subspan(m, (a_len + b_len) - m), c1.subspan(0U, c1_len));
+        if (c2_len > 0U) (void)add_to_raw(out.subspan(2U * m, (a_len + b_len) - 2U * m), c2.subspan(0U, c2_len));
+        if (c3_len > 0U) (void)add_to_raw(out.subspan(3U * m, (a_len + b_len) - 3U * m), c3.subspan(0U, c3_len));
     }
 
     /// <summary>
-    /// 傳統 Schoolbook 長整數乘法演算法。
+    /// High-level Schoolbook multiplication dispatching into storage.
+    /// 傳統 Schoolbook 長整數乘法演算法（包裝為儲存物件版本）。
     /// </summary>
-    /// <param name="res">輸出乘積儲存物件</param>
-    /// <param name="a">乘數 a</param>
-    /// <param name="b">乘數 b</param>
-    static NUMERIC_CONSTEXPR_20 void mul_schoolbook(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
-        if (a.m_size == 0 || b.m_size == 0) {
+    static NUMERIC_CONSTEXPR_20 auto mul_schoolbook(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) -> void
+    {
+        if (a.m_size == 0U || b.m_size == 0U) {
             res.reset_heap();
             res.m_size = 0;
             res.m_sign = 0;
@@ -2968,30 +3250,36 @@ struct BigIntMultiplication : public BigIntBitwise {
         }
         if (&res == &a || &res == &b) {
             BigIntStorage tmp;
-            tmp.resize(a.m_size + b.m_size, 0);
-            mul_schoolbook_raw(tmp.data(), a.data(), a.m_size, b.data(), b.m_size);
+            tmp.resize(a.m_size + b.m_size, 0ULL);
+            mul_schoolbook_raw(tmp.as_span(), a.as_span(), b.as_span());
             tmp.m_sign = 1;
             tmp.normalize();
             res = std::move(tmp);
         } else {
-            res.resize(a.m_size + b.m_size, 0);
-            mul_schoolbook_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size);
+            res.resize(a.m_size + b.m_size, 0ULL);
+            mul_schoolbook_raw(res.as_span(), a.as_span(), b.as_span());
             res.m_sign = 1;
             res.normalize();
         }
     }
 
     /// <summary>
-    /// 單肢段非平衡乘法：res = a * b_val（含自我別名 &res == &a 防護）。
+    /// Single-limb multiplication with self-aliasing protection: res = a * b_val.
+    /// 單肢段非平衡乘法：res = a * b_val（含自我別名防護）。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void mul_single_limb(BigIntStorage& res, const BigIntStorage& a, uint64_t b_val, int8_t sign) {
-        if (b_val == 0 || a.m_size == 0) {
+    static NUMERIC_CONSTEXPR_20 auto mul_single_limb(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const std::uint64_t b_val,
+        const std::int8_t sign) -> void
+    {
+        if (b_val == 0ULL || a.m_size == 0U) {
             res.reset_heap();
             res.m_size = 0;
             res.m_sign = 0;
             return;
         }
-        if (b_val == 1) {
+        if (b_val == 1ULL) {
             if (&res != &a) {
                 res = a;
             }
@@ -2999,44 +3287,48 @@ struct BigIntMultiplication : public BigIntBitwise {
             return;
         }
 
-        size_t n = a.m_size;
-        // 自我別名防護：先一次性確認容量足夠，絕不允許在掃描迴圈中途擴容導致指針懸置
-        if (res.m_capacity < n + 1) {
-            res.reserve(n + 1);
+        const std::size_t n{a.m_size};
+        if (res.m_capacity < n + 1U) {
+            res.reserve(n + 1U);
         }
 
-        uint64_t carry = 0;
-        for (size_t i = 0; i < n; ++i) {
-            uint64_t high = 0;
-            uint64_t low = mul64_wide(a.data()[i], b_val, high);
+        const std::span<const std::uint64_t> a_span{a.as_span()};
+        const std::span<std::uint64_t> out_span{res.capacity_span()};
+
+        std::uint64_t carry{0};
+        for (std::size_t i{0}; i < n; ++i) {
+            std::uint64_t high{0};
+            std::uint64_t low{mul64_wide(a_span[i], b_val, high)};
             low += carry;
-            if (low < carry) ++high;
-            res.data()[i] = low;
+            if (low < carry) {
+                ++high;
+            }
+            out_span[i] = low;
             carry = high;
         }
-        if (carry > 0) {
-            res.data()[n] = carry;
-            res.m_size = static_cast<uint32_t>(n + 1);
+        if (carry > 0ULL) {
+            out_span[n] = carry;
+            res.m_size = static_cast<std::uint32_t>(n + 1U);
         } else {
-            res.m_size = static_cast<uint32_t>(n);
+            res.m_size = static_cast<std::uint32_t>(n);
         }
         res.m_sign = sign;
     }
 
     /// <summary>
-    /// Karatsuba 快速乘法演算法（減法變體 + Scratchpad 記憶體規劃）。
+    /// High-level Karatsuba multiplication wrapper with scratchpad/ScratchArena dispatch.
+    /// Karatsuba 快速乘法演算法高階包裝。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">乘數 a</param>
-    /// <param name="b">乘數 b</param>
-    static NUMERIC_CONSTEXPR_20 void mul_karatsuba(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
-        size_t n = (a.m_size > b.m_size) ? a.m_size : b.m_size;
-        if (n < KARATSUBA_THRESHOLD || a.m_size == 0 || b.m_size == 0) {
+    static NUMERIC_CONSTEXPR_20 auto mul_karatsuba(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) -> void
+    {
+        const std::size_t n{std::max<std::size_t>(a.m_size, b.m_size)};
+        if (n < KARATSUBA_THRESHOLD || a.m_size == 0U || b.m_size == 0U) {
             mul_schoolbook(res, a, b);
             return;
         }
-
-        // 自我別名防護
         if (&res == &a || &res == &b) {
             BigIntStorage tmp;
             mul_karatsuba(tmp, a, b);
@@ -3044,33 +3336,31 @@ struct BigIntMultiplication : public BigIntBitwise {
             return;
         }
 
-        size_t total_len = a.m_size + b.m_size;
-        res.resize(total_len, 0);
+        const std::size_t total_len{a.m_size + b.m_size};
+        res.resize(total_len, 0ULL);
+        const std::size_t scratch_size{8U * n + 128U};
 
-        // Scratchpad 預估大小：8 * n + 128 limbs
-        size_t scratch_size = 8 * n + 128;
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
         if (std::is_constant_evaluated()) {
-            if (scratch_size <= 1024) {
-                uint64_t stack_scratch[1024];
-                mul_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, stack_scratch);
+            if (scratch_size <= 1024U) {
+                std::array<std::uint64_t, 1024> stack_scratch{};
+                mul_karatsuba_raw(res.as_span(), a.as_span(), b.as_span(), stack_scratch);
             } else {
-                std::vector<uint64_t> heap_scratch(scratch_size);
-                mul_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, heap_scratch.data());
+                std::vector<std::uint64_t> heap_scratch(scratch_size);
+                mul_karatsuba_raw(res.as_span(), a.as_span(), b.as_span(), heap_scratch);
             }
             res.m_sign = 1;
             res.normalize();
             return;
         }
-#endif
-        if (scratch_size <= 1024) {
-            uint64_t stack_scratch[1024];
-            mul_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, stack_scratch);
+
+        if (scratch_size <= 1024U) {
+            std::array<std::uint64_t, 1024> stack_scratch{};
+            mul_karatsuba_raw(res.as_span(), a.as_span(), b.as_span(), stack_scratch);
         } else {
-            auto& arena = ScratchArena::instance();
-            ScratchArena::Scope scope(arena);
-            uint64_t* scratch = arena.allocate(scratch_size);
-            mul_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, scratch);
+            auto& arena{ScratchArena::instance()};
+            const ScratchArena::Scope scope{arena};
+            const std::span<std::uint64_t> scratch{arena.allocate(scratch_size)};
+            mul_karatsuba_raw(res.as_span(), a.as_span(), b.as_span(), scratch);
         }
 
         res.m_sign = 1;
@@ -3078,19 +3368,19 @@ struct BigIntMultiplication : public BigIntBitwise {
     }
 
     /// <summary>
-    /// Toom-3 (Toom-Cook 3-way) 快速乘法演算法（ScratchArena 記憶體池加速）。
+    /// High-level Toom-Cook 3-way multiplication wrapper utilizing ScratchArena.
+    /// Toom-3 快速乘法演算法高階包裝。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">乘數 a</param>
-    /// <param name="b">乘數 b</param>
-    static NUMERIC_CONSTEXPR_20 void mul_toom3(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
-        size_t n = (a.m_size > b.m_size) ? a.m_size : b.m_size;
-        if (n < TOOM3_THRESHOLD || a.m_size == 0 || b.m_size == 0) {
+    static NUMERIC_CONSTEXPR_20 auto mul_toom3(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) -> void
+    {
+        const std::size_t n{std::max<std::size_t>(a.m_size, b.m_size)};
+        if (n < TOOM3_THRESHOLD || a.m_size == 0U || b.m_size == 0U) {
             mul_karatsuba(res, a, b);
             return;
         }
-
-        // 自我別名防護
         if (&res == &a || &res == &b) {
             BigIntStorage tmp;
             mul_toom3(tmp, a, b);
@@ -3098,33 +3388,31 @@ struct BigIntMultiplication : public BigIntBitwise {
             return;
         }
 
-        size_t total_len = a.m_size + b.m_size;
-        res.resize(total_len, 0);
+        const std::size_t total_len{a.m_size + b.m_size};
+        res.resize(total_len, 0ULL);
+        const std::size_t scratch_size{48U * n + 2048U};
 
-        // Scratchpad 預估大小：48 * n + 2048 limbs
-        size_t scratch_size = 48 * n + 2048;
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
         if (std::is_constant_evaluated()) {
-            if (scratch_size <= 2048) {
-                uint64_t stack_scratch[2048];
-                mul_toom3_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, stack_scratch);
+            if (scratch_size <= 2048U) {
+                std::array<std::uint64_t, 2048> stack_scratch{};
+                mul_toom3_raw(res.as_span(), a.as_span(), b.as_span(), stack_scratch);
             } else {
-                std::vector<uint64_t> heap_scratch(scratch_size);
-                mul_toom3_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, heap_scratch.data());
+                std::vector<std::uint64_t> heap_scratch(scratch_size);
+                mul_toom3_raw(res.as_span(), a.as_span(), b.as_span(), heap_scratch);
             }
             res.m_sign = 1;
             res.normalize();
             return;
         }
-#endif
-        if (scratch_size <= 2048) {
-            uint64_t stack_scratch[2048];
-            mul_toom3_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, stack_scratch);
+
+        if (scratch_size <= 2048U) {
+            std::array<std::uint64_t, 2048> stack_scratch{};
+            mul_toom3_raw(res.as_span(), a.as_span(), b.as_span(), stack_scratch);
         } else {
-            auto& arena = ScratchArena::instance();
-            ScratchArena::Scope scope(arena);
-            uint64_t* scratch = arena.allocate(scratch_size);
-            mul_toom3_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, scratch);
+            auto& arena{ScratchArena::instance()};
+            const ScratchArena::Scope scope{arena};
+            const std::span<std::uint64_t> scratch{arena.allocate(scratch_size)};
+            mul_toom3_raw(res.as_span(), a.as_span(), b.as_span(), scratch);
         }
 
         res.m_sign = 1;
@@ -3132,37 +3420,36 @@ struct BigIntMultiplication : public BigIntBitwise {
     }
 
     /// <summary>
-    /// 內部乘法派發函式，依據位數自動切換 Schoolbook, Karatsuba 與 Toom-3。
+    /// Internal multiplication dispatcher selecting optimal tier based on operand sizes.
+    /// 內部乘法派發函式，依據位數自動切換 Schoolbook、Block Karatsuba、Karatsuba 與 Toom-3。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">乘數 a</param>
-    /// <param name="b">乘數 b</param>
-    static NUMERIC_CONSTEXPR_20 void mul_core(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
-        size_t n = (a.m_size > b.m_size) ? a.m_size : b.m_size;
+    static NUMERIC_CONSTEXPR_20 auto mul_core(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) -> void
+    {
+        const std::size_t n{std::max<std::size_t>(a.m_size, b.m_size)};
         if (a.m_size < KARATSUBA_THRESHOLD || b.m_size < KARATSUBA_THRESHOLD) {
             mul_schoolbook(res, a, b);
-        } else if (a.m_size >= 2 * b.m_size || b.m_size >= 2 * a.m_size) {
+        } else if (a.m_size >= 2U * b.m_size || b.m_size >= 2U * a.m_size) {
             if (&res == &a || &res == &b) {
                 BigIntStorage tmp;
                 mul_core(tmp, a, b);
                 res = std::move(tmp);
                 return;
             }
-            res.resize(a.m_size + b.m_size, 0);
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+            res.resize(a.m_size + b.m_size, 0ULL);
             if (std::is_constant_evaluated()) {
-                size_t scratch_sz = 8 * n + 256;
-                std::vector<uint64_t> heap_scratch(scratch_sz);
-                mul_block_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, heap_scratch.data());
+                std::vector<std::uint64_t> heap_scratch(8U * n + 256U);
+                mul_block_karatsuba_raw(res.as_span(), a.as_span(), b.as_span(), heap_scratch);
                 res.m_sign = 1;
                 res.normalize();
                 return;
             }
-#endif
-            auto& arena = ScratchArena::instance();
-            ScratchArena::Scope scope(arena);
-            uint64_t* scratch = arena.allocate(8 * n + 256);
-            mul_block_karatsuba_raw(res.data(), a.data(), a.m_size, b.data(), b.m_size, scratch);
+            auto& arena{ScratchArena::instance()};
+            const ScratchArena::Scope scope{arena};
+            const std::span<std::uint64_t> scratch{arena.allocate(8U * n + 256U)};
+            mul_block_karatsuba_raw(res.as_span(), a.as_span(), b.as_span(), scratch);
             res.m_sign = 1;
             res.normalize();
         } else if (n < TOOM3_THRESHOLD) {
@@ -3173,30 +3460,29 @@ struct BigIntMultiplication : public BigIntBitwise {
     }
 
     /// <summary>
-    /// 帶符號乘法：res = a * b。
-    /// 包含 M0 (零值快路徑與非平衡乘法)、M1 (單肢段原生直通)、M2/M3 (Schoolbook/Karatsuba)。
+    /// Signed integer multiplication: res = a * b.
+    /// 帶符號乘法：res = a * b，含零值快路徑與單肢段原生直通路徑。
     /// </summary>
-    /// <param name="res">輸出結果</param>
-    /// <param name="a">乘數 a</param>
-    /// <param name="b">乘數 b</param>
-    static NUMERIC_CONSTEXPR_20 void mul_signed(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
-        // M0: 零值快路徑
-        if (a.m_sign == 0 || b.m_sign == 0 || a.m_size == 0 || b.m_size == 0) {
+    static NUMERIC_CONSTEXPR_20 auto mul_signed(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) -> void
+    {
+        if (a.m_sign == 0 || b.m_sign == 0 || a.m_size == 0U || b.m_size == 0U) {
             res.reset_heap();
             res.m_size = 0;
             res.m_sign = 0;
             return;
         }
-        int8_t res_sign = static_cast<int8_t>(a.m_sign * b.m_sign);
+        const std::int8_t res_sign{static_cast<std::int8_t>(a.m_sign * b.m_sign)};
 
-        // M1: 1-Limb 原生直通
-        if (a.m_size == 1 && b.m_size == 1) {
-            uint64_t hi = 0;
-            uint64_t lo = mul64_wide(a.data()[0], b.data()[0], hi);
+        if (a.m_size == 1U && b.m_size == 1U) {
+            std::uint64_t hi{0};
+            const std::uint64_t lo{mul64_wide(a.as_span()[0], b.as_span()[0], hi)};
             res.reset_heap();
-            res.data()[0] = lo;
-            if (hi > 0) {
-                res.data()[1] = hi;
+            res.capacity_span()[0] = lo;
+            if (hi > 0ULL) {
+                res.capacity_span()[1] = hi;
                 res.m_size = 2;
             } else {
                 res.m_size = 1;
@@ -3205,17 +3491,15 @@ struct BigIntMultiplication : public BigIntBitwise {
             return;
         }
 
-        // 單肢段非平衡乘法
-        if (a.m_size == 1) {
-            mul_single_limb(res, b, a.data()[0], res_sign);
+        if (a.m_size == 1U) {
+            mul_single_limb(res, b, a.as_span()[0], res_sign);
             return;
         }
-        if (b.m_size == 1) {
-            mul_single_limb(res, a, b.data()[0], res_sign);
+        if (b.m_size == 1U) {
+            mul_single_limb(res, a, b.as_span()[0], res_sign);
             return;
         }
 
-        // M2 & M3 派發
         mul_core(res, a, b);
         res.m_sign = res_sign;
     }
@@ -3226,162 +3510,168 @@ struct BigIntMultiplication : public BigIntBitwise {
 // --- End Section: include/numeric/detail/Multiplication.hpp ---
 
 // --- Begin Section: include/numeric/detail/Division.hpp ---
-// Division.hpp
-// Arbitrary-precision integer division algorithms for CPP-BigInt:
-// Knuth Algorithm D, Burnikel-Ziegler 3/2 and 2/1 divide-and-conquer division.
-// Part of the numeric::detail modular core.
+// filepath: include/numeric/detail/Division.hpp
+/**
+ * @file Division.hpp
+ * @brief Arbitrary-precision integer division and modulo algorithms for CPP-BigInt.
+ *        Implements fast single-limb division, Knuth Algorithm D, and zero-heap Burnikel-Ziegler
+ *        3/2 and 2/1 divide-and-conquer division over bounds-safe std::span slices.
+ *        任意精度整數除法與取模演算法模組。
+ *        實作單肢段快除、Knuth Algorithm D 與基於 std::span 之零堆積 Burnikel-Ziegler 分治除法。
+ */
 
 
 namespace numeric {
 namespace detail {
 
 /// <summary>
+/// Arbitrary-precision division algorithms inheriting BigIntMultiplication.
 /// BigInt 除法運算核心類別，繼承自 BigIntMultiplication。
-/// 支援單肢段快除、Knuth Algorithm D 長除法與 Burnikel-Ziegler 分治除法。
 /// </summary>
 struct BigIntDivision : public BigIntMultiplication {
-    static constexpr size_t BZ_THRESHOLD = 32; // Tuned threshold for Burnikel-Ziegler division (2048-bit)
+    static constexpr std::size_t BZ_THRESHOLD{32U}; // 2,048-bit Burnikel-Ziegler threshold / 2048 位元分治除法門檻
 
     /// <summary>
-    /// 乘法分段輔助函式：out = a * b。out 容量至少為 a_len + b_len。
-    /// 依運算元大小自動派發至 Schoolbook, Block Karatsuba, Karatsuba 或 Toom-3，並從 arena 配置暫存空間。
+    /// Slice multiplication helper for Burnikel-Ziegler: out = a * b using arena scratch.
+    /// 分治除法內部乘法輔助函式：依運算元規模分派並從 arena 配置暫存空間。
     /// </summary>
-    static void mul_slice_helper(
-        uint64_t* NUMERIC_RESTRICT out,
-        const uint64_t* a, size_t a_len,
-        const uint64_t* b, size_t b_len,
-        ScratchArena& arena) noexcept
+    static auto mul_slice_helper(
+        const std::span<std::uint64_t> out,
+        const std::span<const std::uint64_t> a,
+        const std::span<const std::uint64_t> b,
+        ScratchArena& arena) noexcept -> void
     {
-        size_t n = (a_len > b_len) ? a_len : b_len;
-        if (a_len == 0 || b_len == 0) {
-            BigIntStorage::zero_limbs(out, a_len + b_len);
+        if (a.empty() || b.empty()) {
+            BigIntStorage::zero_limbs(out.subspan(0U, a.size() + b.size()));
             return;
         }
-        size_t scratch_sz = (n >= TOOM3_THRESHOLD) ? (48 * n + 2048) : (8 * n + 256);
-        uint64_t* scratch = arena.allocate(scratch_sz);
-        mul_dispatch_raw(out, a, a_len, b, b_len, scratch);
+        const std::size_t n{std::max(a.size(), b.size())};
+        const std::size_t scratch_sz{(n >= TOOM3_THRESHOLD) ? (48U * n + 2048U) : (8U * n + 256U)};
+        const std::span<std::uint64_t> scratch{arena.allocate(scratch_sz)};
+        mul_dispatch_raw(out, a, b, scratch);
     }
 
     /// <summary>
-    /// Knuth Algorithm D 原地長除法底層 Raw 介面。
-    /// 依據 q_out 與 r_out 是否為空，完全消除不必要的商或餘數陣列存取與正規化開銷。
-    /// scratch 必須至少具備 (v_len + 1) + (u_len + 2) 之容量。
+    /// Knuth Algorithm D raw long division over std::span buffers.
+    /// Skips quotient or remainder computation cleanly when the corresponding output span is empty.
+    /// Knuth Algorithm D 原地長除法底層 Raw 介面，當商或餘數 span 為空時自動跳過對應存取。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void div_knuth_raw(
-        uint64_t* q_out, size_t* q_len,
-        uint64_t* r_out, size_t* r_len,
-        const uint64_t* u, size_t u_len,
-        const uint64_t* v, size_t v_len,
-        uint64_t* scratch) noexcept
+    static NUMERIC_CONSTEXPR_20 auto div_knuth_raw(
+        const std::span<std::uint64_t> q_out, std::size_t* const q_len,
+        const std::span<std::uint64_t> r_out, std::size_t* const r_len,
+        const std::span<const std::uint64_t> u,
+        const std::span<const std::uint64_t> v,
+        const std::span<std::uint64_t> scratch) noexcept -> void
     {
-        if (v_len == 0) {
+        const std::size_t u_len{u.size()};
+        const std::size_t v_len{v.size()};
+        if (v_len == 0U) {
             return;
         }
-        if (u_len == 0 || u_len < v_len) {
-            if (q_len) *q_len = 0;
-            if (r_out && u_len > 0) {
-                BigIntStorage::copy_limbs(r_out, u, u_len);
+        if (u_len == 0U || u_len < v_len) {
+            if (q_len != nullptr) *q_len = 0U;
+            if (!r_out.empty() && u_len > 0U) {
+                BigIntStorage::copy_limbs(r_out, u);
             }
-            if (r_len) *r_len = u_len;
+            if (r_len != nullptr) *r_len = u_len;
             return;
         }
 
-        int cmp = compare_unsigned(u, u_len, v, v_len);
+        const std::int32_t cmp{compare_unsigned(u, v)};
         if (cmp < 0) {
-            if (q_len) *q_len = 0;
-            if (r_out && u_len > 0) {
-                BigIntStorage::copy_limbs(r_out, u, u_len);
+            if (q_len != nullptr) *q_len = 0U;
+            if (!r_out.empty() && u_len > 0U) {
+                BigIntStorage::copy_limbs(r_out, u);
             }
-            if (r_len) *r_len = u_len;
+            if (r_len != nullptr) *r_len = u_len;
             return;
         }
         if (cmp == 0) {
-            if (q_out) q_out[0] = 1;
-            if (q_len) *q_len = 1;
-            if (r_len) *r_len = 0;
+            if (!q_out.empty()) q_out[0] = 1ULL;
+            if (q_len != nullptr) *q_len = 1U;
+            if (r_len != nullptr) *r_len = 0U;
             return;
         }
 
-        if (v_len == 1) {
-            uint64_t divisor = v[0];
-            uint64_t rem = 0;
-            if (q_out) {
-                for (size_t i = u_len; i > 0; --i) {
-                    uint64_t next_rem = 0;
-                    q_out[i - 1] = div128_64(rem, u[i - 1], divisor, next_rem);
+        if (v_len == 1U) {
+            const std::uint64_t divisor{v[0]};
+            std::uint64_t rem{0};
+            if (!q_out.empty()) {
+                for (std::size_t i{u_len}; i > 0U; --i) {
+                    std::uint64_t next_rem{0};
+                    q_out[i - 1U] = div128_64(rem, u[i - 1U], divisor, next_rem);
                     rem = next_rem;
                 }
-                size_t ql = u_len;
-                while (ql > 0 && q_out[ql - 1] == 0) --ql;
-                if (q_len) *q_len = ql;
+                std::size_t ql{u_len};
+                while (ql > 0U && q_out[ql - 1U] == 0ULL) --ql;
+                if (q_len != nullptr) *q_len = ql;
             } else {
-                for (size_t i = u_len; i > 0; --i) {
-                    uint64_t next_rem = 0;
-                    div128_64(rem, u[i - 1], divisor, next_rem);
+                for (std::size_t i{u_len}; i > 0U; --i) {
+                    std::uint64_t next_rem{0};
+                    (void)div128_64(rem, u[i - 1U], divisor, next_rem);
                     rem = next_rem;
                 }
-                if (q_len) *q_len = 0;
+                if (q_len != nullptr) *q_len = 0U;
             }
-            if (r_out) {
+            if (!r_out.empty()) {
                 r_out[0] = rem;
-                if (r_len) *r_len = (rem != 0 ? 1 : 0);
-            } else if (r_len) {
-                *r_len = (rem != 0 ? 1 : 0);
+                if (r_len != nullptr) *r_len = (rem != 0ULL ? 1U : 0U);
+            } else if (r_len != nullptr) {
+                *r_len = (rem != 0ULL ? 1U : 0U);
             }
             return;
         }
 
-        size_t n = v_len;
-        size_t m = u_len - n;
+        const std::size_t n{v_len};
+        const std::size_t m{u_len - n};
 
-        // D1: 正規化 (shift left by s bits)
-        int s = clz64(v[n - 1]);
-        uint64_t* vn = scratch;
-        uint64_t* un = scratch + (n + 1);
+        const std::int32_t s{clz64(v[n - 1U])};
+        const std::span<std::uint64_t> vn{scratch.subspan(0U, n + 1U)};
+        const std::span<std::uint64_t> un{scratch.subspan(n + 1U, u_len + 2U)};
 
         if (s == 0) {
-            BigIntStorage::copy_limbs(vn, v, n);
-            BigIntStorage::copy_limbs(un, u, u_len);
-            un[u_len] = 0;
-            un[u_len + 1] = 0;
+            BigIntStorage::copy_limbs(vn, v);
+            BigIntStorage::copy_limbs(un, u);
+            un[u_len] = 0ULL;
+            un[u_len + 1U] = 0ULL;
         } else {
-            uint64_t carry = 0;
-            for (size_t i = 0; i < n; ++i) {
-                uint64_t cur = v[i];
-                vn[i] = (cur << s) | carry;
-                carry = cur >> (64 - s);
+            const auto shift_l{static_cast<std::uint32_t>(s)};
+            std::uint64_t carry{0};
+            for (std::size_t i{0}; i < n; ++i) {
+                const std::uint64_t cur{v[i]};
+                vn[i] = (cur << shift_l) | carry;
+                carry = cur >> (64U - shift_l);
             }
             vn[n] = carry;
 
-            carry = 0;
-            for (size_t i = 0; i < u_len; ++i) {
-                uint64_t cur = u[i];
-                un[i] = (cur << s) | carry;
-                carry = cur >> (64 - s);
+            carry = 0ULL;
+            for (std::size_t i{0}; i < u_len; ++i) {
+                const std::uint64_t cur{u[i]};
+                un[i] = (cur << shift_l) | carry;
+                carry = cur >> (64U - shift_l);
             }
             un[u_len] = carry;
-            un[u_len + 1] = 0;
+            un[u_len + 1U] = 0ULL;
         }
 
-        uint64_t v_hi = vn[n - 1];
-        uint64_t v_lo = vn[n - 2];
+        const std::uint64_t v_hi{vn[n - 1U]};
+        const std::uint64_t v_lo{vn[n - 2U]};
 
-        // D2~D7: 主迴圈
-        for (size_t k_idx = m + 1; k_idx > 0; --k_idx) {
-            size_t j = k_idx - 1;
-            uint64_t u_hi = un[j + n];
-            uint64_t u_mid = un[j + n - 1];
-            uint64_t u_lo = (j + n >= 2) ? un[j + n - 2] : 0;
+        for (std::size_t k_idx{m + 1U}; k_idx > 0U; --k_idx) {
+            const std::size_t j{k_idx - 1U};
+            const std::uint64_t u_hi{un[j + n]};
+            const std::uint64_t u_mid{un[j + n - 1U]};
+            const std::uint64_t u_lo{(j + n >= 2U) ? un[j + n - 2U] : 0ULL};
 
-            uint64_t q_hat = 0;
-            uint64_t r_hat = 0;
+            std::uint64_t q_hat{0};
+            std::uint64_t r_hat{0};
 
             if (u_hi == v_hi) {
                 q_hat = 0xFFFFFFFFFFFFFFFFULL;
                 r_hat = u_mid + v_hi;
                 if (r_hat >= v_hi) {
-                    uint64_t p_hi = 0;
-                    uint64_t p_lo = mul64_wide(q_hat, v_lo, p_hi);
+                    std::uint64_t p_hi{0};
+                    std::uint64_t p_lo{mul64_wide(q_hat, v_lo, p_hi)};
                     if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
                         --q_hat;
                         r_hat += v_hi;
@@ -3395,8 +3685,8 @@ struct BigIntDivision : public BigIntMultiplication {
                 }
             } else {
                 q_hat = div128_64(u_hi, u_mid, v_hi, r_hat);
-                uint64_t p_hi = 0;
-                uint64_t p_lo = mul64_wide(q_hat, v_lo, p_hi);
+                std::uint64_t p_hi{0};
+                std::uint64_t p_lo{mul64_wide(q_hat, v_lo, p_hi)};
                 if (p_hi > r_hat || (p_hi == r_hat && p_lo > u_lo)) {
                     --q_hat;
                     r_hat += v_hi;
@@ -3409,285 +3699,281 @@ struct BigIntDivision : public BigIntMultiplication {
                 }
             }
 
-            // D4: 乘並減
-            uint64_t borrow = submul_1_raw(un + j, vn, n, q_hat);
-            uint64_t cur = un[j + n];
-            uint64_t diff = cur - borrow;
-            uint64_t b = (cur < borrow) ? 1 : 0;
-            un[j + n] = diff;
+            const std::uint64_t borrow{submul_1_raw(un.subspan(j, n), vn.subspan(0U, n), q_hat)};
+            const std::uint64_t cur{un[j + n]};
+            const std::uint64_t b{(cur < borrow) ? 1ULL : 0ULL};
+            un[j + n] = cur - borrow;
 
-            // D5: 判斷是否需要回加
-            if (b > 0) {
+            if (b > 0ULL) {
                 --q_hat;
-                uint64_t add_carry = add_to_raw(un + j, n, vn, n);
+                const std::uint64_t add_carry{add_to_raw(un.subspan(j, n), vn.subspan(0U, n))};
                 un[j + n] += add_carry;
             }
 
-            if (q_out) {
+            if (!q_out.empty()) {
                 q_out[j] = q_hat;
             }
         }
 
-        if (q_out && q_len) {
-            size_t ql = m + 1;
-            while (ql > 0 && q_out[ql - 1] == 0) --ql;
+        if (!q_out.empty() && q_len != nullptr) {
+            std::size_t ql{m + 1U};
+            while (ql > 0U && q_out[ql - 1U] == 0ULL) --ql;
             *q_len = ql;
         }
 
-        // D8: 去正規化餘數
-        if (r_out) {
+        if (!r_out.empty()) {
             if (s > 0) {
-                for (size_t i = 0; i < n; ++i) {
-                    uint64_t c = un[i];
-                    uint64_t next = (i + 1 <= n) ? un[i + 1] : 0;
-                    r_out[i] = (c >> s) | (next << (64 - s));
+                const auto shift_r{static_cast<std::uint32_t>(s)};
+                for (std::size_t i{0}; i < n; ++i) {
+                    const std::uint64_t c{un[i]};
+                    const std::uint64_t next{(i + 1U <= n) ? un[i + 1U] : 0ULL};
+                    r_out[i] = (c >> shift_r) | (next << (64U - shift_r));
                 }
             } else {
-                BigIntStorage::copy_limbs(r_out, un, n);
+                BigIntStorage::copy_limbs(r_out, un.subspan(0U, n));
             }
-            if (r_len) {
-                size_t rl = n;
-                while (rl > 0 && r_out[rl - 1] == 0) --rl;
+            if (r_len != nullptr) {
+                std::size_t rl{n};
+                while (rl > 0U && r_out[rl - 1U] == 0ULL) --rl;
                 *r_len = rl;
             }
-        } else if (r_len) {
-            *r_len = 0;
+        } else if (r_len != nullptr) {
+            *r_len = 0U;
         }
     }
 
     /// <summary>
-    /// Knuth Algorithm D 原地長除法（採用 Scratch Buffer 達成 16,384 位元內零 Heap 配置）。
-    /// 依據 q_out 與 r_out 是否為空，完全消除不必要的商或餘數陣列存取與正規化開銷。
+    /// High-level Knuth Algorithm D long division into BigIntStorage targets.
+    /// Knuth Algorithm D 原地長除法高階包裝。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void div_mod_core_knuth(
-        BigIntStorage* q_out, BigIntStorage* r_out,
-        const BigIntStorage& u, const BigIntStorage& v)
+    static NUMERIC_CONSTEXPR_20 auto div_mod_core_knuth(
+        BigIntStorage* const q_out,
+        BigIntStorage* const r_out,
+        const BigIntStorage& u,
+        const BigIntStorage& v) -> void
     {
-        if (v.m_size == 0) {
+        if (v.m_size == 0U) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("division by zero"));
         }
-        if (u.m_size == 0 || u.m_size < v.m_size) {
-            if (q_out) { q_out->m_size = 0; q_out->m_sign = 0; }
-            if (r_out) { *r_out = u; r_out->m_sign = (u.m_size > 0 ? 1 : 0); }
+        if (u.m_size == 0U || u.m_size < v.m_size) {
+            if (q_out != nullptr) { q_out->m_size = 0; q_out->m_sign = 0; }
+            if (r_out != nullptr) { *r_out = u; r_out->m_sign = (u.m_size > 0U ? 1 : 0); }
             return;
         }
-        int cmp = compare_unsigned(u.data(), u.m_size, v.data(), v.m_size);
+        const std::int32_t cmp{compare_unsigned(u.as_span(), v.as_span())};
         if (cmp < 0) {
-            if (q_out) { q_out->m_size = 0; q_out->m_sign = 0; }
-            if (r_out) { *r_out = u; r_out->m_sign = 1; }
+            if (q_out != nullptr) { q_out->m_size = 0; q_out->m_sign = 0; }
+            if (r_out != nullptr) { *r_out = u; r_out->m_sign = 1; }
             return;
         }
         if (cmp == 0) {
-            if (q_out) { q_out->set_uint64(1, 1); }
-            if (r_out) { r_out->m_size = 0; r_out->m_sign = 0; }
+            if (q_out != nullptr) { q_out->set_uint64(1ULL, 1); }
+            if (r_out != nullptr) { r_out->m_size = 0; r_out->m_sign = 0; }
             return;
         }
 
-        size_t n = v.m_size;
-        size_t m = u.m_size - n;
-        size_t total_scratch = (n + 1) + (u.m_size + 2);
-        uint64_t stack_scratch[512];
-        uint64_t* scratch_ptr = stack_scratch;
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
-        std::vector<uint64_t> heap_scratch;
+        const std::size_t n{v.m_size};
+        const std::size_t m{u.m_size - n};
+        const std::size_t total_scratch{(n + 1U) + (u.m_size + 2U)};
+        std::array<std::uint64_t, 512> stack_scratch{};
+        std::span<std::uint64_t> scratch_span{stack_scratch};
+        std::vector<std::uint64_t> heap_scratch{};
+
         if (std::is_constant_evaluated()) {
-            if (total_scratch > 512) {
+            if (total_scratch > 512U) {
                 heap_scratch.resize(total_scratch);
-                scratch_ptr = heap_scratch.data();
+                scratch_span = std::span<std::uint64_t>{heap_scratch};
             }
-        } else
-#endif
-        {
-            if (total_scratch > 512) {
-                auto& arena = ScratchArena::instance();
-                scratch_ptr = arena.allocate(total_scratch);
+        } else {
+            if (total_scratch > 512U) {
+                auto& arena{ScratchArena::instance()};
+                scratch_span = arena.allocate(total_scratch);
             }
         }
 
-        const size_t u_len = u.m_size;
-        const size_t v_len = v.m_size;
-
-        if (q_out && q_out != &u) {
-            q_out->resize(m + 1, 0);
+        if (q_out != nullptr && q_out != &u) {
+            q_out->resize(m + 1U, 0ULL);
         }
-        if (r_out && r_out != &u) {
-            r_out->resize(n, 0);
+        if (r_out != nullptr && r_out != &u) {
+            r_out->resize(n, 0ULL);
         }
 
-        size_t ql = 0, rl = 0;
-        div_knuth_raw(
-            q_out ? q_out->data() : nullptr, &ql,
-            r_out ? r_out->data() : nullptr, &rl,
-            u.data(), u_len,
-            v.data(), v_len,
-            scratch_ptr);
+        std::size_t ql{0};
+        std::size_t rl{0};
+        const std::span<std::uint64_t> q_span{(q_out != nullptr) ? q_out->capacity_span() : std::span<std::uint64_t>{}};
+        const std::span<std::uint64_t> r_span{(r_out != nullptr) ? r_out->capacity_span() : std::span<std::uint64_t>{}};
 
-        if (q_out) {
-            q_out->m_size = static_cast<uint32_t>(ql);
-            q_out->m_sign = (ql > 0 ? 1 : 0);
+        div_knuth_raw(q_span, &ql, r_span, &rl, u.as_span(), v.as_span(), scratch_span);
+
+        if (q_out != nullptr) {
+            q_out->m_size = static_cast<std::uint32_t>(ql);
+            q_out->m_sign = (ql > 0U ? 1 : 0);
             q_out->normalize();
         }
-        if (r_out) {
-            r_out->m_size = static_cast<uint32_t>(rl);
-            r_out->m_sign = (rl > 0 ? 1 : 0);
+        if (r_out != nullptr) {
+            r_out->m_size = static_cast<std::uint32_t>(rl);
+            r_out->m_sign = (rl > 0U ? 1 : 0);
             r_out->normalize();
         }
     }
 
     /// <summary>
-    /// Burnikel–Ziegler div3by2 raw: 以 2k-limb 除數 b 除 3k-limb 被除數 a。
-    /// 產出 k-limb 商 q 與 2k-limb 餘數 r。要求 a < b * beta^k。
-    /// 搭配 ScratchArena 與指針切片達成全程 0 堆積記憶體配置。
+    /// Burnikel-Ziegler div3by2 raw over std::span slices.
+    /// Burnikel-Ziegler 3/2 分治除法底層 Raw 介面（基於 std::span 零堆積配置）。
     /// </summary>
-    static void bz_div3by2_raw(
-        uint64_t* NUMERIC_RESTRICT q, size_t* q_len,
-        uint64_t* NUMERIC_RESTRICT r, size_t* r_len,
-        const uint64_t* a, size_t a_len,
-        const uint64_t* b, size_t k,
-        ScratchArena& arena);
+    static auto bz_div3by2_raw(
+        std::span<std::uint64_t> q, std::size_t* q_len,
+        std::span<std::uint64_t> r, std::size_t* r_len,
+        std::span<const std::uint64_t> a,
+        std::span<const std::uint64_t> b, std::size_t k,
+        ScratchArena& arena) -> void;
 
     /// <summary>
-    /// Burnikel–Ziegler div2by1 raw: 以 n-limb 除數 b 除 2n-limb 被除數 a。
-    /// 要求 a < b * beta^n，n 為偶數。
-    /// 遞迴調用 div3by2，以 Karatsuba/Toom-3 乘法降低計算複雜度。
-    /// 搭配 ScratchArena 達成全程 0 堆積記憶體配置。
+    /// Burnikel-Ziegler div2by1 raw over std::span slices.
+    /// Burnikel-Ziegler 2/1 分治除法底層 Raw 介面（基於 std::span 零堆積配置）。
     /// </summary>
-    static void bz_div2by1_raw(
-        uint64_t* NUMERIC_RESTRICT q, size_t* q_len,
-        uint64_t* NUMERIC_RESTRICT r, size_t* r_len,
-        const uint64_t* a, size_t a_len,
-        const uint64_t* b, size_t n,
-        ScratchArena& arena);
+    static auto bz_div2by1_raw(
+        std::span<std::uint64_t> q, std::size_t* q_len,
+        std::span<std::uint64_t> r, std::size_t* r_len,
+        std::span<const std::uint64_t> a,
+        std::span<const std::uint64_t> b, std::size_t n,
+        ScratchArena& arena) -> void;
 
     /// <summary>
-    /// Burnikel–Ziegler div3by2: 以 2k-limb 除數 b 除 3k-limb 被除數 a。
-    /// 產出 k-limb 商 q 與 2k-limb 餘數 r。要求 a < b * beta^k。
+    /// High-level Burnikel-Ziegler div3by2 wrapper.
+    /// Burnikel-Ziegler div3by2 高階包裝。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void bz_div3by2(
-        BigIntStorage* q, BigIntStorage* r,
-        const BigIntStorage& a, const BigIntStorage& b, size_t k)
+    static NUMERIC_CONSTEXPR_20 auto bz_div3by2(
+        BigIntStorage* const q,
+        BigIntStorage* const r,
+        const BigIntStorage& a,
+        const BigIntStorage& b,
+        const std::size_t k) -> void
     {
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
         if (std::is_constant_evaluated()) {
             div_mod_core_knuth(q, r, a, b);
             return;
         }
-#endif
-        auto& arena = ScratchArena::instance();
-        ScratchArena::Scope scope(arena);
+        auto& arena{ScratchArena::instance()};
+        const ScratchArena::Scope scope{arena};
 
-        uint64_t* q_buf = arena.allocate(k + 1);
-        uint64_t* r_buf = arena.allocate(2 * k + 1);
-        size_t ql = 0, rl = 0;
+        const std::span<std::uint64_t> q_buf{arena.allocate(k + 1U)};
+        const std::span<std::uint64_t> r_buf{arena.allocate(2U * k + 1U)};
+        std::size_t ql{0};
+        std::size_t rl{0};
 
-        bz_div3by2_raw(q_buf, &ql, r_buf, &rl, a.data(), a.m_size, b.data(), k, arena);
+        bz_div3by2_raw(q_buf, &ql, r_buf, &rl, a.as_span(), b.as_span(), k, arena);
 
-        if (q) {
-            q->resize(ql, 0);
-            if (ql > 0) BigIntStorage::copy_limbs(q->data(), q_buf, ql);
-            q->m_size = static_cast<uint32_t>(ql);
-            q->m_sign = (ql > 0) ? 1 : 0;
+        if (q != nullptr) {
+            q->resize(ql, 0ULL);
+            if (ql > 0U) BigIntStorage::copy_limbs(q->as_span(), q_buf.subspan(0U, ql));
+            q->m_size = static_cast<std::uint32_t>(ql);
+            q->m_sign = (ql > 0U) ? 1 : 0;
             q->normalize();
         }
-        if (r) {
-            r->resize(rl, 0);
-            if (rl > 0) BigIntStorage::copy_limbs(r->data(), r_buf, rl);
-            r->m_size = static_cast<uint32_t>(rl);
-            r->m_sign = (rl > 0) ? 1 : 0;
+        if (r != nullptr) {
+            r->resize(rl, 0ULL);
+            if (rl > 0U) BigIntStorage::copy_limbs(r->as_span(), r_buf.subspan(0U, rl));
+            r->m_size = static_cast<std::uint32_t>(rl);
+            r->m_sign = (rl > 0U) ? 1 : 0;
             r->normalize();
         }
     }
 
     /// <summary>
-    /// Burnikel–Ziegler div2by1: 以 n-limb 除數 b 除 2n-limb 被除數 a。
-    /// 要求 a < b * beta^n，n 為偶數。
+    /// High-level Burnikel-Ziegler div2by1 wrapper.
+    /// Burnikel-Ziegler div2by1 高階包裝。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void bz_div2by1(
-        BigIntStorage* q, BigIntStorage* r,
-        const BigIntStorage& a, const BigIntStorage& b)
+    static NUMERIC_CONSTEXPR_20 auto bz_div2by1(
+        BigIntStorage* const q,
+        BigIntStorage* const r,
+        const BigIntStorage& a,
+        const BigIntStorage& b) -> void
     {
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
         if (std::is_constant_evaluated()) {
             div_mod_core_knuth(q, r, a, b);
             return;
         }
-#endif
-        size_t n = b.m_size;
-        if (n < BZ_THRESHOLD || (n % 2 != 0)) {
+        const std::size_t n{b.m_size};
+        if (n < BZ_THRESHOLD || (n % 2U != 0U)) {
             div_mod_core_knuth(q, r, a, b);
             return;
         }
 
-        auto& arena = ScratchArena::instance();
-        ScratchArena::Scope scope(arena);
+        auto& arena{ScratchArena::instance()};
+        const ScratchArena::Scope scope{arena};
 
-        uint64_t* q_buf = arena.allocate(n + 1);
-        uint64_t* r_buf = arena.allocate(n + 1);
-        size_t ql = 0, rl = 0;
+        const std::span<std::uint64_t> q_buf{arena.allocate(n + 1U)};
+        const std::span<std::uint64_t> r_buf{arena.allocate(n + 1U)};
+        std::size_t ql{0};
+        std::size_t rl{0};
 
-        bz_div2by1_raw(q_buf, &ql, r_buf, &rl, a.data(), a.m_size, b.data(), n, arena);
+        bz_div2by1_raw(q_buf, &ql, r_buf, &rl, a.as_span(), b.as_span(), n, arena);
 
-        if (q) {
-            q->resize(ql, 0);
-            if (ql > 0) BigIntStorage::copy_limbs(q->data(), q_buf, ql);
-            q->m_size = static_cast<uint32_t>(ql);
-            q->m_sign = (ql > 0) ? 1 : 0;
+        if (q != nullptr) {
+            q->resize(ql, 0ULL);
+            if (ql > 0U) BigIntStorage::copy_limbs(q->as_span(), q_buf.subspan(0U, ql));
+            q->m_size = static_cast<std::uint32_t>(ql);
+            q->m_sign = (ql > 0U) ? 1 : 0;
             q->normalize();
         }
-        if (r) {
-            r->resize(rl, 0);
-            if (rl > 0) BigIntStorage::copy_limbs(r->data(), r_buf, rl);
-            r->m_size = static_cast<uint32_t>(rl);
-            r->m_sign = (rl > 0) ? 1 : 0;
+        if (r != nullptr) {
+            r->resize(rl, 0ULL);
+            if (rl > 0U) BigIntStorage::copy_limbs(r->as_span(), r_buf.subspan(0U, rl));
+            r->m_size = static_cast<std::uint32_t>(rl);
+            r->m_sign = (rl > 0U) ? 1 : 0;
             r->normalize();
         }
     }
 
     /// <summary>
-    /// 核心長除法與取模派發入口。
-    /// 支援單 limb 快速路徑、Knuth Algorithm D 與 Burnikel–Ziegler 分治除法。
+    /// Primary unsigned long division and modulo dispatcher.
+    /// Dispatches to single-limb fast division, Knuth Algorithm D, or Burnikel-Ziegler.
+    /// 核心長除法與取模派發入口：整合單 limb 快除、Knuth Algorithm D 與 Burnikel-Ziegler 分治除法。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void div_mod_core(
-        BigIntStorage* q_out, BigIntStorage* r_out,
-        const BigIntStorage& u, const BigIntStorage& v)
+    static NUMERIC_CONSTEXPR_20 auto div_mod_core(
+        BigIntStorage* const q_out,
+        BigIntStorage* const r_out,
+        const BigIntStorage& u,
+        const BigIntStorage& v) -> void
     {
-        if (v.m_size == 0) {
+        if (v.m_size == 0U) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("division by zero"));
         }
-        if (u.m_size == 0) {
-            if (q_out) { q_out->m_size = 0; q_out->m_sign = 0; }
-            if (r_out) { r_out->m_size = 0; r_out->m_sign = 0; }
+        if (u.m_size == 0U) {
+            if (q_out != nullptr) { q_out->m_size = 0; q_out->m_sign = 0; }
+            if (r_out != nullptr) { r_out->m_size = 0; r_out->m_sign = 0; }
             return;
         }
-        int cmp = compare_unsigned(u.data(), u.m_size, v.data(), v.m_size);
+        const std::int32_t cmp{compare_unsigned(u.as_span(), v.as_span())};
         if (cmp < 0) {
-            if (q_out) { q_out->m_size = 0; q_out->m_sign = 0; }
-            if (r_out) { *r_out = u; r_out->m_sign = 1; }
+            if (q_out != nullptr) { q_out->m_size = 0; q_out->m_sign = 0; }
+            if (r_out != nullptr) { *r_out = u; r_out->m_sign = 1; }
             return;
         }
         if (cmp == 0) {
-            if (q_out) { q_out->set_uint64(1, 1); }
-            if (r_out) { r_out->m_size = 0; r_out->m_sign = 0; }
+            if (q_out != nullptr) { q_out->set_uint64(1ULL, 1); }
+            if (r_out != nullptr) { r_out->m_size = 0; r_out->m_sign = 0; }
             return;
         }
 
-        // 單 limb 快速除法路徑
-        if (v.m_size == 1) {
-            uint64_t divisor = v.data()[0];
-            if (q_out) q_out->resize(u.m_size, 0);
-            uint64_t rem = 0;
-            for (size_t i = u.m_size; i > 0; --i) {
-                uint64_t next_rem = 0;
-                uint64_t q_limb = div128_64(rem, u.data()[i - 1], divisor, next_rem);
-                if (q_out) q_out->data()[i - 1] = q_limb;
+        if (v.m_size == 1U) {
+            const std::uint64_t divisor{v.as_span()[0]};
+            if (q_out != nullptr) q_out->resize(u.m_size, 0ULL);
+            std::uint64_t rem{0};
+            const std::span<const std::uint64_t> u_span{u.as_span()};
+            for (std::size_t i{u.m_size}; i > 0U; --i) {
+                std::uint64_t next_rem{0};
+                const std::uint64_t q_limb{div128_64(rem, u_span[i - 1U], divisor, next_rem)};
+                if (q_out != nullptr) (*q_out)[i - 1U] = q_limb;
                 rem = next_rem;
             }
-            if (q_out) {
+            if (q_out != nullptr) {
                 q_out->m_sign = 1;
                 q_out->normalize();
             }
-            if (r_out) {
-                if (rem != 0) {
+            if (r_out != nullptr) {
+                if (rem != 0ULL) {
                     r_out->set_uint64(rem, 1);
                 } else {
                     r_out->m_size = 0;
@@ -3697,172 +3983,161 @@ struct BigIntDivision : public BigIntMultiplication {
             return;
         }
 
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
         if (std::is_constant_evaluated()) {
             div_mod_core_knuth(q_out, r_out, u, v);
             return;
         }
-#endif
 
-        // 小於 BZ_THRESHOLD 或商數長度小於 BZ_THRESHOLD 時採 Knuth Algorithm D 長除法
-        // 當 m = u.m_size - v.m_size 較小時，Knuth Algorithm D 僅需 O((m+1)*n) 次單肢乘減，
-        // 遠快於分治除法的大數 Karatsuba 乘法遞迴與正規化開銷。
-        size_t m_len = (u.m_size >= v.m_size) ? (u.m_size - v.m_size) : 0;
+        const std::size_t m_len{(u.m_size >= v.m_size) ? (u.m_size - v.m_size) : 0U};
         if (v.m_size < BZ_THRESHOLD || m_len < BZ_THRESHOLD) {
             div_mod_core_knuth(q_out, r_out, u, v);
             return;
         }
 
-        // Burnikel–Ziegler 大數分治除法路徑
-        size_t s = v.m_size;
-        size_t m_pow2 = 2;
+        const std::size_t s{v.m_size};
+        std::size_t m_pow2{2U};
         while (m_pow2 * BZ_THRESHOLD <= s) {
-            m_pow2 <<= 1;
+            m_pow2 <<= 1U;
         }
-        size_t j = (s + m_pow2 - 1) / m_pow2;
-        size_t n = j * m_pow2; // n is always even and >= s
+        const std::size_t j{(s + m_pow2 - 1U) / m_pow2};
+        const std::size_t n{j * m_pow2};
 
-        size_t n_bits = n * 64;
-        size_t v_bits = (v.m_size - 1) * 64 + (64 - clz64(v.data()[v.m_size - 1]));
-        size_t sigma = (n_bits >= v_bits) ? (n_bits - v_bits) : 0;
+        const std::size_t n_bits{n * 64U};
+        const std::size_t v_bits{(v.m_size - 1U) * 64U + static_cast<std::size_t>(64 - clz64(v.as_span()[v.m_size - 1U]))};
+        const std::size_t sigma{(n_bits >= v_bits) ? (n_bits - v_bits) : 0U};
 
-        auto& arena = ScratchArena::instance();
-        ScratchArena::Scope scope(arena);
+        auto& arena{ScratchArena::instance()};
+        const ScratchArena::Scope scope{arena};
 
-        const size_t v_len = v.m_size;
-        const size_t u_len = u.m_size;
+        const std::size_t u_len{u.m_size};
+        const std::size_t sigma_limbs{sigma / 64U};
+        const auto sigma_bits{static_cast<std::uint32_t>(sigma % 64U)};
 
-        size_t sigma_limbs = sigma / 64;
-        unsigned int sigma_bits = static_cast<unsigned int>(sigma % 64);
-
-        uint64_t* v_shifted = arena.allocate(n + 2);
-        BigIntStorage::zero_limbs(v_shifted, n + 2);
-        if (sigma > 0) {
-            if (sigma_bits == 0) {
-                BigIntStorage::copy_limbs(v_shifted + sigma_limbs, v.data(), v_len);
+        const std::span<std::uint64_t> v_shifted{arena.allocate(n + 2U)};
+        BigIntStorage::zero_limbs(v_shifted);
+        if (sigma > 0U) {
+            if (sigma_bits == 0U) {
+                BigIntStorage::copy_limbs(v_shifted.subspan(sigma_limbs), v.as_span());
             } else {
-                shift_left_bits_raw(v_shifted + sigma_limbs, v.data(), v_len, sigma_bits);
+                (void)shift_left_bits_raw(v_shifted.subspan(sigma_limbs), v.as_span(), sigma_bits);
             }
         } else {
-            BigIntStorage::copy_limbs(v_shifted, v.data(), v_len);
+            BigIntStorage::copy_limbs(v_shifted, v.as_span());
         }
 
-        size_t u_shifted_cap = u_len + sigma_limbs + 4;
-        size_t u_alloc_sz = ((u_shifted_cap > (n * 4)) ? u_shifted_cap : (n * 4)) + n;
-        uint64_t* u_shifted = arena.allocate(u_alloc_sz);
-        BigIntStorage::zero_limbs(u_shifted, u_alloc_sz);
-        size_t u_shifted_len = u_len;
-        if (sigma > 0) {
-            if (sigma_bits == 0) {
-                BigIntStorage::copy_limbs(u_shifted + sigma_limbs, u.data(), u_len);
+        const std::size_t u_shifted_cap{u_len + sigma_limbs + 4U};
+        const std::size_t u_alloc_sz{std::max(u_shifted_cap, n * 4U) + n};
+        const std::span<std::uint64_t> u_shifted{arena.allocate(u_alloc_sz)};
+        BigIntStorage::zero_limbs(u_shifted);
+        std::size_t u_shifted_len{u_len};
+        if (sigma > 0U) {
+            if (sigma_bits == 0U) {
+                BigIntStorage::copy_limbs(u_shifted.subspan(sigma_limbs), u.as_span());
                 u_shifted_len = u_len + sigma_limbs;
             } else {
-                u_shifted_len = sigma_limbs + shift_left_bits_raw(u_shifted + sigma_limbs, u.data(), u_len, sigma_bits);
+                u_shifted_len = sigma_limbs + shift_left_bits_raw(u_shifted.subspan(sigma_limbs), u.as_span(), sigma_bits);
             }
         } else {
-            BigIntStorage::copy_limbs(u_shifted, u.data(), u_len);
+            BigIntStorage::copy_limbs(u_shifted, u.as_span());
         }
-        while (u_shifted_len > 0 && u_shifted[u_shifted_len - 1] == 0) --u_shifted_len;
+        while (u_shifted_len > 0U && u_shifted[u_shifted_len - 1U] == 0ULL) --u_shifted_len;
 
-        size_t u_bits = (u_shifted_len > 0) 
-            ? ((u_shifted_len - 1) * 64 + (64 - clz64(u_shifted[u_shifted_len - 1])))
-            : 0;
-        size_t t = (u_bits + n_bits) / n_bits;
-        if (t < 2) t = 2;
+        const std::size_t u_bits{(u_shifted_len > 0U)
+            ? ((u_shifted_len - 1U) * 64U + static_cast<std::size_t>(64 - clz64(u_shifted[u_shifted_len - 1U])))
+            : 0U};
+        std::size_t t{(u_bits + n_bits) / n_bits};
+        if (t < 2U) t = 2U;
 
-        uint64_t* z = arena.allocate(2 * n + 1);
-        uint64_t* q_step = arena.allocate(n + 1);
-        uint64_t* r_cur = arena.allocate(n + 1);
-        uint64_t* r_next = arena.allocate(n + 1);
+        const std::span<std::uint64_t> z{arena.allocate(2U * n + 1U)};
+        const std::span<std::uint64_t> q_step{arena.allocate(n + 1U)};
+        const std::span<std::uint64_t> r_cur{arena.allocate(n + 1U)};
+        const std::span<std::uint64_t> r_next{arena.allocate(n + 1U)};
 
-        // 初始化 r_cur 為 u_shifted 的最高 block (block t - 1)
-        BigIntStorage::zero_limbs(r_cur, n + 1);
-        size_t top_start = (t - 1) * n;
-        size_t r_cur_len = 0;
+        BigIntStorage::zero_limbs(r_cur);
+        const std::size_t top_start{(t - 1U) * n};
+        std::size_t r_cur_len{0};
         if (top_start < u_shifted_len) {
-            r_cur_len = (std::min)(n, u_shifted_len - top_start);
-            BigIntStorage::copy_limbs(r_cur, u_shifted + top_start, r_cur_len);
-            while (r_cur_len > 0 && r_cur[r_cur_len - 1] == 0) --r_cur_len;
+            r_cur_len = std::min(n, u_shifted_len - top_start);
+            BigIntStorage::copy_limbs(r_cur, u_shifted.subspan(top_start, r_cur_len));
+            while (r_cur_len > 0U && r_cur[r_cur_len - 1U] == 0ULL) --r_cur_len;
         }
 
-        if (q_out) {
-            if (q_out != &u && q_out->m_capacity < (t - 1) * n) {
-                q_out->reserve((t - 1) * n);
+        if (q_out != nullptr) {
+            if (q_out != &u && q_out->m_capacity < (t - 1U) * n) {
+                q_out->reserve((t - 1U) * n);
             }
-            q_out->m_size = static_cast<uint32_t>((t - 1) * n);
-            BigIntStorage::zero_limbs(q_out->data(), (t - 1) * n);
+            q_out->m_size = static_cast<std::uint32_t>((t - 1U) * n);
+            BigIntStorage::zero_limbs(q_out->as_span());
         }
 
-        for (size_t i = t - 1; i > 0; --i) {
-            size_t block_idx = i - 1;
-            size_t start = block_idx * n;
-            size_t a_block_len = 0;
+        for (std::size_t i{t - 1U}; i > 0U; --i) {
+            const std::size_t block_idx{i - 1U};
+            const std::size_t start{block_idx * n};
+            std::size_t a_block_len{0};
             if (start < u_shifted_len) {
-                a_block_len = (std::min)(n, u_shifted_len - start);
+                a_block_len = std::min(n, u_shifted_len - start);
             }
 
-            BigIntStorage::zero_limbs(z, 2 * n + 1);
-            if (a_block_len > 0) {
-                BigIntStorage::copy_limbs(z, u_shifted + start, a_block_len);
+            BigIntStorage::zero_limbs(z);
+            if (a_block_len > 0U) {
+                BigIntStorage::copy_limbs(z, u_shifted.subspan(start, a_block_len));
             }
-            if (r_cur_len > 0) {
-                BigIntStorage::copy_limbs(z + n, r_cur, r_cur_len);
+            if (r_cur_len > 0U) {
+                BigIntStorage::copy_limbs(z.subspan(n), r_cur.subspan(0U, r_cur_len));
             }
-            size_t z_len = n + r_cur_len;
-            while (z_len > 0 && z[z_len - 1] == 0) --z_len;
+            std::size_t z_len{n + r_cur_len};
+            while (z_len > 0U && z[z_len - 1U] == 0ULL) --z_len;
 
-            size_t q_step_len = 0;
-            size_t r_next_len = 0;
-            bz_div2by1_raw(q_step, &q_step_len, r_next, &r_next_len, z, z_len, v_shifted, n, arena);
+            std::size_t q_step_len{0};
+            std::size_t r_next_len{0};
+            bz_div2by1_raw(q_step, &q_step_len, r_next, &r_next_len, z.subspan(0U, z_len), v_shifted.subspan(0U, n), n, arena);
 
-            BigIntStorage::zero_limbs(r_cur, n + 1);
-            if (r_next_len > 0) {
-                BigIntStorage::copy_limbs(r_cur, r_next, r_next_len);
+            BigIntStorage::zero_limbs(r_cur);
+            if (r_next_len > 0U) {
+                BigIntStorage::copy_limbs(r_cur, r_next.subspan(0U, r_next_len));
             }
             r_cur_len = r_next_len;
 
-            if (q_out) {
-                if (q_step_len > 0) {
-                    BigIntStorage::copy_limbs(q_out->data() + (i - 1) * n, q_step, q_step_len);
-                }
+            if (q_out != nullptr && q_step_len > 0U) {
+                BigIntStorage::copy_limbs(q_out->as_span().subspan((i - 1U) * n), q_step.subspan(0U, q_step_len));
             }
         }
 
-        if (q_out) {
-            q_out->m_size = static_cast<uint32_t>((t - 1) * n);
-            q_out->m_sign = (q_out->m_size > 0) ? 1 : 0;
+        if (q_out != nullptr) {
+            q_out->m_size = static_cast<std::uint32_t>((t - 1U) * n);
+            q_out->m_sign = (q_out->m_size > 0U) ? 1 : 0;
             q_out->normalize();
         }
-        if (r_out) {
+        if (r_out != nullptr) {
             if (r_out != &u && r_out->m_capacity < n) {
                 r_out->reserve(n);
             }
-            if (sigma > 0) {
-                size_t limb_s = sigma / 64;
-                unsigned int bit_s = static_cast<unsigned int>(sigma % 64);
+            if (sigma > 0U) {
+                const std::size_t limb_s{sigma / 64U};
+                const auto bit_s{static_cast<std::uint32_t>(sigma % 64U)};
                 if (r_cur_len <= limb_s) {
                     r_out->m_size = 0;
                     r_out->m_sign = 0;
                 } else {
-                    size_t out_len = r_cur_len - limb_s;
-                    uint64_t* rd = r_out->data();
-                    const uint64_t* src = r_cur + limb_s;
-                    if (bit_s == 0) {
-                        BigIntStorage::copy_limbs(rd, src, out_len);
+                    std::size_t out_len{r_cur_len - limb_s};
+                    const std::span<std::uint64_t> rd{r_out->capacity_span()};
+                    const std::span<const std::uint64_t> src{r_cur.subspan(limb_s, out_len)};
+                    if (bit_s == 0U) {
+                        BigIntStorage::copy_limbs(rd, src);
                     } else {
-                        for (size_t k = 0; k + 1 < out_len; ++k) {
-                            rd[k] = shrd64(src[k + 1], src[k], bit_s);
+                        for (std::size_t k{0}; k + 1U < out_len; ++k) {
+                            rd[k] = shrd64(src[k + 1U], src[k], bit_s);
                         }
-                        rd[out_len - 1] = src[out_len - 1] >> bit_s;
+                        rd[out_len - 1U] = src[out_len - 1U] >> bit_s;
                     }
-                    while (out_len > 0 && rd[out_len - 1] == 0) --out_len;
-                    r_out->m_size = static_cast<uint32_t>(out_len);
-                    r_out->m_sign = (out_len > 0) ? 1 : 0;
+                    while (out_len > 0U && rd[out_len - 1U] == 0ULL) --out_len;
+                    r_out->m_size = static_cast<std::uint32_t>(out_len);
+                    r_out->m_sign = (out_len > 0U) ? 1 : 0;
                 }
             } else {
-                if (r_cur_len > 0) {
-                    BigIntStorage::copy_limbs(r_out->data(), r_cur, r_cur_len);
-                    r_out->m_size = static_cast<uint32_t>(r_cur_len);
+                if (r_cur_len > 0U) {
+                    BigIntStorage::copy_limbs(r_out->capacity_span(), r_cur.subspan(0U, r_cur_len));
+                    r_out->m_size = static_cast<std::uint32_t>(r_cur_len);
                     r_out->m_sign = 1;
                 } else {
                     r_out->m_size = 0;
@@ -3873,302 +4148,266 @@ struct BigIntDivision : public BigIntMultiplication {
         }
     }
 
-    /// <summary>
-    /// 商餘同求長除法介面。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20 void div_qr(BigIntStorage& q, BigIntStorage& r, const BigIntStorage& u, const BigIntStorage& v) {
+    static NUMERIC_CONSTEXPR_20 auto div_qr(BigIntStorage& q, BigIntStorage& r, const BigIntStorage& u, const BigIntStorage& v) -> void {
         div_mod_core(&q, &r, u, v);
     }
 
-    /// <summary>
-    /// 僅求商長除法介面（省略餘數處理）。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20 void div_q(BigIntStorage& q, const BigIntStorage& u, const BigIntStorage& v) {
+    static NUMERIC_CONSTEXPR_20 auto div_q(BigIntStorage& q, const BigIntStorage& u, const BigIntStorage& v) -> void {
         div_mod_core(&q, nullptr, u, v);
     }
 
-    /// <summary>
-    /// 僅求餘數取模介面（省略商輸出處理）。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20 void div_r(BigIntStorage& r, const BigIntStorage& u, const BigIntStorage& v) {
+    static NUMERIC_CONSTEXPR_20 auto div_r(BigIntStorage& r, const BigIntStorage& u, const BigIntStorage& v) -> void {
         div_mod_core(nullptr, &r, u, v);
     }
 
-    /// <summary>
-    /// 帶符號商餘同求除法運算。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20 void div_qr_signed(BigIntStorage& q, BigIntStorage& r, const BigIntStorage& u, const BigIntStorage& v) {
+    static NUMERIC_CONSTEXPR_20 auto div_qr_signed(BigIntStorage& q, BigIntStorage& r, const BigIntStorage& u, const BigIntStorage& v) -> void {
         div_mod_core(&q, &r, u, v);
-        if (q.m_size > 0) {
-            q.m_sign = static_cast<int8_t>(u.m_sign * v.m_sign);
+        if (q.m_size > 0U) {
+            q.m_sign = static_cast<std::int8_t>(u.m_sign * v.m_sign);
         }
-        if (r.m_size > 0) {
+        if (r.m_size > 0U) {
             r.m_sign = u.m_sign;
         }
     }
 
-    /// <summary>
-    /// 帶符號僅求商除法運算。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20 void div_q_signed(BigIntStorage& q, const BigIntStorage& u, const BigIntStorage& v) {
+    static NUMERIC_CONSTEXPR_20 auto div_q_signed(BigIntStorage& q, const BigIntStorage& u, const BigIntStorage& v) -> void {
         div_mod_core(&q, nullptr, u, v);
-        if (q.m_size > 0) {
-            q.m_sign = static_cast<int8_t>(u.m_sign * v.m_sign);
+        if (q.m_size > 0U) {
+            q.m_sign = static_cast<std::int8_t>(u.m_sign * v.m_sign);
         }
     }
 
-    /// <summary>
-    /// 帶符號僅求餘數取模運算。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20 void div_r_signed(BigIntStorage& r, const BigIntStorage& u, const BigIntStorage& v) {
+    static NUMERIC_CONSTEXPR_20 auto div_r_signed(BigIntStorage& r, const BigIntStorage& u, const BigIntStorage& v) -> void {
         div_mod_core(nullptr, &r, u, v);
-        if (r.m_size > 0) {
+        if (r.m_size > 0U) {
             r.m_sign = u.m_sign;
         }
     }
 
-    /// <summary>
-    /// 傳統相容介面：帶符號除法與模運算。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20 void div_mod_signed(BigIntStorage& q, BigIntStorage& r, const BigIntStorage& u, const BigIntStorage& v) {
+    static NUMERIC_CONSTEXPR_20 auto div_mod_signed(BigIntStorage& q, BigIntStorage& r, const BigIntStorage& u, const BigIntStorage& v) -> void {
         div_qr_signed(q, r, u, v);
     }
 
-    /// <summary>
-    /// 傳統相容介面：無符號除法與模運算。
-    /// </summary>
-    static NUMERIC_CONSTEXPR_20 void div_mod_core(BigIntStorage& q, BigIntStorage& r, const BigIntStorage& u, const BigIntStorage& v) {
+    static NUMERIC_CONSTEXPR_20 auto div_mod_core(BigIntStorage& q, BigIntStorage& r, const BigIntStorage& u, const BigIntStorage& v) -> void {
         div_mod_core(&q, &r, u, v);
     }
 };
 
 // ----------------------------------------------------------------------------
-// Burnikel–Ziegler 遞迴函式實作
+// Burnikel–Ziegler Recursive Implementation / Burnikel-Ziegler 遞迴實作
 // ----------------------------------------------------------------------------
 
-inline void BigIntDivision::bz_div3by2_raw(
-    uint64_t* NUMERIC_RESTRICT q, size_t* q_len,
-    uint64_t* NUMERIC_RESTRICT r, size_t* r_len,
-    const uint64_t* a, size_t a_len,
-    const uint64_t* b, size_t k,
-    ScratchArena& arena)
+inline auto BigIntDivision::bz_div3by2_raw(
+    const std::span<std::uint64_t> q, std::size_t* const q_len,
+    const std::span<std::uint64_t> r, std::size_t* const r_len,
+    const std::span<const std::uint64_t> a,
+    const std::span<const std::uint64_t> b, const std::size_t k,
+    ScratchArena& arena) -> void
 {
-    if (a_len == 0) {
-        if (q) BigIntStorage::zero_limbs(q, k);
-        if (q_len) *q_len = 0;
-        if (r) BigIntStorage::zero_limbs(r, 2 * k);
-        if (r_len) *r_len = 0;
+    if (a.empty()) {
+        if (!q.empty()) BigIntStorage::zero_limbs(q.subspan(0U, k));
+        if (q_len != nullptr) *q_len = 0U;
+        if (!r.empty()) BigIntStorage::zero_limbs(r.subspan(0U, 2U * k));
+        if (r_len != nullptr) *r_len = 0U;
         return;
     }
 
-    const uint64_t* b1 = b + k;
-    const uint64_t* b0 = b;
-    size_t b0_len = k;
-    while (b0_len > 0 && b0[b0_len - 1] == 0) --b0_len;
+    const std::span<const std::uint64_t> b1{b.subspan(k, k)};
+    std::size_t b0_len{k};
+    while (b0_len > 0U && b[b0_len - 1U] == 0ULL) --b0_len;
+    const std::span<const std::uint64_t> b0{b.subspan(0U, b0_len)};
 
-    const uint64_t* a_hi = (a_len > k) ? (a + k) : nullptr;
-    size_t a_hi_len = (a_len > k) ? (a_len - k) : 0;
-    while (a_hi_len > 0 && a_hi[a_hi_len - 1] == 0) --a_hi_len;
+    std::size_t a_hi_len{(a.size() > k) ? (a.size() - k) : 0U};
+    while (a_hi_len > 0U && a[k + a_hi_len - 1U] == 0ULL) --a_hi_len;
+    const std::span<const std::uint64_t> a_hi{(a.size() > k) ? a.subspan(k, a_hi_len) : std::span<const std::uint64_t>{}};
 
-    const uint64_t* a_lo = a;
-    size_t a_lo_len = (a_len < k) ? a_len : k;
-    while (a_lo_len > 0 && a_lo[a_lo_len - 1] == 0) --a_lo_len;
+    std::size_t a_lo_len{std::min(a.size(), k)};
+    while (a_lo_len > 0U && a[a_lo_len - 1U] == 0ULL) --a_lo_len;
+    const std::span<const std::uint64_t> a_lo{a.subspan(0U, a_lo_len)};
 
-    ScratchArena::Scope scope(arena);
+    const ScratchArena::Scope scope{arena};
 
-    uint64_t* q_hat = arena.allocate(k + 1);
-    uint64_t* r_hat = arena.allocate(2 * k + 2);
-    BigIntStorage::zero_limbs(q_hat, k + 1);
-    BigIntStorage::zero_limbs(r_hat, 2 * k + 2);
-    size_t q_hat_len = 0;
-    size_t r_hat_len = 0;
+    const std::span<std::uint64_t> q_hat{arena.allocate(k + 1U)};
+    const std::span<std::uint64_t> r_hat{arena.allocate(2U * k + 2U)};
+    BigIntStorage::zero_limbs(q_hat);
+    BigIntStorage::zero_limbs(r_hat);
+    std::size_t q_hat_len{0};
+    std::size_t r_hat_len{0};
 
-    if (a_hi_len == 0) {
-        q_hat_len = 0;
-        r_hat_len = 0;
+    if (a_hi.empty()) {
+        q_hat_len = 0U;
+        r_hat_len = 0U;
     } else {
-        bool a_hi_ge_b1_beta_k = false;
-        if (a_hi_len > 2 * k) {
+        bool a_hi_ge_b1_beta_k{false};
+        if (a_hi_len > 2U * k) {
             a_hi_ge_b1_beta_k = true;
-        } else if (a_hi_len == 2 * k) {
-            a_hi_ge_b1_beta_k = (compare_unsigned(a_hi + k, k, b1, k) >= 0);
+        } else if (a_hi_len == 2U * k) {
+            a_hi_ge_b1_beta_k = (compare_unsigned(a_hi.subspan(k, k), b1) >= 0);
         }
 
         if (a_hi_ge_b1_beta_k) {
-            for (size_t i = 0; i < k; ++i) {
-                q_hat[i] = 0xFFFFFFFFFFFFFFFFULL;
-            }
+            std::ranges::fill(q_hat.subspan(0U, k), 0xFFFFFFFFFFFFFFFFULL);
             q_hat_len = k;
 
-            // r_hat = (a_hi - b1 * beta^k) + b1
-            size_t lo_copy = (a_hi_len < k) ? a_hi_len : k;
-            if (lo_copy > 0) {
-                BigIntStorage::copy_limbs(r_hat, a_hi, lo_copy);
+            const std::size_t lo_copy{std::min(a_hi_len, k)};
+            if (lo_copy > 0U) {
+                BigIntStorage::copy_limbs(r_hat, a_hi.subspan(0U, lo_copy));
             }
-            uint64_t carry = add_to_raw(r_hat, k, b1, k);
+            const std::uint64_t carry{add_to_raw(r_hat.subspan(0U, k), b1)};
             r_hat[k] = carry;
             if (a_hi_len > k) {
-                size_t hi_part_len = a_hi_len - k;
-                if (compare_unsigned(a_hi + k, hi_part_len, b1, k) > 0) {
-                    uint64_t* hi_diff = arena.allocate(hi_part_len + 1);
-                    size_t hd_len = sub_limbs_diff_raw(hi_diff, a_hi + k, hi_part_len, b1, k);
-                    add_to_raw(r_hat + k, k + 2, hi_diff, hd_len);
+                const std::size_t hi_part_len{a_hi_len - k};
+                if (compare_unsigned(a_hi.subspan(k, hi_part_len), b1) > 0) {
+                    const std::span<std::uint64_t> hi_diff{arena.allocate(hi_part_len + 1U)};
+                    const std::size_t hd_len{sub_limbs_diff_raw(hi_diff, a_hi.subspan(k, hi_part_len), b1)};
+                    (void)add_to_raw(r_hat.subspan(k, k + 2U), hi_diff.subspan(0U, hd_len));
                 }
             }
-            r_hat_len = 2 * k + 2;
-            while (r_hat_len > 0 && r_hat[r_hat_len - 1] == 0) --r_hat_len;
+            r_hat_len = 2U * k + 2U;
+            while (r_hat_len > 0U && r_hat[r_hat_len - 1U] == 0ULL) --r_hat_len;
         } else {
-            bz_div2by1_raw(q_hat, &q_hat_len, r_hat, &r_hat_len, a_hi, a_hi_len, b1, k, arena);
+            bz_div2by1_raw(q_hat, &q_hat_len, r_hat, &r_hat_len, a_hi, b1, k, arena);
         }
     }
 
-    // D = q_hat * b0
-    uint64_t* d = arena.allocate(2 * k + 1);
-    BigIntStorage::zero_limbs(d, 2 * k + 1);
-    size_t d_len = 0;
-    if (q_hat_len > 0 && b0_len > 0) {
-        mul_slice_helper(d, q_hat, q_hat_len, b0, b0_len, arena);
-        d_len = q_hat_len + b0_len;
-        while (d_len > 0 && d[d_len - 1] == 0) --d_len;
+    const std::span<std::uint64_t> d{arena.allocate(2U * k + 1U)};
+    BigIntStorage::zero_limbs(d);
+    std::size_t d_len{0};
+    if (q_hat_len > 0U && !b0.empty()) {
+        mul_slice_helper(d, q_hat.subspan(0U, q_hat_len), b0, arena);
+        d_len = q_hat_len + b0.size();
+        while (d_len > 0U && d[d_len - 1U] == 0ULL) --d_len;
     }
 
-    // r_prime = r_hat * beta^k + a_lo
-    uint64_t* r_prime = arena.allocate(3 * k + 4);
-    BigIntStorage::zero_limbs(r_prime, 3 * k + 4);
-    if (a_lo_len > 0) {
-        BigIntStorage::copy_limbs(r_prime, a_lo, a_lo_len);
+    const std::span<std::uint64_t> r_prime{arena.allocate(3U * k + 4U)};
+    BigIntStorage::zero_limbs(r_prime);
+    if (!a_lo.empty()) {
+        BigIntStorage::copy_limbs(r_prime, a_lo);
     }
-    if (r_hat_len > 0) {
-        BigIntStorage::copy_limbs(r_prime + k, r_hat, r_hat_len);
+    if (r_hat_len > 0U) {
+        BigIntStorage::copy_limbs(r_prime.subspan(k), r_hat.subspan(0U, r_hat_len));
     }
-    size_t r_prime_len = k + r_hat_len;
-    while (r_prime_len > 0 && r_prime[r_prime_len - 1] == 0) --r_prime_len;
+    std::size_t r_prime_len{k + r_hat_len};
+    while (r_prime_len > 0U && r_prime[r_prime_len - 1U] == 0ULL) --r_prime_len;
 
-    // while (r_prime < d)
-    while (compare_unsigned(r_prime, r_prime_len, d, d_len) < 0) {
-        // --q_hat
-        uint8_t borrow = 1;
-        for (size_t i = 0; i < k && borrow != 0; ++i) {
-            borrow = sbb64(borrow, q_hat[i], 0, &q_hat[i]);
+    while (compare_unsigned(r_prime.subspan(0U, r_prime_len), d.subspan(0U, d_len)) < 0) {
+        std::uint8_t borrow{1U};
+        for (std::size_t i{0}; i < k && borrow != 0U; ++i) {
+            borrow = sbb64(borrow, q_hat[i], 0ULL, q_hat[i]);
         }
-        while (q_hat_len > 0 && q_hat[q_hat_len - 1] == 0) --q_hat_len;
+        while (q_hat_len > 0U && q_hat[q_hat_len - 1U] == 0ULL) --q_hat_len;
 
-        // r_prime += b
-        add_to_raw(r_prime, 3 * k + 4, b, 2 * k);
-        r_prime_len = 3 * k + 4;
-        while (r_prime_len > 0 && r_prime[r_prime_len - 1] == 0) --r_prime_len;
+        (void)add_to_raw(r_prime, b.subspan(0U, 2U * k));
+        r_prime_len = 3U * k + 4U;
+        while (r_prime_len > 0U && r_prime[r_prime_len - 1U] == 0ULL) --r_prime_len;
     }
 
-    // r = r_prime - d
-    if (r) {
-        BigIntStorage::zero_limbs(r, 2 * k);
-        size_t rl = sub_limbs_diff_raw(r, r_prime, r_prime_len, d, d_len);
-        if (r_len) *r_len = rl;
-    } else if (r_len) {
-        *r_len = 0;
+    if (!r.empty()) {
+        BigIntStorage::zero_limbs(r.subspan(0U, 2U * k));
+        const std::size_t rl{sub_limbs_diff_raw(r, r_prime.subspan(0U, r_prime_len), d.subspan(0U, d_len))};
+        if (r_len != nullptr) *r_len = rl;
+    } else if (r_len != nullptr) {
+        *r_len = 0U;
     }
 
-    // q = q_hat
-    if (q) {
-        BigIntStorage::zero_limbs(q, k);
-        if (q_hat_len > 0) {
-            BigIntStorage::copy_limbs(q, q_hat, q_hat_len);
+    if (!q.empty()) {
+        BigIntStorage::zero_limbs(q.subspan(0U, k));
+        if (q_hat_len > 0U) {
+            BigIntStorage::copy_limbs(q, q_hat.subspan(0U, q_hat_len));
         }
-        if (q_len) *q_len = q_hat_len;
-    } else if (q_len) {
-        *q_len = 0;
+        if (q_len != nullptr) *q_len = q_hat_len;
+    } else if (q_len != nullptr) {
+        *q_len = 0U;
     }
 }
 
-inline void BigIntDivision::bz_div2by1_raw(
-    uint64_t* NUMERIC_RESTRICT q, size_t* q_len,
-    uint64_t* NUMERIC_RESTRICT r, size_t* r_len,
-    const uint64_t* a, size_t a_len,
-    const uint64_t* b, size_t n,
-    ScratchArena& arena)
+inline auto BigIntDivision::bz_div2by1_raw(
+    const std::span<std::uint64_t> q, std::size_t* const q_len,
+    const std::span<std::uint64_t> r, std::size_t* const r_len,
+    const std::span<const std::uint64_t> a,
+    const std::span<const std::uint64_t> b, const std::size_t n,
+    ScratchArena& arena) -> void
 {
-    if (a_len == 0) {
-        if (q) BigIntStorage::zero_limbs(q, n);
-        if (q_len) *q_len = 0;
-        if (r) BigIntStorage::zero_limbs(r, n);
-        if (r_len) *r_len = 0;
+    if (a.empty()) {
+        if (!q.empty()) BigIntStorage::zero_limbs(q.subspan(0U, n));
+        if (q_len != nullptr) *q_len = 0U;
+        if (!r.empty()) BigIntStorage::zero_limbs(r.subspan(0U, n));
+        if (r_len != nullptr) *r_len = 0U;
         return;
     }
 
-    if (n < BZ_THRESHOLD || (n % 2 != 0)) {
-        // Base case: Knuth Algorithm D
-        size_t total_scratch = (n + 1) + (a_len + 2);
-        uint64_t stack_scratch[512];
-        uint64_t* scratch_ptr = stack_scratch;
-        if (total_scratch > 512) {
-            scratch_ptr = arena.allocate(total_scratch);
+    if (n < BZ_THRESHOLD || (n % 2U != 0U)) {
+        const std::size_t total_scratch{(n + 1U) + (a.size() + 2U)};
+        std::array<std::uint64_t, 512> stack_scratch{};
+        std::span<std::uint64_t> scratch_span{stack_scratch};
+        if (total_scratch > 512U) {
+            scratch_span = arena.allocate(total_scratch);
         }
-        if (q) BigIntStorage::zero_limbs(q, n);
-        if (r) BigIntStorage::zero_limbs(r, n);
-        div_knuth_raw(q, q_len, r, r_len, a, a_len, b, n, scratch_ptr);
+        if (!q.empty()) BigIntStorage::zero_limbs(q.subspan(0U, n));
+        if (!r.empty()) BigIntStorage::zero_limbs(r.subspan(0U, n));
+        div_knuth_raw(q, q_len, r, r_len, a, b.subspan(0U, n), scratch_span);
         return;
     }
 
-    size_t k = n / 2;
-    const uint64_t* a_hi = (a_len > k) ? (a + k) : nullptr;
-    size_t a_hi_len = (a_len > k) ? (a_len - k) : 0;
-    while (a_hi_len > 0 && a_hi[a_hi_len - 1] == 0) --a_hi_len;
+    const std::size_t k{n / 2U};
+    std::size_t a_hi_len{(a.size() > k) ? (a.size() - k) : 0U};
+    while (a_hi_len > 0U && a[k + a_hi_len - 1U] == 0ULL) --a_hi_len;
+    const std::span<const std::uint64_t> a_hi{(a.size() > k) ? a.subspan(k, a_hi_len) : std::span<const std::uint64_t>{}};
 
-    const uint64_t* a_lo = a;
-    size_t a_lo_len = (a_len < k) ? a_len : k;
-    while (a_lo_len > 0 && a_lo[a_lo_len - 1] == 0) --a_lo_len;
+    std::size_t a_lo_len{std::min(a.size(), k)};
+    while (a_lo_len > 0U && a[a_lo_len - 1U] == 0ULL) --a_lo_len;
+    const std::span<const std::uint64_t> a_lo{a.subspan(0U, a_lo_len)};
 
-    ScratchArena::Scope scope(arena);
+    const ScratchArena::Scope scope{arena};
 
-    uint64_t* q1 = arena.allocate(k + 1);
-    uint64_t* r1 = arena.allocate(2 * k + 1);
-    size_t q1_len = 0, r1_len = 0;
+    const std::span<std::uint64_t> q1{arena.allocate(k + 1U)};
+    const std::span<std::uint64_t> r1{arena.allocate(2U * k + 1U)};
+    std::size_t q1_len{0};
+    std::size_t r1_len{0};
 
-    bz_div3by2_raw(q1, &q1_len, r1, &r1_len, a_hi, a_hi_len, b, k, arena);
+    bz_div3by2_raw(q1, &q1_len, r1, &r1_len, a_hi, b, k, arena);
 
-    // a_step2 = r1 * beta^k + a_lo
-    uint64_t* a_step2 = arena.allocate(3 * k + 1);
-    BigIntStorage::zero_limbs(a_step2, 3 * k + 1);
-    if (a_lo_len > 0) {
-        BigIntStorage::copy_limbs(a_step2, a_lo, a_lo_len);
+    const std::span<std::uint64_t> a_step2{arena.allocate(3U * k + 1U)};
+    BigIntStorage::zero_limbs(a_step2);
+    if (!a_lo.empty()) {
+        BigIntStorage::copy_limbs(a_step2, a_lo);
     }
-    if (r1_len > 0) {
-        BigIntStorage::copy_limbs(a_step2 + k, r1, r1_len);
+    if (r1_len > 0U) {
+        BigIntStorage::copy_limbs(a_step2.subspan(k), r1.subspan(0U, r1_len));
     }
-    size_t a_step2_len = k + r1_len;
-    while (a_step2_len > 0 && a_step2[a_step2_len - 1] == 0) --a_step2_len;
+    std::size_t a_step2_len{k + r1_len};
+    while (a_step2_len > 0U && a_step2[a_step2_len - 1U] == 0ULL) --a_step2_len;
 
-    uint64_t* q0 = arena.allocate(k + 1);
-    uint64_t* r0 = arena.allocate(2 * k + 1);
-    size_t q0_len = 0, r0_len = 0;
+    const std::span<std::uint64_t> q0{arena.allocate(k + 1U)};
+    const std::span<std::uint64_t> r0{arena.allocate(2U * k + 1U)};
+    std::size_t q0_len{0};
+    std::size_t r0_len{0};
 
-    bz_div3by2_raw(q0, &q0_len, r0, &r0_len, a_step2, a_step2_len, b, k, arena);
+    bz_div3by2_raw(q0, &q0_len, r0, &r0_len, a_step2.subspan(0U, a_step2_len), b, k, arena);
 
-    // q = q1 * beta^k + q0
-    if (q) {
-        BigIntStorage::zero_limbs(q, 2 * k);
-        if (q0_len > 0) {
-            BigIntStorage::copy_limbs(q, q0, (std::min)(q0_len, k));
+    if (!q.empty()) {
+        BigIntStorage::zero_limbs(q.subspan(0U, 2U * k));
+        if (q0_len > 0U) {
+            BigIntStorage::copy_limbs(q, q0.subspan(0U, std::min(q0_len, k)));
         }
-        if (q1_len > 0) {
-            BigIntStorage::copy_limbs(q + k, q1, (std::min)(q1_len, k));
+        if (q1_len > 0U) {
+            BigIntStorage::copy_limbs(q.subspan(k), q1.subspan(0U, std::min(q1_len, k)));
         }
-        size_t ql = 2 * k;
-        while (ql > 0 && q[ql - 1] == 0) --ql;
-        if (q_len) *q_len = ql;
-    } else if (q_len) {
-        *q_len = 0;
+        std::size_t ql{2U * k};
+        while (ql > 0U && q[ql - 1U] == 0ULL) --ql;
+        if (q_len != nullptr) *q_len = ql;
+    } else if (q_len != nullptr) {
+        *q_len = 0U;
     }
 
-    // r = r0
-    if (r) {
-        BigIntStorage::zero_limbs(r, 2 * k);
-        if (r0_len > 0) {
-            BigIntStorage::copy_limbs(r, r0, (std::min)(r0_len, 2 * k));
+    if (!r.empty()) {
+        BigIntStorage::zero_limbs(r.subspan(0U, 2U * k));
+        if (r0_len > 0U) {
+            BigIntStorage::copy_limbs(r, r0.subspan(0U, std::min(r0_len, 2U * k)));
         }
-        if (r_len) *r_len = (std::min)(r0_len, 2 * k);
-    } else if (r_len) {
-        *r_len = 0;
+        if (r_len != nullptr) *r_len = std::min(r0_len, 2U * k);
+    } else if (r_len != nullptr) {
+        *r_len = 0U;
     }
 }
 
@@ -4177,27 +4416,32 @@ inline void BigIntDivision::bz_div2by1_raw(
 // --- End Section: include/numeric/detail/Division.hpp ---
 
 // --- Begin Section: include/numeric/detail/StringConversion.hpp ---
-// StringConversion.hpp
-// High-performance arbitrary-precision Radix-10 string serialization and deserialization for CPP-BigInt.
-// Features 2-digit LUT formatting, Reciprocal Radix-10^19 division, Divide-and-Conquer string conversion,
-// and compile-time constexpr Horner evaluation.
-// Part of the numeric::detail modular core.
+// filepath: include/numeric/detail/StringConversion.hpp
+/**
+ * @file StringConversion.hpp
+ * @brief High-performance arbitrary-precision Radix-10 string serialization and deserialization for CPP-BigInt.
+ *        Features 2-digit LUT formatting, reciprocal Radix-10^19 division, divide-and-conquer formatting/parsing
+ *        over std::span<char> buffers, declarative digit validation, and C++23 constexpr evaluation.
+ *        高效能任意精度十進位字串序列化與反序列化模組。
+ *        結合 2-Digit LUT 查表、10^19 乘法求逆除法、基於 std::span<char> 之分治格式轉換與 C++23 constexpr 解析。
+ */
 
 
 namespace numeric {
 namespace detail {
 
 /// <summary>
-/// BigInt 十進位字串轉換類別，繼承自 BigIntDivision。
-/// 支援分治十進位轉換、Pow10Cache 快取、2-Digit LUT、以及 C++20 constexpr 字串解析。
+/// Radix-10 string conversion and parsing core inheriting BigIntDivision.
+/// BigInt 十進位字串轉換與解析核心類別，繼承自 BigIntDivision。
 /// </summary>
 struct BigIntStringConversion : public BigIntDivision {
-    static constexpr size_t FROM_STRING_DC_THRESHOLD = 10;
+    static constexpr std::size_t FROM_STRING_DC_THRESHOLD{10U};
 
     /// <summary>
-    /// 2-Digit 快速十進位查詢表（200 位元組，長駐 L1 Cache）。
+    /// Returns a 200-byte 2-digit decimal lookup table resident in L1 cache.
+    /// 回傳常駐 L1 快取之 200 位元組雙字元十進位查詢表。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20_FORCEINLINE const char* get_digit_pairs() noexcept {
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20_FORCEINLINE auto get_digit_pairs() noexcept -> std::string_view {
         return
             "00010203040506070809"
             "10111213141516171819"
@@ -4212,141 +4456,145 @@ struct BigIntStringConversion : public BigIntDivision {
     }
 
     /// <summary>
-    /// 支援完整 64 位元無符號整數（最大 18446744073709551615，共 20 位）之精準十進位位數判定。
-    /// 採零硬體除法二分判定分支，單一週期等級解析，杜絕任何緩衝區溢位。
+    /// Computes exact base-10 digit count of a 64-bit unsigned integer (1..20 digits) without division.
+    /// 以零硬體除法二分樹精準計算 64 位元無符號整數之十進位位數 (1..20)。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20_FORCEINLINE size_t digits10_u64(uint64_t v) noexcept {
-        if (v < 100000000ULL) { // < 10^8
-            if (v < 10000ULL) { // < 10^4
-                if (v < 100ULL) return (v < 10ULL) ? 1 : 2;
-                else return (v < 1000ULL) ? 3 : 4;
-            } else {
-                if (v < 1000000ULL) return (v < 100000ULL) ? 5 : 6;
-                else return (v < 10000000ULL) ? 7 : 8;
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20_FORCEINLINE auto digits10_u64(const std::uint64_t v) noexcept -> std::size_t {
+        if (v < 100000000ULL) {
+            if (v < 10000ULL) {
+                if (v < 100ULL) return (v < 10ULL) ? 1U : 2U;
+                return (v < 1000ULL) ? 3U : 4U;
             }
-        } else if (v < 10000000000000000ULL) { // < 10^16
-            if (v < 1000000000000ULL) { // < 10^12
-                if (v < 10000000000ULL) return (v < 1000000000ULL) ? 9 : 10;
-                else return (v < 100000000000ULL) ? 11 : 12;
-            } else {
-                if (v < 100000000000000ULL) return (v < 10000000000000ULL) ? 13 : 14;
-                else return (v < 1000000000000000ULL) ? 15 : 16;
-            }
-        } else { // >= 10^16
-            if (v < 100000000000000000ULL) return 17;
-            if (v < 1000000000000000000ULL) return 18;
-            if (v < 10000000000000000000ULL) return 19;
-            return 20;
+            if (v < 1000000ULL) return (v < 100000ULL) ? 5U : 6U;
+            return (v < 10000000ULL) ? 7U : 8U;
         }
+        if (v < 10000000000000000ULL) {
+            if (v < 1000000000000ULL) {
+                if (v < 10000000000ULL) return (v < 1000000000ULL) ? 9U : 10U;
+                return (v < 100000000000ULL) ? 11U : 12U;
+            }
+            if (v < 100000000000000ULL) return (v < 10000000000000ULL) ? 13U : 14U;
+            return (v < 1000000000000000ULL) ? 15U : 16U;
+        }
+        if (v < 100000000000000000ULL) return 17U;
+        if (v < 1000000000000000000ULL) return 18U;
+        if (v < 10000000000000000000ULL) return 19U;
+        return 20U;
     }
 
     /// <summary>
-    /// 格式化最高位 chunk：直接利用已知的 top_digits 由尾向頭倒序填寫。
-    /// 採 10^8 區塊分割與純 32 位元倒序倒數乘法，徹底消除 64 位元硬體除法延遲。
+    /// Formats the most-significant base-10^19 chunk backward into exact known digit slots.
+    /// 格式化最高位十進位區塊：利用已知位數由尾向頭倒序填寫 2-Digit LUT。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20_FORCEINLINE void format_highest_chunk(
-        char* dst, uint64_t val, size_t digits) noexcept
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE auto format_highest_chunk(
+        const std::span<char> dst,
+        std::uint64_t val,
+        const std::size_t digits) noexcept -> void
     {
-        const char* pairs = get_digit_pairs();
-        int pos = static_cast<int>(digits);
+        assert(dst.size() >= digits);
+        const std::string_view pairs{get_digit_pairs()};
+        std::size_t pos{digits};
         while (val >= 100000000ULL) {
-            uint64_t q = val / 100000000ULL;
-            uint32_t v32 = static_cast<uint32_t>(val - q * 100000000ULL);
+            const std::uint64_t q{val / 100000000ULL};
+            auto v32{static_cast<std::uint32_t>(val - q * 100000000ULL)};
             val = q;
-            for (int k = 0; k < 4; ++k) {
-                uint32_t q32 = v32 / 100;
-                uint32_t rem = v32 - q32 * 100;
+            for (std::int32_t k{0}; k < 4; ++k) {
+                const std::uint32_t q32{v32 / 100U};
+                const std::uint32_t rem{v32 - q32 * 100U};
                 v32 = q32;
-                pos -= 2;
-                dst[pos]     = pairs[rem * 2];
-                dst[pos + 1] = pairs[rem * 2 + 1];
+                pos -= 2U;
+                dst[pos] = pairs[rem * 2U];
+                dst[pos + 1U] = pairs[rem * 2U + 1U];
             }
         }
-        uint32_t v32 = static_cast<uint32_t>(val);
-        while (v32 >= 100) {
-            uint32_t q32 = v32 / 100;
-            uint32_t rem = v32 - q32 * 100;
+        auto v32{static_cast<std::uint32_t>(val)};
+        while (v32 >= 100U) {
+            const std::uint32_t q32{v32 / 100U};
+            const std::uint32_t rem{v32 - q32 * 100U};
             v32 = q32;
-            pos -= 2;
-            dst[pos]     = pairs[rem * 2];
-            dst[pos + 1] = pairs[rem * 2 + 1];
+            pos -= 2U;
+            dst[pos] = pairs[rem * 2U];
+            dst[pos + 1U] = pairs[rem * 2U + 1U];
         }
-        if (v32 < 10) {
+        if (v32 < 10U) {
             dst[--pos] = static_cast<char>('0' + v32);
         } else {
-            pos -= 2;
-            dst[pos]     = pairs[v32 * 2];
-            dst[pos + 1] = pairs[v32 * 2 + 1];
+            pos -= 2U;
+            dst[pos] = pairs[v32 * 2U];
+            dst[pos + 1U] = pairs[v32 * 2U + 1U];
         }
-        assert(pos == 0 && "format_highest_chunk failed to match exact digit count");
+        assert(pos == 0U && "format_highest_chunk failed to match exact digit count");
     }
 
     /// <summary>
-    /// 格式化中間 19 位 fixed-width chunk：倒序逆向填充 9 組 LUT 雙字元加上 1 個最高位單字元。
+    /// Formats a fixed-width 19-digit chunk using 9 LUT pairs plus 1 leading digit.
+    /// 格式化固定 19 位十進位區塊：倒序寫入 9 組 LUT 雙字元加上最高位單字元。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20_FORCEINLINE void format_chunk_19_digits(
-        char* dst, uint64_t val) noexcept
+    static NUMERIC_CONSTEXPR_20_FORCEINLINE auto format_chunk_19_digits(
+        const std::span<char> dst,
+        std::uint64_t val) noexcept -> void
     {
-        const char* pairs = get_digit_pairs();
-        for (int p = 8; p >= 0; --p) {
-            uint32_t rem = static_cast<uint32_t>(val % 100);
-            val /= 100;
-            dst[1 + p * 2]     = pairs[rem * 2];
-            dst[1 + p * 2 + 1] = pairs[rem * 2 + 1];
+        assert(dst.size() >= 19U);
+        const std::string_view pairs{get_digit_pairs()};
+        for (std::int32_t p{8}; p >= 0; --p) {
+            const auto rem{static_cast<std::uint32_t>(val % 100ULL)};
+            val /= 100ULL;
+            const auto base_idx{static_cast<std::size_t>(1 + p * 2)};
+            dst[base_idx] = pairs[rem * 2U];
+            dst[base_idx + 1U] = pairs[rem * 2U + 1U];
         }
         dst[0] = static_cast<char>('0' + val);
     }
 
     /// <summary>
-    /// 將 64 位元無符號整數格式化為十進位字元陣列寫入 buf（不含 null 結尾），回傳字元長度。
-    /// 棧上無配置零開銷輔助函式。
+    /// Formats a 64-bit unsigned integer into decimal ASCII characters without null termination.
+    /// 將 64 位元無符號整數格式化為十進位字元序列寫入 buf。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 size_t format_uint64_to_buf(char* buf, uint64_t val) noexcept {
-        if (val == 0) {
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto format_uint64_to_buf(
+        const std::span<char> buf,
+        std::uint64_t val) noexcept -> std::size_t
+    {
+        if (val == 0ULL) {
             buf[0] = '0';
-            return 1;
+            return 1U;
         }
-        char tmp[24];
-        size_t pos = 0;
-        while (val > 0) {
-            tmp[pos++] = static_cast<char>('0' + (val % 10));
-            val /= 10;
+        std::array<char, 24> tmp{};
+        std::size_t pos{0};
+        while (val > 0ULL) {
+            tmp[pos++] = static_cast<char>('0' + (val % 10ULL));
+            val /= 10ULL;
         }
-        for (size_t i = 0; i < pos; ++i) {
-            buf[i] = tmp[pos - 1 - i];
+        for (std::size_t i{0}; i < pos; ++i) {
+            buf[i] = tmp[pos - 1U - i];
         }
         return pos;
     }
 
     /// <summary>
-    /// 線程安全且帶 [[unlikely]] 冷路徑優化之 10^(19 * 2^k) 冪次快取表。
-    /// 預先計算前 7 階 (k = 0..6，涵蓋至 10^1216)，冷啟動小於 1 微秒。
+    /// Thread-safe power-of-ten cache storing 10^(19 * 2^k) tables with cold-path lazy expansion.
+    /// 線程安全且帶 [[unlikely]] 冷路徑擴展之 10^(19 * 2^k) 冪次快取表。
     /// </summary>
-    class Pow10Cache {
+    class Pow10Cache final {
     public:
-        static constexpr size_t PRECOMPUTED_LEVELS = 7; // k = 0..6 (涵蓋至 10^1216)
-        static constexpr size_t MAX_LEVELS = 13;        // 支援至 77,824 位
-        BigIntStorage table[MAX_LEVELS];
-        std::atomic<size_t> computed_levels{PRECOMPUTED_LEVELS};
-        std::mutex mtx;
+        static constexpr std::size_t PRECOMPUTED_LEVELS{7U}; // k = 0..6 (~10^1216)
+        static constexpr std::size_t MAX_LEVELS{13U};        // Up to 77,824 digits
+        std::array<BigIntStorage, MAX_LEVELS> table{};
+        std::atomic<std::size_t> computed_levels{PRECOMPUTED_LEVELS};
+        std::mutex mtx{};
 
-        static Pow10Cache& instance() {
-            static Pow10Cache cache;
+        NUMERIC_NODISCARD static auto instance() -> Pow10Cache& {
+            static Pow10Cache cache{};
             return cache;
         }
 
-        const BigIntStorage& get_pow(size_t k) {
+        NUMERIC_NODISCARD auto get_pow(const std::size_t k) -> const BigIntStorage& {
             assert(k < MAX_LEVELS);
-            if (k >= computed_levels.load(std::memory_order_acquire))
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
-                [[unlikely]]
-#endif
-            {
-                std::lock_guard<std::mutex> lock(mtx);
-                size_t cur = computed_levels.load(std::memory_order_relaxed);
-                for (size_t i = cur; i <= k && i < MAX_LEVELS; ++i) {
-                    mul_core(table[i], table[i - 1], table[i - 1]);
-                    computed_levels.store(i + 1, std::memory_order_release);
+            if (k >= computed_levels.load(std::memory_order_acquire)) [[unlikely]] {
+                const std::lock_guard<std::mutex> lock{mtx};
+                const std::size_t cur{computed_levels.load(std::memory_order_relaxed)};
+                for (std::size_t i{cur}; i <= k && i < MAX_LEVELS; ++i) {
+                    mul_core(table[i], table[i - 1U], table[i - 1U]);
+                    computed_levels.store(i + 1U, std::memory_order_release);
                 }
             }
             return table[k];
@@ -4355,18 +4603,19 @@ struct BigIntStringConversion : public BigIntDivision {
     private:
         Pow10Cache() {
             table[0].set_uint64(10000000000000000000ULL, 1);
-            for (size_t k = 1; k < PRECOMPUTED_LEVELS; ++k) {
-                mul_core(table[k], table[k - 1], table[k - 1]);
+            for (std::size_t k{1U}; k < PRECOMPUTED_LEVELS; ++k) {
+                mul_core(table[k], table[k - 1U], table[k - 1U]);
             }
         }
     };
 
     /// <summary>
+    /// Dynamically computes 10^(19 * 2^k) when k exceeds cached levels.
     /// 當 k >= Pow10Cache::MAX_LEVELS 時的局部動態冪次求值。
     /// </summary>
-    static BigIntStorage compute_pow10_dynamic(size_t k) {
-        BigIntStorage cur = Pow10Cache::instance().get_pow(Pow10Cache::MAX_LEVELS - 1);
-        for (size_t i = Pow10Cache::MAX_LEVELS - 1; i < k; ++i) {
+    NUMERIC_NODISCARD static auto compute_pow10_dynamic(const std::size_t k) -> BigIntStorage {
+        BigIntStorage cur{Pow10Cache::instance().get_pow(Pow10Cache::MAX_LEVELS - 1U)};
+        for (std::size_t i{Pow10Cache::MAX_LEVELS - 1U}; i < k; ++i) {
             BigIntStorage nxt;
             mul_core(nxt, cur, cur);
             cur = std::move(nxt);
@@ -4375,29 +4624,33 @@ struct BigIntStringConversion : public BigIntDivision {
     }
 
     /// <summary>
-    /// 線性累積解析 19-digit chunks 陣列，採用原地單 limb 乘加運算，零臨時配置。
+    /// Linearly accumulates 19-digit base chunks using in-place single-limb multiply-add.
+    /// 線性累積解析 19-digit chunks span，採用原地單肢段乘加運算。
     /// </summary>
-    static BigIntStorage parse_chunks_linear(const uint64_t* chunks, size_t count) {
+    NUMERIC_NODISCARD static auto parse_chunks_linear(const std::span<const std::uint64_t> chunks) -> BigIntStorage {
+        const std::size_t count{chunks.size()};
         BigIntStorage cur;
-        cur.set_uint64(chunks[count - 1], 1);
-        constexpr uint64_t RADIX10_19 = 10000000000000000000ULL;
-        for (size_t i = count - 1; i > 0; --i) {
-            uint64_t chunk_val = chunks[i - 1];
-            if (cur.m_capacity < cur.m_size + 1) {
-                cur.reserve(cur.m_size + 2);
+        cur.set_uint64(chunks[count - 1U], 1);
+        constexpr std::uint64_t RADIX10_19{10000000000000000000ULL};
+
+        for (std::size_t i{count - 1U}; i > 0U; --i) {
+            const std::uint64_t chunk_val{chunks[i - 1U]};
+            if (cur.m_capacity < cur.m_size + 1U) {
+                cur.reserve(cur.m_size + 2U);
             }
-            uint64_t carry = chunk_val;
-            for (size_t j = 0; j < cur.m_size; ++j) {
-                uint64_t hi = 0;
-                uint64_t lo = mul64_wide(cur.data()[j], RADIX10_19, hi);
+            std::uint64_t carry{chunk_val};
+            const std::span<std::uint64_t> d{cur.as_span()};
+            for (std::size_t j{0}; j < cur.m_size; ++j) {
+                std::uint64_t hi{0};
+                std::uint64_t lo{mul64_wide(d[j], RADIX10_19, hi)};
                 lo += carry;
                 if (lo < carry) ++hi;
-                cur.data()[j] = lo;
+                d[j] = lo;
                 carry = hi;
             }
-            if (carry > 0) {
-                cur.data()[cur.m_size] = carry;
-                cur.m_size += 1;
+            if (carry > 0ULL) {
+                cur.capacity_span()[cur.m_size] = carry;
+                cur.m_size += 1U;
             }
         }
         cur.m_sign = 1;
@@ -4406,26 +4659,26 @@ struct BigIntStringConversion : public BigIntDivision {
     }
 
     /// <summary>
-    /// 分治解析 19-digit chunks 陣列 [start, end)。
+    /// Divide-and-conquer binary-tree accumulation over a span of 19-digit chunks.
+    /// 分治平衡樹解析 19-digit chunks span。
     /// </summary>
-    static BigIntStorage parse_chunks_dc(const uint64_t* chunks, size_t start, size_t end) {
-        size_t count = end - start;
+    NUMERIC_NODISCARD static auto parse_chunks_dc(const std::span<const std::uint64_t> chunks) -> BigIntStorage {
+        const std::size_t count{chunks.size()};
         if (count <= FROM_STRING_DC_THRESHOLD) {
-            return parse_chunks_linear(chunks + start, count);
+            return parse_chunks_linear(chunks);
         }
 
-        // 尋找切分點：最大的 2^k 使得 2^k < count
-        size_t k = 0;
-        while ((static_cast<size_t>(1) << (k + 1)) < count) {
+        std::size_t k{0};
+        while ((std::size_t{1U} << (k + 1U)) < count) {
             ++k;
         }
-        size_t split = static_cast<size_t>(1) << k;
+        const std::size_t split{std::size_t{1U} << k};
 
-        BigIntStorage low = parse_chunks_dc(chunks, start, start + split);
-        BigIntStorage high = parse_chunks_dc(chunks, start + split, end);
+        const BigIntStorage low{parse_chunks_dc(chunks.subspan(0U, split))};
+        const BigIntStorage high{parse_chunks_dc(chunks.subspan(split))};
 
         BigIntStorage dynamic_pow;
-        const BigIntStorage* pow_ptr = nullptr;
+        const BigIntStorage* pow_ptr{nullptr};
         if (k < Pow10Cache::MAX_LEVELS) {
             pow_ptr = &Pow10Cache::instance().get_pow(k);
         } else {
@@ -4442,15 +4695,18 @@ struct BigIntStringConversion : public BigIntDivision {
     }
 
     /// <summary>
-    /// C++20 constexpr 編譯期常數求值專用字串解析函式。
-    /// 採用無靜態局部變數之 Horner 演算法，保證常數求值完全相容。
+    /// Constexpr compile-time decimal string parser using stateless Horner accumulation.
+    /// 編譯期常數求值專用十進位字串解析函式，採用無靜態局部變數之 Horner 演算法。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void from_string_constexpr(BigIntStorage& res, numeric::string_view sv) {
+    static NUMERIC_CONSTEXPR_20 auto from_string_constexpr(
+        BigIntStorage& res,
+        const numeric::string_view sv) -> void
+    {
         if (sv.empty()) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("empty bigint string"));
         }
-        size_t idx = 0;
-        int8_t sign = 1;
+        std::size_t idx{0};
+        std::int8_t sign{1};
         if (sv[0] == '-') {
             sign = -1;
             ++idx;
@@ -4460,10 +4716,11 @@ struct BigIntStringConversion : public BigIntDivision {
         if (idx == sv.size()) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("no digits in bigint string"));
         }
-        for (size_t i = idx; i < sv.size(); ++i) {
-            if (sv[i] < '0' || sv[i] > '9') {
-                NUMERIC_THROW_OR_ABORT(std::invalid_argument("invalid character in bigint string"));
-            }
+        const bool all_digits{std::ranges::all_of(sv.substr(idx), [](const char ch) noexcept -> bool {
+            return ch >= '0' && ch <= '9';
+        })};
+        if (!all_digits) {
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("invalid character in bigint string"));
         }
         while (idx < sv.size() && sv[idx] == '0') {
             ++idx;
@@ -4475,11 +4732,11 @@ struct BigIntStringConversion : public BigIntDivision {
             return;
         }
 
-        size_t total_digits = sv.size() - idx;
-        if (total_digits <= 19) {
-            uint64_t val = 0;
-            for (size_t i = idx; i < sv.size(); ++i) {
-                val = val * 10 + static_cast<uint64_t>(sv[i] - '0');
+        const std::size_t total_digits{sv.size() - idx};
+        if (total_digits <= 19U) {
+            std::uint64_t val{0};
+            for (const char ch : sv.substr(idx)) {
+                val = val * 10ULL + static_cast<std::uint64_t>(ch - '0');
             }
             res.set_uint64(val, sign);
             return;
@@ -4491,16 +4748,16 @@ struct BigIntStringConversion : public BigIntDivision {
         cur.m_sign = 0;
 
         while (idx < sv.size()) {
-            size_t take = (sv.size() - idx >= 9) ? 9 : (sv.size() - idx);
-            uint64_t chunk_val = 0;
-            uint64_t multiplier = 1;
-            for (size_t i = 0; i < take; ++i) {
-                chunk_val = chunk_val * 10 + static_cast<uint64_t>(sv[idx + i] - '0');
-                multiplier *= 10;
+            const std::size_t take{(sv.size() - idx >= 9U) ? 9U : (sv.size() - idx)};
+            std::uint64_t chunk_val{0};
+            std::uint64_t multiplier{1ULL};
+            for (std::size_t i{0}; i < take; ++i) {
+                chunk_val = chunk_val * 10ULL + static_cast<std::uint64_t>(sv[idx + i] - '0');
+                multiplier *= 10ULL;
             }
             idx += take;
 
-            if (cur.m_size > 0) {
+            if (cur.m_size > 0U) {
                 BigIntStorage next_cur;
                 mul_single_limb(next_cur, cur, multiplier, 1);
                 BigIntStorage chunk_st;
@@ -4516,14 +4773,15 @@ struct BigIntStringConversion : public BigIntDivision {
     }
 
     /// <summary>
+    /// High-speed runtime decimal string parser using divide-and-conquer and Pow10Cache.
     /// 執行期高效十進位字串解析（分治法 + Pow10Cache 冪次表快取）。
     /// </summary>
-    static void from_string_runtime(BigIntStorage& res, numeric::string_view sv) {
+    static auto from_string_runtime(BigIntStorage& res, const numeric::string_view sv) -> void {
         if (sv.empty()) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("empty bigint string"));
         }
-        size_t idx = 0;
-        int8_t sign = 1;
+        std::size_t idx{0};
+        std::int8_t sign{1};
         if (sv[0] == '-') {
             sign = -1;
             ++idx;
@@ -4534,10 +4792,11 @@ struct BigIntStringConversion : public BigIntDivision {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("no digits in bigint string"));
         }
 
-        for (size_t i = idx; i < sv.size(); ++i) {
-            if (sv[i] < '0' || sv[i] > '9') {
-                NUMERIC_THROW_OR_ABORT(std::invalid_argument("invalid character in bigint string"));
-            }
+        const bool all_digits{std::ranges::all_of(sv.substr(idx), [](const char ch) noexcept -> bool {
+            return ch >= '0' && ch <= '9';
+        })};
+        if (!all_digits) {
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("invalid character in bigint string"));
         }
 
         while (idx < sv.size() && sv[idx] == '0') {
@@ -4550,86 +4809,89 @@ struct BigIntStringConversion : public BigIntDivision {
             return;
         }
 
-        size_t total_digits = sv.size() - idx;
-        if (total_digits <= 19) {
-            uint64_t val = 0;
-            for (size_t i = idx; i < sv.size(); ++i) {
-                val = val * 10 + static_cast<uint64_t>(sv[i] - '0');
+        const std::size_t total_digits{sv.size() - idx};
+        if (total_digits <= 19U) {
+            std::uint64_t val{0};
+            for (const char ch : sv.substr(idx)) {
+                val = val * 10ULL + static_cast<std::uint64_t>(ch - '0');
             }
             res.set_uint64(val, sign);
             return;
         }
 
-        std::vector<uint64_t> chunks;
-        chunks.reserve((total_digits + 18) / 19);
+        std::vector<std::uint64_t> chunks{};
+        chunks.reserve((total_digits + 18U) / 19U);
 
-        size_t curr_end = sv.size();
+        std::size_t curr_end{sv.size()};
         while (curr_end > idx) {
-            size_t chunk_start = (curr_end - idx >= 19) ? (curr_end - 19) : idx;
-            uint64_t val = 0;
-            for (size_t i = chunk_start; i < curr_end; ++i) {
-                val = val * 10 + static_cast<uint64_t>(sv[i] - '0');
+            const std::size_t chunk_start{(curr_end - idx >= 19U) ? (curr_end - 19U) : idx};
+            std::uint64_t val{0};
+            for (std::size_t i{chunk_start}; i < curr_end; ++i) {
+                val = val * 10ULL + static_cast<std::uint64_t>(sv[i] - '0');
             }
             chunks.push_back(val);
             curr_end = chunk_start;
         }
 
         if (chunks.size() <= FROM_STRING_DC_THRESHOLD) {
-            res = parse_chunks_linear(chunks.data(), chunks.size());
+            res = parse_chunks_linear(chunks);
             res.m_sign = sign;
             res.normalize();
             return;
         }
 
-        res = parse_chunks_dc(chunks.data(), 0, chunks.size());
+        res = parse_chunks_dc(chunks);
         res.m_sign = sign;
         res.normalize();
     }
 
     /// <summary>
-    /// 字串解析統一入口：編譯期常數求值時派發至 from_string_constexpr，執行期派發至 from_string_runtime。
+    /// Unified decimal string parser dispatching between constexpr and runtime implementations.
+    /// 字串解析統一入口：於編譯期與執行期間自動分派最佳路徑。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void from_string(BigIntStorage& res, numeric::string_view sv) {
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
+    static NUMERIC_CONSTEXPR_20 auto from_string(
+        BigIntStorage& res,
+        const numeric::string_view sv) -> void
+    {
         if (std::is_constant_evaluated()) {
             from_string_constexpr(res, sv);
             return;
         }
-#endif
         from_string_runtime(res, sv);
     }
 
     /// <summary>
-    /// 基底情況：將任意小於 10^(19 * count) 之大數透過 10^19 乘法求逆除法提取為 count 個 chunks。
-    /// 不足 count 個 chunk 者高位自動補 0。
+    /// Basecase chunk extraction via 10^19 reciprocal division into out_chunks span.
+    /// 基底情況：透過 10^19 乘法求逆除法將整數萃取至 out_chunks span（不足高位補 0）。
     /// </summary>
-    static void extract_chunks_basecase(const BigIntStorage& val, uint64_t* out_chunks, size_t count) {
-        for (size_t i = 0; i < count; ++i) {
-            out_chunks[i] = 0;
-        }
-        if (val.m_size == 0 || val.m_sign == 0) {
+    static auto extract_chunks_basecase(
+        const BigIntStorage& val,
+        const std::span<std::uint64_t> out_chunks) -> void
+    {
+        BigIntStorage::zero_limbs(out_chunks);
+        if (val.m_size == 0U || val.m_sign == 0) {
             return;
         }
 
-        uint64_t stack_limbs[128];
-        std::vector<uint64_t> heap_limbs;
-        uint64_t* work_limbs = stack_limbs;
-        if (val.m_size > 128) {
+        std::array<std::uint64_t, 128> stack_limbs{};
+        std::vector<std::uint64_t> heap_limbs{};
+        std::span<std::uint64_t> work_limbs{stack_limbs};
+        if (val.m_size > 128U) {
             heap_limbs.resize(val.m_size);
-            work_limbs = heap_limbs.data();
+            work_limbs = std::span<std::uint64_t>{heap_limbs};
         }
-        std::copy_n(val.data(), val.m_size, work_limbs);
-        size_t work_size = val.m_size;
-        size_t idx = 0;
+        BigIntStorage::copy_limbs(work_limbs, val.as_span());
+        std::size_t work_size{val.m_size};
+        std::size_t idx{0};
 
-        while (work_size > 0 && idx < count) {
-            uint64_t rem = 0;
-            for (size_t i = work_size; i > 0; --i) {
-                uint64_t next_rem = 0;
-                work_limbs[i - 1] = div_recip_radix10_19(rem, work_limbs[i - 1], next_rem);
+        while (work_size > 0U && idx < out_chunks.size()) {
+            std::uint64_t rem{0};
+            for (std::size_t i{work_size}; i > 0U; --i) {
+                std::uint64_t next_rem{0};
+                work_limbs[i - 1U] = div_recip_radix10_19(rem, work_limbs[i - 1U], next_rem);
                 rem = next_rem;
             }
-            while (work_size > 0 && work_limbs[work_size - 1] == 0) {
+            while (work_size > 0U && work_limbs[work_size - 1U] == 0ULL) {
                 --work_size;
             }
             out_chunks[idx++] = rem;
@@ -4637,27 +4899,32 @@ struct BigIntStringConversion : public BigIntDivision {
     }
 
     /// <summary>
-    /// 分治固定位元格式化：保證剛好寫入 num_chunks * 19 個字元（高位以 '0' 補足）。
+    /// Divide-and-conquer zero-padded formatting writing exactly num_chunks * 19 characters.
+    /// 分治固定位數格式化：保證精確寫入 num_chunks * 19 個字元（高位以 '0' 補足）。
     /// </summary>
-    static void format_padded_dc(char* dst, const BigIntStorage& val, size_t num_chunks) {
-        if (num_chunks <= 16) {
-            uint64_t chunks[16];
-            extract_chunks_basecase(val, chunks, num_chunks);
-            for (size_t i = num_chunks; i > 0; --i) {
-                format_chunk_19_digits(dst, chunks[i - 1]);
-                dst += 19;
+    static auto format_padded_dc(
+        const std::span<char> dst,
+        const BigIntStorage& val,
+        const std::size_t num_chunks) -> void
+    {
+        if (num_chunks <= 16U) {
+            std::array<std::uint64_t, 16> chunks{};
+            extract_chunks_basecase(val, std::span<std::uint64_t>{chunks}.subspan(0U, num_chunks));
+            for (std::size_t i{num_chunks}; i > 0U; --i) {
+                const std::size_t out_offset{(num_chunks - i) * 19U};
+                format_chunk_19_digits(dst.subspan(out_offset, 19U), chunks[i - 1U]);
             }
             return;
         }
 
-        size_t k = 0;
-        while ((static_cast<size_t>(1) << (k + 1)) < num_chunks) {
+        std::size_t k{0};
+        while ((std::size_t{1U} << (k + 1U)) < num_chunks) {
             ++k;
         }
-        size_t split = static_cast<size_t>(1) << k;
+        const std::size_t split{std::size_t{1U} << k};
 
         BigIntStorage dynamic_pow;
-        const BigIntStorage* pow_ptr = nullptr;
+        const BigIntStorage* pow_ptr{nullptr};
         if (k < Pow10Cache::MAX_LEVELS) {
             pow_ptr = &Pow10Cache::instance().get_pow(k);
         } else {
@@ -4665,71 +4932,72 @@ struct BigIntStringConversion : public BigIntDivision {
             pow_ptr = &dynamic_pow;
         }
 
-        BigIntStorage q, r;
+        BigIntStorage q;
+        BigIntStorage r;
         div_qr(q, r, val, *pow_ptr);
 
-        size_t high_chunks = num_chunks - split;
+        const std::size_t high_chunks{num_chunks - split};
         format_padded_dc(dst, q, high_chunks);
-        format_padded_dc(dst + high_chunks * 19, r, split);
+        format_padded_dc(dst.subspan(high_chunks * 19U), r, split);
     }
 
     /// <summary>
-    /// 分治非固定位元格式化：最頂部數值無前導 0 寫入，回傳實際寫入字元總長。
+    /// Divide-and-conquer unpadded formatting omitting leading zeros. Returns characters written.
+    /// 分治非固定位數格式化：最頂部數值無前導 0 寫入，回傳實際寫入字元總長。
     /// </summary>
-    static size_t format_unpadded_dc(char* dst, const BigIntStorage& val) {
-        if (val.m_size == 0 || val.m_sign == 0) {
+    NUMERIC_NODISCARD static auto format_unpadded_dc(
+        const std::span<char> dst,
+        const BigIntStorage& val) -> std::size_t
+    {
+        if (val.m_size == 0U || val.m_sign == 0) {
             dst[0] = '0';
-            return 1;
+            return 1U;
         }
 
-        // 當數值小於等於 16 chunks (~304 十進位位元，約 1010 bits) 時採用 basecase 展開
-        if (val.m_size <= 16) {
-            uint64_t stack_limbs[32];
-            std::copy_n(val.data(), val.m_size, stack_limbs);
-            size_t work_size = val.m_size;
+        if (val.m_size <= 16U) {
+            std::array<std::uint64_t, 32> stack_limbs{};
+            BigIntStorage::copy_limbs(stack_limbs, val.as_span());
+            std::size_t work_size{val.m_size};
 
-            uint64_t chunks[32];
-            size_t chunk_count = 0;
+            std::array<std::uint64_t, 32> chunks{};
+            std::size_t chunk_count{0};
 
-            while (work_size > 0) {
-                uint64_t rem = 0;
-                for (size_t i = work_size; i > 0; --i) {
-                    uint64_t next_rem = 0;
-                    stack_limbs[i - 1] = div_recip_radix10_19(rem, stack_limbs[i - 1], next_rem);
+            while (work_size > 0U) {
+                std::uint64_t rem{0};
+                for (std::size_t i{work_size}; i > 0U; --i) {
+                    std::uint64_t next_rem{0};
+                    stack_limbs[i - 1U] = div_recip_radix10_19(rem, stack_limbs[i - 1U], next_rem);
                     rem = next_rem;
                 }
-                while (work_size > 0 && stack_limbs[work_size - 1] == 0) {
+                while (work_size > 0U && stack_limbs[work_size - 1U] == 0ULL) {
                     --work_size;
                 }
                 chunks[chunk_count++] = rem;
             }
 
-            if (chunk_count == 0) {
+            if (chunk_count == 0U) {
                 dst[0] = '0';
-                return 1;
+                return 1U;
             }
 
-            size_t top_digits = digits10_u64(chunks[chunk_count - 1]);
-            format_highest_chunk(dst, chunks[chunk_count - 1], top_digits);
-            char* out_ptr = dst + top_digits;
+            const std::size_t top_digits{digits10_u64(chunks[chunk_count - 1U])};
+            format_highest_chunk(dst, chunks[chunk_count - 1U], top_digits);
 
-            for (size_t i = chunk_count - 1; i > 0; --i) {
-                format_chunk_19_digits(out_ptr, chunks[i - 1]);
-                out_ptr += 19;
+            for (std::size_t i{chunk_count - 1U}; i > 0U; --i) {
+                const std::size_t offset{top_digits + (chunk_count - 1U - i) * 19U};
+                format_chunk_19_digits(dst.subspan(offset, 19U), chunks[i - 1U]);
             }
-            return (chunk_count - 1) * 19 + top_digits;
+            return (chunk_count - 1U) * 19U + top_digits;
         }
 
-        // 大數分治：依據 val 之 bit 長度估計所需總 chunks，尋找最佳 split = 2^k
-        // 1 chunk = 10^19 ≈ 2^63.11 bits => chunks ≈ val.m_size * 64 / 63
-        size_t est_chunks = (val.m_size * 64 + 62) / 63;
-        size_t k = 0;
-        while ((static_cast<size_t>(1) << (k + 1)) < est_chunks) {
+        const std::size_t est_chunks{(val.m_size * 64U + 62U) / 63U};
+        std::size_t k{0};
+        while ((std::size_t{1U} << (k + 1U)) < est_chunks) {
             ++k;
         }
 
         BigIntStorage dynamic_pow;
-        const BigIntStorage* pow_ptr = nullptr;
+        const BigIntStorage* pow_ptr{nullptr};
         if (k < Pow10Cache::MAX_LEVELS) {
             pow_ptr = &Pow10Cache::instance().get_pow(k);
         } else {
@@ -4737,8 +5005,7 @@ struct BigIntStringConversion : public BigIntDivision {
             pow_ptr = &dynamic_pow;
         }
 
-        // 若估計的 2^k 超過或等於 val，則降一級
-        while (k > 0 && compare_unsigned(val.data(), val.m_size, pow_ptr->data(), pow_ptr->m_size) < 0) {
+        while (k > 0U && compare_unsigned(val.as_span(), pow_ptr->as_span()) < 0) {
             --k;
             if (k < Pow10Cache::MAX_LEVELS) {
                 pow_ptr = &Pow10Cache::instance().get_pow(k);
@@ -4748,66 +5015,61 @@ struct BigIntStringConversion : public BigIntDivision {
             }
         }
 
-        size_t split = static_cast<size_t>(1) << k;
-        BigIntStorage q, r;
+        const std::size_t split{std::size_t{1U} << k};
+        BigIntStorage q;
+        BigIntStorage r;
         div_qr(q, r, val, *pow_ptr);
 
-        if (q.m_size == 0 || q.m_sign == 0) {
+        if (q.m_size == 0U || q.m_sign == 0) {
             return format_unpadded_dc(dst, r);
         }
 
-        size_t q_len = format_unpadded_dc(dst, q);
-        format_padded_dc(dst + q_len, r, split);
-        return q_len + split * 19;
+        const std::size_t q_len{format_unpadded_dc(dst, q)};
+        format_padded_dc(dst.subspan(q_len), r, split);
+        return q_len + split * 19U;
     }
 
     /// <summary>
-    /// 將 BigIntStorage 轉換為 Radix-10 十進位字串。
-    /// 小於 1000 位元採高效 10^19 Reciprocal Division；大數自動切換至 Divide-and-Conquer Radix Conversion。
+    /// Converts BigIntStorage into a base-10 decimal std::string.
+    /// 將 BigIntStorage 轉換為十進位字串，涵蓋單肢快路徑、棧上無配置與分治大數路徑。
     /// </summary>
-    static std::string to_string(const BigIntStorage& a) {
-        if (a.m_size == 0 || a.m_sign == 0) {
+    NUMERIC_NODISCARD static auto to_string(const BigIntStorage& a) -> std::string {
+        if (a.m_size == 0U || a.m_sign == 0) {
             return "0";
         }
 
-        // 單 limb 快速超短格式化路徑
-        if (a.m_size == 1) {
-            uint64_t val = a.data()[0];
-            if (val == 0) return "0";
-            size_t digits = digits10_u64(val);
-            char stack_buf[32];
-            char* ptr = stack_buf;
-            if (a.m_sign < 0) *ptr++ = '-';
-            format_highest_chunk(ptr, val, digits);
-            size_t total_len = (a.m_sign < 0 ? 1 : 0) + digits;
-            return std::string(stack_buf, total_len);
-        }
-
-        // 小中型大數 (<= 16 limbs, 約 1024 bits)：棧上緩衝區零初步堆積配置
-        if (a.m_size <= 16) {
-            char stack_buf[512];
-            char* out_ptr = stack_buf;
+        if (a.m_size == 1U) {
+            const std::uint64_t val{a.as_span()[0]};
+            if (val == 0ULL) return "0";
+            const std::size_t digits{digits10_u64(val)};
+            std::array<char, 32> stack_buf{};
+            std::size_t offset{0};
             if (a.m_sign < 0) {
-                *out_ptr++ = '-';
+                stack_buf[offset++] = '-';
             }
-            size_t digits_written = format_unpadded_dc(out_ptr, a);
-            size_t total_len = (a.m_sign < 0 ? 1 : 0) + digits_written;
-            return std::string(stack_buf, total_len);
+            format_highest_chunk(std::span<char>{stack_buf}.subspan(offset), val, digits);
+            return std::string{stack_buf.data(), offset + digits};
         }
 
-        // 大型大數 (> 16 limbs)：預估容量並以分治法格式化
-        size_t max_digits = a.m_size * 20 + 24;
-        std::string result;
-        result.resize(max_digits);
+        if (a.m_size <= 16U) {
+            std::array<char, 512> stack_buf{};
+            std::size_t offset{0};
+            if (a.m_sign < 0) {
+                stack_buf[offset++] = '-';
+            }
+            const std::size_t digits_written{format_unpadded_dc(std::span<char>{stack_buf}.subspan(offset), a)};
+            return std::string{stack_buf.data(), offset + digits_written};
+        }
 
-        char* out_ptr = &result[0];
+        const std::size_t max_digits{a.m_size * 20U + 24U};
+        std::string result(max_digits, '\0');
+        const std::span<char> out_span{result};
+        std::size_t offset{0};
         if (a.m_sign < 0) {
-            *out_ptr++ = '-';
+            out_span[offset++] = '-';
         }
-
-        size_t digits_written = format_unpadded_dc(out_ptr, a);
-        size_t total_len = (a.m_sign < 0 ? 1 : 0) + digits_written;
-        result.resize(total_len);
+        const std::size_t digits_written{format_unpadded_dc(out_span.subspan(offset), a)};
+        result.resize(offset + digits_written);
         return result;
     }
 };
@@ -4817,27 +5079,27 @@ struct BigIntStringConversion : public BigIntDivision {
 // --- End Section: include/numeric/detail/StringConversion.hpp ---
 
 // --- Begin Section: include/numeric/detail/BigIntCore.hpp ---
-// BigIntCore.hpp
-// Core arbitrary-precision integer algorithms and SBO storage layer for CPP-BigInt.
-// Zero external dependencies, downward compatible from C++23 to C++11.
-// Modularized into Intrinsics, Storage, Arithmetic, Bitwise, Multiplication, Division, and StringConversion.
+// filepath: include/numeric/detail/BigIntCore.hpp
+/**
+ * @file BigIntCore.hpp
+ * @brief Unified arbitrary-precision integer core combining intrinsics, SBO storage,
+ *        arithmetic, bitwise logic, Karatsuba/Toom-3 multiplication, Knuth/BZ division, and string I/O.
+ *        彙聚硬體原語、SBO 儲存、四則運算、位元邏輯、高階乘除法與字串轉換之核心介面。
+ */
 
 
 namespace numeric {
 namespace detail {
 
 /// <summary>
-/// BigInt 演算法核心類別，繼承自 BigIntStringConversion（具備完整算術、乘除、位元與字串轉換功能）。
-/// 提供 100% 向後相容之靜態方法與演算法入口。
+/// Unified BigInt algorithm core class inheriting BigIntStringConversion.
+/// Provides backward-compatible static entry points with zero runtime overhead.
+/// BigInt 演算法核心類別，繼承自 BigIntStringConversion，提供零開銷靜態演算法入口。
 /// </summary>
 class BigIntCore : public BigIntStringConversion {
 public:
-    // 所有演算法與常數（如 KARATSUBA_THRESHOLD, TOOM3_THRESHOLD, BZ_THRESHOLD,
-    // FROM_STRING_DC_THRESHOLD, adc64, sbb64, clz64, mul64_wide, div128_64,
-    // add_unsigned, sub_unsigned, mul_signed, div_qr_signed, bitwise_*, to_string, from_string 等）
-    // 均透過公開繼承自 BigIntStringConversion -> BigIntDivision -> BigIntMultiplication
-    // -> BigIntBitwise -> BigIntArithmetic -> BigIntIntrinsics 完整提供，
-    // 維持 100% 原始 API 相容性且零額外執行期或二進位開銷。
+    // Inherits full arithmetic, multiplication, division, bitwise, and string conversion operations.
+    // 透過公開繼承完整提供所有進階算術、乘除、位元與字串轉換演算法入口。
 };
 
 } // namespace detail
@@ -4848,14 +5110,36 @@ using BigIntCore = detail::BigIntCore;
 // --- End Section: include/numeric/detail/BigIntCore.hpp ---
 
 // --- Begin Section: include/numeric/BigInt.hpp ---
-// BigInt.hpp
-// Arbitrary-precision integer facade class for CPP-BigInt.
-// Zero external dependencies, downward compatible from C++23 to C++11.
+// filepath: include/numeric/BigInt.hpp
+/**
+ * @file BigInt.hpp
+ * @brief Arbitrary-precision integer facade class (BasicBigInt<SboLimbs>) for CPP-BigInt.
+ *        Provides C++23 concepts-constrained constructors, trailing return types, std::expected monadic
+ *        parsing/conversion APIs, SBO fast paths, and std::formatter / std::hash specializations.
+ *        任意精度整數高階封裝類別 (BasicBigInt<SboLimbs>)。
+ *        採用 C++23 概念約束、全域尾隨回傳型別、std::expected 單子錯誤處理、SBO 快速路徑與標準庫特化。
+ */
 
+
+#if NUMERIC_HAS_STD_FORMAT
+#  include <format>
+#endif
 
 namespace numeric {
 
-template <size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
+/// <summary>
+/// Strongly-typed recoverable error codes for non-throwing BigInt operations.
+/// 供無例外 BigInt 介面使用之強型別可恢復錯誤列舉。
+/// </summary>
+enum class BigIntError : std::uint8_t {
+    EmptyInput,
+    InvalidFormat,
+    DivisionByZero,
+    NegativeInput,
+    Overflow
+};
+
+template <std::size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
 class BasicBigInt;
 
 using BigInt     = BasicBigInt<NUMERIC_BIGINT_SBO_LIMBS>;
@@ -4870,82 +5154,67 @@ using bigint1024 = BigInt1024;
 namespace detail {
 
     /// <summary>
-    /// 常數輔助結構，支援以常數屬性或函式呼叫方式取得 bigint 常數（如 bigint::zero 與 bigint::zero()）。
+    /// Constant proxy structure supporting both property-style (bigint::zero) and call-style (bigint::zero()).
+    /// 常數輔助結構，支援屬性形式與函式呼叫形式取得零或一之常數。
     /// </summary>
-    struct BigIntConstantProxy {
-        int64_t value;
+    struct BigIntConstantProxy final {
+        std::int64_t value{0};
 
-        /// <summary>
-        /// 建構常數代理物件。
-        /// </summary>
-        /// <param name="v">整數值</param>
-        constexpr explicit BigIntConstantProxy(int64_t v) noexcept : value(v) {}
+        constexpr explicit BigIntConstantProxy(const std::int64_t v) noexcept : value{v} {}
 
-        /// <summary>
-        /// 純量轉換至 int64_t。
-        /// </summary>
-        constexpr explicit operator int64_t() const noexcept { return value; }
-
-        /// <summary>
-        /// 條件判斷布林轉換。
-        /// </summary>
+        constexpr explicit operator std::int64_t() const noexcept { return value; }
         constexpr explicit operator bool() const noexcept { return value != 0; }
 
-        /// <summary>
-        /// 隱式轉換至 BasicBigInt<SboLimbs>。
-        /// </summary>
-        template <size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
+        template <std::size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
         NUMERIC_CONSTEXPR_20 operator BasicBigInt<SboLimbs>() const noexcept;
 
-        /// <summary>
-        /// 函式呼叫運算子，傳回對應之 BasicBigInt<SboLimbs>。
-        /// </summary>
-        template <size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
-        NUMERIC_CONSTEXPR_20 BasicBigInt<SboLimbs> operator()() const noexcept;
+        template <std::size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
+        NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator()() const noexcept -> BasicBigInt<SboLimbs>;
 
-        friend constexpr bool operator==(BigIntConstantProxy a, BigIntConstantProxy b) noexcept {
+        NUMERIC_NODISCARD friend constexpr auto operator==(const BigIntConstantProxy a, const BigIntConstantProxy b) noexcept -> bool {
             return a.value == b.value;
         }
 
-        friend constexpr bool operator!=(BigIntConstantProxy a, BigIntConstantProxy b) noexcept {
+        NUMERIC_NODISCARD friend constexpr auto operator!=(const BigIntConstantProxy a, const BigIntConstantProxy b) noexcept -> bool {
             return a.value != b.value;
         }
 
-        template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-        friend NUMERIC_CONSTEXPR_20 bool operator==(BigIntConstantProxy p, T other) noexcept {
-            return p.value == static_cast<int64_t>(other);
+        template <std::integral T>
+        NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator==(const BigIntConstantProxy p, const T other) noexcept -> bool {
+            return p.value == static_cast<std::int64_t>(other);
         }
 
-        template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-        friend NUMERIC_CONSTEXPR_20 bool operator==(T other, BigIntConstantProxy p) noexcept {
-            return static_cast<int64_t>(other) == p.value;
+        template <std::integral T>
+        NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator==(const T other, const BigIntConstantProxy p) noexcept -> bool {
+            return static_cast<std::int64_t>(other) == p.value;
         }
 
-        template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-        friend NUMERIC_CONSTEXPR_20 bool operator!=(BigIntConstantProxy p, T other) noexcept {
-            return p.value != static_cast<int64_t>(other);
+        template <std::integral T>
+        NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator!=(const BigIntConstantProxy p, const T other) noexcept -> bool {
+            return p.value != static_cast<std::int64_t>(other);
         }
 
-        template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-        friend NUMERIC_CONSTEXPR_20 bool operator!=(T other, BigIntConstantProxy p) noexcept {
-            return static_cast<int64_t>(other) != p.value;
+        template <std::integral T>
+        NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator!=(const T other, const BigIntConstantProxy p) noexcept -> bool {
+            return static_cast<std::int64_t>(other) != p.value;
         }
 
-        template <size_t OtherLimbs>
-        friend NUMERIC_CONSTEXPR_20 bool operator==(BigIntConstantProxy p, const BasicBigInt<OtherLimbs>& other) noexcept;
+        template <std::size_t OtherLimbs>
+        friend NUMERIC_CONSTEXPR_20 auto operator==(BigIntConstantProxy p, const BasicBigInt<OtherLimbs>& other) noexcept -> bool;
 
-        template <size_t OtherLimbs>
-        friend NUMERIC_CONSTEXPR_20 bool operator==(const BasicBigInt<OtherLimbs>& other, BigIntConstantProxy p) noexcept;
+        template <std::size_t OtherLimbs>
+        friend NUMERIC_CONSTEXPR_20 auto operator==(const BasicBigInt<OtherLimbs>& other, BigIntConstantProxy p) noexcept -> bool;
 
-        template <size_t OtherLimbs>
-        friend NUMERIC_CONSTEXPR_20 bool operator!=(BigIntConstantProxy p, const BasicBigInt<OtherLimbs>& other) noexcept;
+        template <std::size_t OtherLimbs>
+        friend NUMERIC_CONSTEXPR_20 auto operator!=(BigIntConstantProxy p, const BasicBigInt<OtherLimbs>& other) noexcept -> bool;
 
-        template <size_t OtherLimbs>
-        friend NUMERIC_CONSTEXPR_20 bool operator!=(const BasicBigInt<OtherLimbs>& other, BigIntConstantProxy p) noexcept;
+        template <std::size_t OtherLimbs>
+        friend NUMERIC_CONSTEXPR_20 auto operator!=(const BasicBigInt<OtherLimbs>& other, BigIntConstantProxy p) noexcept -> bool;
     };
 
     /// <summary>
-    /// BigInt 常數模板基底結構，確保在 C++11/C++14 header-only 環境下具備弱符號鏈結與外部定義。
+    /// Template container providing inline constant proxies zero and one.
+    /// 提供內聯常數代理 zero 與 one 的樣板基底結構。
     /// </summary>
     template <typename T = void>
     struct BigIntConstants {
@@ -4953,352 +5222,267 @@ namespace detail {
         static constexpr BigIntConstantProxy one{1};
     };
 
-#if (NUMERIC_CPLUSPLUS < NUMERIC_CXX_17)
-    template <typename T>
-    constexpr BigIntConstantProxy BigIntConstants<T>::zero;
-    template <typename T>
-    constexpr BigIntConstantProxy BigIntConstants<T>::one;
-#endif
-
 } // namespace detail
 
 /// <summary>
-/// 任意精度整數類別，採用 LLVM SmallVector 雙層架構，SBO 容量支援編譯期樣板參數化。
-/// 衍生自非樣板核心 BigIntBase，重量級演算法不隨 SBO 展開，杜絕 Code Bloat。
+/// Arbitrary-precision signed integer facade parameterized by compile-time inline SBO limb capacity.
+/// Derives from non-templated BigIntBase to decouple heavy numerical kernels and avoid code bloat.
+/// 任意精度有符號整數類別，採用 LLVM SmallVector 雙層解耦架構並支援編譯期 SBO 容量參數化。
 /// </summary>
-/// <typeparam name="SboLimbs">靜態 SBO 內聯肢數（預設為 NUMERIC_BIGINT_SBO_LIMBS = 4）。</typeparam>
-template <size_t SboLimbs>
+/// <typeparam name="SboLimbs">Static inline SBO limb capacity (default 4 = 256-bit). / 靜態 SBO 內聯肢數（預設 4）。</typeparam>
+template <std::size_t SboLimbs>
 class BasicBigInt : public BigIntBase, public detail::BigIntConstants<> {
 private:
-    static constexpr size_t ACTUAL_SBO = (SboLimbs > 0) ? SboLimbs : 1;
-    alignas(uint64_t) uint64_t m_inline_storage[ACTUAL_SBO];
+    static constexpr std::size_t ACTUAL_SBO{(SboLimbs > 0U) ? SboLimbs : 1U};
+    alignas(std::uint64_t) std::array<std::uint64_t, ACTUAL_SBO> m_inline_storage{};
 
 public:
     static NUMERIC_INLINE_VAR constexpr detail::BigIntConstantProxy zero{0};
     static NUMERIC_INLINE_VAR constexpr detail::BigIntConstantProxy one{1};
 
     /// <summary>
-    /// 預設建構子：初始化數值為 0。
+    /// Default constructor initializing value to 0 inside inline SBO buffer.
+    /// 預設建構子：初始化數值為 0 並啟用 SBO 內聯緩衝區。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt() noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
+    NUMERIC_CONSTEXPR_20 BasicBigInt() noexcept : BigIntBase{} {
+        this->bind_inline(std::span<std::uint64_t>{m_inline_storage}.subspan(0U, SboLimbs));
     }
 
     /// <summary>
-    /// 複製建構子（同容量）。
+    /// Copy constructor (same SBO capacity). / 複製建構子（同容量）。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(const BasicBigInt& other)
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
+    NUMERIC_CONSTEXPR_20 BasicBigInt(const BasicBigInt& other) : BasicBigInt{} {
         this->assign_from(other);
     }
 
     /// <summary>
-    /// 跨 SBO 容量複製建構子。
+    /// Cross-capacity copy constructor. / 跨 SBO 容量複製建構子。
     /// </summary>
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(const BasicBigInt<OtherLimbs>& other)
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
+    template <std::size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 BasicBigInt(const BasicBigInt<OtherLimbs>& other) : BasicBigInt{} {
         this->assign_from(other);
     }
 
     /// <summary>
-    /// 移動建構子（同容量）。
+    /// Move constructor (same SBO capacity). / 移動建構子（同容量）。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(BasicBigInt&& other) noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
+    NUMERIC_CONSTEXPR_20 BasicBigInt(BasicBigInt&& other) noexcept : BasicBigInt{} {
         this->move_from(std::move(other));
     }
 
     /// <summary>
-    /// 跨 SBO 容量移動建構子。
+    /// Cross-capacity move constructor. / 跨 SBO 容量移動建構子。
     /// </summary>
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(BasicBigInt<OtherLimbs>&& other) noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
+    template <std::size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 BasicBigInt(BasicBigInt<OtherLimbs>&& other) noexcept : BasicBigInt{} {
         this->move_from(std::move(other));
     }
 
-    /// <summary>
-    /// 複製賦值運算子（同容量）。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator=(const BasicBigInt& other) {
+    NUMERIC_CONSTEXPR_20 auto operator=(const BasicBigInt& other) -> BasicBigInt& {
         this->assign_from(other);
         return *this;
     }
 
-    /// <summary>
-    /// 跨 SBO 容量複製賦值運算子。
-    /// </summary>
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator=(const BasicBigInt<OtherLimbs>& other) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 auto operator=(const BasicBigInt<OtherLimbs>& other) -> BasicBigInt& {
         this->assign_from(other);
         return *this;
     }
 
-    /// <summary>
-    /// 移動賦值運算子（同容量）。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator=(BasicBigInt&& other) noexcept {
+    NUMERIC_CONSTEXPR_20 auto operator=(BasicBigInt&& other) noexcept -> BasicBigInt& {
         this->move_from(std::move(other));
         return *this;
     }
 
-    /// <summary>
-    /// 跨 SBO 容量移動賦值運算子。
-    /// </summary>
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator=(BasicBigInt<OtherLimbs>&& other) noexcept {
+    template <std::size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 auto operator=(BasicBigInt<OtherLimbs>&& other) noexcept -> BasicBigInt& {
         this->move_from(std::move(other));
         return *this;
     }
 
-    /// <summary>
-    /// 自常數代理物件指派賦值。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator=(detail::BigIntConstantProxy proxy) noexcept {
-        return *this = BasicBigInt(proxy.value);
+    NUMERIC_CONSTEXPR_20 auto operator=(const detail::BigIntConstantProxy proxy) noexcept -> BasicBigInt& {
+        return *this = BasicBigInt{proxy.value};
     }
 
-    /// <summary>
-    /// 解構子。
-    /// </summary>
     NUMERIC_CONSTEXPR_20 ~BasicBigInt() = default;
 
     /// <summary>
-    /// 自常數代理物件（如 bigint::zero, bigint::one）直接建構，避免透過轉換運算子樣板推導。
+    /// Constructs directly from a constant proxy (e.g. bigint::zero, bigint::one).
+    /// 自常數代理物件（如 bigint::zero、bigint::one）直接建構。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(detail::BigIntConstantProxy proxy) noexcept
-        : BasicBigInt(proxy.value) {}
+    NUMERIC_CONSTEXPR_20 BasicBigInt(const detail::BigIntConstantProxy proxy) noexcept
+        : BasicBigInt{proxy.value} {}
 
     /// <summary>
-    /// 自內部 BigIntStorage 建立 BasicBigInt。
+    /// Explicit constructor adopting an internal BigIntStorage instance.
+    /// 顯式從內部 BigIntStorage 轉移建構 BasicBigInt。
     /// </summary>
     explicit NUMERIC_CONSTEXPR_20 BasicBigInt(detail::BigIntStorage storage) noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
+        : BasicBigInt{} {
         this->move_from(std::move(storage));
     }
 
     /// <summary>
-    /// 自布林值建構：true 為 1，false 為 0。
+    /// Explicit constructor from boolean (true -> 1, false -> 0).
+    /// 自布林值顯式建構（true 為 1，false 為 0）。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(bool b) noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-        this->set_uint64(b ? 1 : 0, b ? 1 : 0);
+    explicit NUMERIC_CONSTEXPR_20 BasicBigInt(const bool b) noexcept : BasicBigInt{} {
+        this->set_uint64(b ? 1ULL : 0ULL, b ? 1 : 0);
     }
 
     /// <summary>
-    /// 自 8 位元有符號整數建構。
+    /// Value-preserving constructor from any signed integral type (excluding bool).
+    /// 自任意有符號整數型別建構（保值隱式轉換）。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(int8_t v) noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-        if (v < 0) {
-            this->set_uint64(static_cast<uint64_t>(-(v + 1)) + 1, -1);
+    template <std::signed_integral T>
+        requires (!std::same_as<T, bool>)
+    NUMERIC_CONSTEXPR_20 BasicBigInt(const T v) noexcept : BasicBigInt{} {
+        const auto val{static_cast<std::int64_t>(v)};
+        if (val < 0) {
+            this->set_uint64(static_cast<std::uint64_t>(-(val + 1)) + 1ULL, -1);
         } else {
-            this->set_uint64(static_cast<uint64_t>(v), v > 0 ? 1 : 0);
+            this->set_uint64(static_cast<std::uint64_t>(val), val > 0 ? 1 : 0);
         }
     }
 
     /// <summary>
-    /// 自 16 位元有符號整數建構。
+    /// Value-preserving constructor from any unsigned integral type (excluding bool).
+    /// 自任意無符號整數型別建構（保值隱式轉換）。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(int16_t v) noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-        if (v < 0) {
-            this->set_uint64(static_cast<uint64_t>(-(v + 1)) + 1, -1);
-        } else {
-            this->set_uint64(static_cast<uint64_t>(v), v > 0 ? 1 : 0);
-        }
+    template <std::unsigned_integral T>
+        requires (!std::same_as<T, bool>)
+    NUMERIC_CONSTEXPR_20 BasicBigInt(const T v) noexcept : BasicBigInt{} {
+        const auto val{static_cast<std::uint64_t>(v)};
+        this->set_uint64(val, val > 0ULL ? 1 : 0);
     }
 
     /// <summary>
-    /// 自 32 位元有符號整數建構。
+    /// Explicit constructor parsing a decimal numeric::string_view.
+    /// 自十進位字串視圖顯式解析建構 BasicBigInt。
     /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(int32_t v) noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-        if (v < 0) {
-            this->set_uint64(static_cast<uint64_t>(-(v + 1)) + 1, -1);
-        } else {
-            this->set_uint64(static_cast<uint64_t>(v), v > 0 ? 1 : 0);
-        }
-    }
-
-    /// <summary>
-    /// 自 64 位元有符號整數建構。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(int64_t v) noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-        if (v < 0) {
-            this->set_uint64(static_cast<uint64_t>(-(v + 1)) + 1, -1);
-        } else {
-            this->set_uint64(static_cast<uint64_t>(v), v > 0 ? 1 : 0);
-        }
-    }
-
-    /// <summary>
-    /// 自 8 位元無符號整數建構。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(uint8_t v) noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-        this->set_uint64(v, v > 0 ? 1 : 0);
-    }
-
-    /// <summary>
-    /// 自 16 位元無符號整數建構。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(uint16_t v) noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-        this->set_uint64(v, v > 0 ? 1 : 0);
-    }
-
-    /// <summary>
-    /// 自 32 位元無符號整數建構。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(uint32_t v) noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-        this->set_uint64(v, v > 0 ? 1 : 0);
-    }
-
-    /// <summary>
-    /// 自 64 位元無符號整數建構。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(uint64_t v) noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-        this->set_uint64(v, v > 0 ? 1 : 0);
-    }
-
-    /// <summary>
-    /// 自其他原生整數型別（如 long, unsigned long, char）建構之泛型模板。
-    /// </summary>
-    template <typename T, typename std::enable_if<
-        std::is_integral<T>::value &&
-        !std::is_same<T, bool>::value &&
-        !std::is_same<T, int8_t>::value &&
-        !std::is_same<T, int16_t>::value &&
-        !std::is_same<T, int32_t>::value &&
-        !std::is_same<T, int64_t>::value &&
-        !std::is_same<T, uint8_t>::value &&
-        !std::is_same<T, uint16_t>::value &&
-        !std::is_same<T, uint32_t>::value &&
-        !std::is_same<T, uint64_t>::value, int>::type = 0>
-    NUMERIC_CONSTEXPR_20 BasicBigInt(T v) noexcept
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-        if (std::is_signed<T>::value) {
-            int64_t val = static_cast<int64_t>(v);
-            if (val < 0) {
-                this->set_uint64(static_cast<uint64_t>(-(val + 1)) + 1, -1);
-            } else {
-                this->set_uint64(static_cast<uint64_t>(val), val > 0 ? 1 : 0);
-            }
-        } else {
-            uint64_t val = static_cast<uint64_t>(v);
-            this->set_uint64(val, val > 0 ? 1 : 0);
-        }
-    }
-
-    /// <summary>
-    /// 自 string_view 解析並建構 BasicBigInt。
-    /// </summary>
-    explicit NUMERIC_CONSTEXPR_20 BasicBigInt(numeric::string_view sv)
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
+    explicit NUMERIC_CONSTEXPR_20 BasicBigInt(const numeric::string_view sv) : BasicBigInt{} {
         detail::BigIntCore::from_string(*this, sv);
     }
 
     /// <summary>
-    /// 自 C-style 字串解析並建構 BasicBigInt。
+    /// Explicit constructor parsing a null-terminated C string (throws on nullptr).
+    /// 自以空字元結尾之 C 字串顯式解析建構（空指標即刻拋出例外）。
     /// </summary>
-    explicit NUMERIC_CONSTEXPR_20 BasicBigInt(const char* s)
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
+    explicit NUMERIC_CONSTEXPR_20 BasicBigInt(const char* const s) : BasicBigInt{} {
         if (s == nullptr) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("null string pointer"));
         }
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-        detail::BigIntCore::from_string(*this, numeric::string_view(s));
+        detail::BigIntCore::from_string(*this, numeric::string_view{s});
     }
 
     /// <summary>
-    /// 自 std::string 解析並建構 BasicBigInt。
+    /// Explicit constructor parsing a std::string.
+    /// 自 std::string 顯式解析建構 BasicBigInt。
     /// </summary>
-    explicit BasicBigInt(const std::string& s)
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-        detail::BigIntCore::from_string(*this, numeric::string_view(s.data(), s.size()));
+    explicit BasicBigInt(const std::string& s) : BasicBigInt{} {
+        detail::BigIntCore::from_string(*this, numeric::string_view{s});
     }
 
     /// <summary>
-    /// 自 std::bitset 建構非負任意精度整數（N == 0 之特化處理）。
+    /// Explicit constructor converting std::bitset&lt;N&gt; into non-negative BasicBigInt.
+    /// 自 std::bitset&lt;N&gt; 顯式建構非負任意精度整數。
     /// </summary>
-    template <size_t N, typename std::enable_if<(N == 0), int>::type = 0>
-    BasicBigInt(const std::bitset<N>&)
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-    }
-
-    /// <summary>
-    /// 自 std::bitset 建構非負任意精度整數（按無符號二進位數解析）。
-    /// </summary>
-    template <size_t N, typename std::enable_if<(N > 0), int>::type = 0>
-    BasicBigInt(const std::bitset<N>& bs)
-        : BigIntBase(m_inline_storage, static_cast<uint32_t>(SboLimbs)) {
-        zero_limbs(m_inline_storage, ACTUAL_SBO);
-        size_t limb_cnt = (N + 63) / 64;
-        this->resize(limb_cnt, 0);
-        bool any_bit = false;
-        for (size_t w = 0; w < limb_cnt; ++w) {
-            uint64_t val = 0;
-            size_t bits_in_limb = (w == limb_cnt - 1) ? (N - w * 64) : 64;
-            for (size_t b = 0; b < bits_in_limb; ++b) {
-                if (bs.test(w * 64 + b)) {
-                    val |= (static_cast<uint64_t>(1) << b);
-                    any_bit = true;
+    template <std::size_t N>
+    explicit BasicBigInt(const std::bitset<N>& bs) : BasicBigInt{} {
+        if constexpr (N > 0U) {
+            const std::size_t limb_cnt{(N + 63U) / 64U};
+            this->resize(limb_cnt, 0ULL);
+            bool any_bit{false};
+            const std::span<std::uint64_t> out{this->as_span()};
+            for (std::size_t w{0}; w < limb_cnt; ++w) {
+                std::uint64_t val{0};
+                const std::size_t bits_in_limb{(w == limb_cnt - 1U) ? (N - w * 64U) : 64U};
+                for (std::size_t b{0}; b < bits_in_limb; ++b) {
+                    if (bs.test(w * 64U + b)) {
+                        val |= (std::uint64_t{1} << b);
+                        any_bit = true;
+                    }
                 }
+                out[w] = val;
             }
-            this->m_data[w] = val;
-        }
-        if (any_bit) {
-            this->m_sign = 1;
-            this->normalize();
-        } else {
-            this->m_size = 0;
-            this->m_sign = 0;
-            this->shrink_to_sbo_if_possible();
+            if (any_bit) {
+                this->m_sign = 1;
+                this->normalize();
+            } else {
+                this->m_size = 0;
+                this->m_sign = 0;
+                this->shrink_to_sbo_if_possible();
+            }
         }
     }
 
     /// <summary>
-    /// 靜態輔助方法：自字串解析 BasicBigInt。
+    /// Parses a decimal string view into BasicBigInt (throws std::invalid_argument on failure).
+    /// 自十進位字串視圖解析 BasicBigInt（失敗拋出例外）。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 BasicBigInt from_string(numeric::string_view sv) {
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto from_string(const numeric::string_view sv) -> BasicBigInt {
         BasicBigInt res;
         detail::BigIntCore::from_string(res, sv);
         return res;
     }
 
     /// <summary>
-    /// 靜態輔助方法：自二進位字串解析 BasicBigInt。
+    /// Monadic non-throwing decimal parser returning std::expected&lt;BasicBigInt, BigIntError&gt;.
+    /// 無例外單子式十進位字串解析介面，回傳 std::expected&lt;BasicBigInt, BigIntError&gt;。
     /// </summary>
-    static BasicBigInt from_binary_string(numeric::string_view sv) {
+    /// <param name="sv">Input decimal string view. / 輸入十進位字串視圖。</param>
+    /// <returns>Parsed BasicBigInt or BigIntError. / 解析結果或 BigIntError。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto try_from_string(
+        const numeric::string_view sv) -> std::expected<BasicBigInt, BigIntError>
+    {
         if (sv.empty()) {
-            NUMERIC_THROW_OR_ABORT(std::invalid_argument("empty binary string"));
+            return std::unexpected{BigIntError::EmptyInput};
         }
-        size_t idx = 0;
-        int8_t sign_val = 1;
+        std::size_t idx{0};
+        if (sv[0] == '-' || sv[0] == '+') {
+            ++idx;
+        }
+        if (idx == sv.size()) {
+            return std::unexpected{BigIntError::InvalidFormat};
+        }
+        const bool all_digits{std::ranges::all_of(sv.substr(idx), [](const char ch) noexcept -> bool {
+            return ch >= '0' && ch <= '9';
+        })};
+        if (!all_digits) {
+            return std::unexpected{BigIntError::InvalidFormat};
+        }
+        BasicBigInt res;
+        detail::BigIntCore::from_string(res, sv);
+        return res;
+    }
+
+    /// <summary>
+    /// Parses a binary string view (optional sign and 0b/0B prefix) into BasicBigInt.
+    /// 自二進位字串視圖（支援選填正負號及 0b/0B 前綴）解析 BasicBigInt。
+    /// </summary>
+    NUMERIC_NODISCARD static auto from_binary_string(const numeric::string_view sv) -> BasicBigInt {
+        const auto parsed{try_from_binary_string(sv)};
+        if (!parsed) {
+            if (parsed.error() == BigIntError::EmptyInput) {
+                NUMERIC_THROW_OR_ABORT(std::invalid_argument("empty binary string"));
+            }
+            NUMERIC_THROW_OR_ABORT(std::invalid_argument("invalid binary string"));
+        }
+        return *parsed;
+    }
+
+    /// <summary>
+    /// Monadic non-throwing binary parser returning std::expected&lt;BasicBigInt, BigIntError&gt;.
+    /// 無例外單子式二進位字串解析介面，回傳 std::expected&lt;BasicBigInt, BigIntError&gt;。
+    /// </summary>
+    NUMERIC_NODISCARD static auto try_from_binary_string(
+        const numeric::string_view sv) -> std::expected<BasicBigInt, BigIntError>
+    {
+        if (sv.empty()) {
+            return std::unexpected{BigIntError::EmptyInput};
+        }
+        std::size_t idx{0};
+        std::int8_t sign_val{1};
         if (sv[0] == '-') {
             sign_val = -1;
             ++idx;
@@ -5306,294 +5490,290 @@ public:
             ++idx;
         }
         if (idx == sv.size()) {
-            NUMERIC_THROW_OR_ABORT(std::invalid_argument("no binary digits in string"));
+            return std::unexpected{BigIntError::InvalidFormat};
         }
-        if (idx + 1 < sv.size() && sv[idx] == '0' && (sv[idx + 1] == 'b' || sv[idx + 1] == 'B')) {
-            idx += 2;
+        if (idx + 1U < sv.size() && sv[idx] == '0' && (sv[idx + 1U] == 'b' || sv[idx + 1U] == 'B')) {
+            idx += 2U;
         }
         if (idx == sv.size()) {
-            NUMERIC_THROW_OR_ABORT(std::invalid_argument("no binary digits after prefix"));
+            return std::unexpected{BigIntError::InvalidFormat};
         }
-        for (size_t i = idx; i < sv.size(); ++i) {
-            if (sv[i] != '0' && sv[i] != '1') {
-                NUMERIC_THROW_OR_ABORT(std::invalid_argument("invalid character in binary string"));
-            }
+        const bool all_bin{std::ranges::all_of(sv.substr(idx), [](const char ch) noexcept -> bool {
+            return ch == '0' || ch == '1';
+        })};
+        if (!all_bin) {
+            return std::unexpected{BigIntError::InvalidFormat};
         }
         while (idx < sv.size() && sv[idx] == '0') {
             ++idx;
         }
         if (idx == sv.size()) {
-            return BasicBigInt(0);
+            return BasicBigInt{0};
         }
-        size_t num_bits = sv.size() - idx;
-        size_t limb_cnt = (num_bits + 63) / 64;
+
+        const std::size_t num_bits{sv.size() - idx};
+        const std::size_t limb_cnt{(num_bits + 63U) / 64U};
         BasicBigInt res;
-        res.resize(limb_cnt, 0);
-        for (size_t w = 0; w < limb_cnt; ++w) {
-            uint64_t limb_val = 0;
-            size_t bits_in_limb = (w == limb_cnt - 1) ? (num_bits - w * 64) : 64;
-            for (size_t b = 0; b < bits_in_limb; ++b) {
-                size_t char_pos = sv.size() - 1 - (w * 64 + b);
+        res.resize(limb_cnt, 0ULL);
+        const std::span<std::uint64_t> out{res.as_span()};
+        for (std::size_t w{0}; w < limb_cnt; ++w) {
+            std::uint64_t limb_val{0};
+            const std::size_t bits_in_limb{(w == limb_cnt - 1U) ? (num_bits - w * 64U) : 64U};
+            for (std::size_t b{0}; b < bits_in_limb; ++b) {
+                const std::size_t char_pos{sv.size() - 1U - (w * 64U + b)};
                 if (sv[char_pos] == '1') {
-                    limb_val |= (static_cast<uint64_t>(1) << b);
+                    limb_val |= (std::uint64_t{1} << b);
                 }
             }
-            res.m_data[w] = limb_val;
+            out[w] = limb_val;
         }
         res.m_sign = sign_val;
         res.normalize();
         return res;
     }
 
-    /// <summary>
-    /// 取得內部儲存層之參考。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BigIntBase& storage() noexcept {
+    NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto storage() noexcept -> BigIntBase& {
         return *this;
     }
 
-    /// <summary>
-    /// 取得內部儲存層之常數參考。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 const BigIntBase& storage() const noexcept {
+    NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto storage() const noexcept -> const BigIntBase& {
         return *this;
     }
 
-    /// <summary>
-    /// 明確轉型為布林值（非 0 為 true、0 為 false）。
-    /// </summary>
     explicit NUMERIC_CONSTEXPR_20 operator bool() const noexcept {
         return this->m_sign != 0;
     }
 
-    /// <summary>
-    /// 邏輯非運算子。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 bool operator!() const noexcept {
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator!() const noexcept -> bool {
         return this->m_sign == 0;
     }
 
     /// <summary>
-    /// 明確轉型為 64 位元有符號整數（可能截斷）。
+    /// Overflow-checked conversion to 64-bit signed integer returning std::expected.
+    /// 具備溢位檢查之 64 位元有符號整數安全轉換介面。
     /// </summary>
-    explicit NUMERIC_CONSTEXPR_20 operator int64_t() const noexcept {
-        if (this->m_size == 0) return 0;
-        uint64_t mag = this->m_data[0];
-        if (this->m_sign < 0) {
-            return -static_cast<int64_t>(mag);
+    [[nodiscard]] NUMERIC_CONSTEXPR_20 auto try_to_int64() const noexcept -> std::expected<std::int64_t, BigIntError> {
+        if (this->m_size == 0U || this->m_sign == 0) {
+            return std::int64_t{0};
         }
-        return static_cast<int64_t>(mag);
+        if (this->m_size > 1U) {
+            return std::unexpected{BigIntError::Overflow};
+        }
+        const std::uint64_t mag{this->as_span()[0]};
+        if (this->m_sign > 0) {
+            if (mag > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+                return std::unexpected{BigIntError::Overflow};
+            }
+            return static_cast<std::int64_t>(mag);
+        }
+        constexpr std::uint64_t abs_min{static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) + 1ULL};
+        if (mag > abs_min) {
+            return std::unexpected{BigIntError::Overflow};
+        }
+        if (mag == abs_min) {
+            return std::numeric_limits<std::int64_t>::min();
+        }
+        return -static_cast<std::int64_t>(mag);
     }
 
     /// <summary>
-    /// 明確轉型為 64 位元無符號整數（可能截斷）。
+    /// Overflow- and sign-checked conversion to 64-bit unsigned integer returning std::expected.
+    /// 具備溢位與負號檢查之 64 位元無符號整數安全轉換介面。
     /// </summary>
-    explicit NUMERIC_CONSTEXPR_20 operator uint64_t() const noexcept {
-        if (this->m_size == 0) return 0;
-        return this->m_data[0];
+    [[nodiscard]] NUMERIC_CONSTEXPR_20 auto try_to_uint64() const noexcept -> std::expected<std::uint64_t, BigIntError> {
+        if (this->m_sign < 0) {
+            return std::unexpected{BigIntError::NegativeInput};
+        }
+        if (this->m_size == 0U) {
+            return std::uint64_t{0};
+        }
+        if (this->m_size > 1U) {
+            return std::unexpected{BigIntError::Overflow};
+        }
+        return this->as_span()[0];
     }
 
-    /// <summary>
-    /// 明確轉型為 32 位元有符號整數（可能截斷）。
-    /// </summary>
-    explicit NUMERIC_CONSTEXPR_20 operator int32_t() const noexcept {
-        return static_cast<int32_t>(static_cast<int64_t>(*this));
+    explicit NUMERIC_CONSTEXPR_20 operator std::int64_t() const noexcept {
+        if (this->m_size == 0U) return 0;
+        const std::uint64_t mag{this->as_span()[0]};
+        if (this->m_sign < 0) {
+            return -static_cast<std::int64_t>(mag);
+        }
+        return static_cast<std::int64_t>(mag);
     }
 
-    /// <summary>
-    /// 明確轉型為 32 位元無符號整數（可能截斷）。
-    /// </summary>
-    explicit NUMERIC_CONSTEXPR_20 operator uint32_t() const noexcept {
-        return static_cast<uint32_t>(static_cast<uint64_t>(*this));
+    explicit NUMERIC_CONSTEXPR_20 operator std::uint64_t() const noexcept {
+        if (this->m_size == 0U) return 0ULL;
+        return this->as_span()[0];
     }
 
-    /// <summary>
-    /// 明確轉型為 double 浮點數。
-    /// </summary>
+    explicit NUMERIC_CONSTEXPR_20 operator std::int32_t() const noexcept {
+        return static_cast<std::int32_t>(static_cast<std::int64_t>(*this));
+    }
+
+    explicit NUMERIC_CONSTEXPR_20 operator std::uint32_t() const noexcept {
+        return static_cast<std::uint32_t>(static_cast<std::uint64_t>(*this));
+    }
+
     explicit operator double() const noexcept {
-        if (this->m_size == 0) return 0.0;
-        double res = 0.0;
-        double base = 1.0;
-        const double two_pow_64 = 18446744073709551616.0;
-        for (size_t i = 0; i < this->m_size; ++i) {
-            res += static_cast<double>(this->m_data[i]) * base;
+        if (this->m_size == 0U) return 0.0;
+        double res{0.0};
+        double base{1.0};
+        constexpr double two_pow_64{18446744073709551616.0};
+        for (const std::uint64_t limb : this->as_span()) {
+            res += static_cast<double>(limb) * base;
             base *= two_pow_64;
         }
         return (this->m_sign < 0) ? -res : res;
     }
 
     /// <summary>
+    /// Formats value into base-10 decimal string.
     /// 轉換為十進位字串表示。
     /// </summary>
-    NUMERIC_NODISCARD std::string to_string() const {
+    NUMERIC_NODISCARD auto to_string() const -> std::string {
         return detail::BigIntCore::to_string(*this);
     }
 
     /// <summary>
-    /// 轉換為指定位元寬度之 std::bitset，負數時採用標準二補數表示法。
+    /// Converts to std::bitset&lt;N&gt; using exact two's complement representation for negative numbers.
+    /// 轉換為指定位元寬度之 std::bitset，負數採用標準二補數延伸。
     /// </summary>
-    template <size_t N>
-    std::bitset<N> to_bitset() const {
+    template <std::size_t N>
+    NUMERIC_NODISCARD auto to_bitset() const -> std::bitset<N> {
         std::bitset<N> bs;
-        if (N == 0) {
+        if constexpr (N == 0U) {
+            return bs;
+        } else {
+            const std::size_t limb_cnt{(N + 63U) / 64U};
+            const std::span<const std::uint64_t> limbs_view{this->as_span()};
+            if (this->m_sign >= 0) {
+                for (std::size_t w{0}; w < limb_cnt; ++w) {
+                    const std::uint64_t val{(w < limbs_view.size()) ? limbs_view[w] : 0ULL};
+                    const std::size_t bits_in_limb{(w == limb_cnt - 1U) ? (N - w * 64U) : 64U};
+                    for (std::size_t b{0}; b < bits_in_limb; ++b) {
+                        if (((val >> b) & 1ULL) != 0ULL) {
+                            bs.set(w * 64U + b);
+                        }
+                    }
+                }
+            } else {
+                std::uint64_t carry{1ULL};
+                for (std::size_t w{0}; w < limb_cnt; ++w) {
+                    const std::uint64_t mag_w{(w < limbs_view.size()) ? limbs_view[w] : 0ULL};
+                    const std::uint64_t inv_w{~mag_w};
+                    const std::uint64_t val{inv_w + carry};
+                    carry = (val < inv_w) ? 1ULL : 0ULL;
+                    const std::size_t bits_in_limb{(w == limb_cnt - 1U) ? (N - w * 64U) : 64U};
+                    for (std::size_t b{0}; b < bits_in_limb; ++b) {
+                        if (((val >> b) & 1ULL) != 0ULL) {
+                            bs.set(w * 64U + b);
+                        }
+                    }
+                }
+            }
             return bs;
         }
-        size_t limb_cnt = (N + 63) / 64;
-        if (this->m_sign >= 0) {
-            for (size_t w = 0; w < limb_cnt; ++w) {
-                uint64_t val = (w < this->m_size) ? this->m_data[w] : 0ULL;
-                size_t bits_in_limb = (w == limb_cnt - 1) ? (N - w * 64) : 64;
-                for (size_t b = 0; b < bits_in_limb; ++b) {
-                    if ((val >> b) & 1ULL) {
-                        bs.set(w * 64 + b);
-                    }
-                }
-            }
-        } else {
-            uint64_t carry = 1;
-            for (size_t w = 0; w < limb_cnt; ++w) {
-                uint64_t mag_w = (w < this->m_size) ? this->m_data[w] : 0ULL;
-                uint64_t inv_w = ~mag_w;
-                uint64_t val = inv_w + carry;
-                carry = (val < inv_w) ? 1 : 0;
-                size_t bits_in_limb = (w == limb_cnt - 1) ? (N - w * 64) : 64;
-                for (size_t b = 0; b < bits_in_limb; ++b) {
-                    if ((val >> b) & 1ULL) {
-                        bs.set(w * 64 + b);
-                    }
-                }
-            }
-        }
-        return bs;
     }
 
     /// <summary>
+    /// Formats value into base-2 binary string.
     /// 轉換為二進位字串表示。
     /// </summary>
-    NUMERIC_NODISCARD std::string to_binary_string() const {
-        if (this->m_sign == 0 || this->m_size == 0) {
+    NUMERIC_NODISCARD auto to_binary_string() const -> std::string {
+        if (this->m_sign == 0 || this->m_size == 0U) {
             return "0";
         }
-        size_t high_limb_idx = this->m_size - 1;
-        uint64_t high_val = this->m_data[high_limb_idx];
-        int leading_zeros = detail::BigIntCore::clz64(high_val);
-        int bits_in_high = 64 - leading_zeros;
-        size_t total_bits = high_limb_idx * 64 + static_cast<size_t>(bits_in_high);
+        const std::span<const std::uint64_t> limbs_view{this->as_span()};
+        const std::size_t high_limb_idx{limbs_view.size() - 1U};
+        const std::uint64_t high_val{limbs_view[high_limb_idx]};
+        const std::int32_t leading_zeros{detail::BigIntCore::clz64(high_val)};
+        const std::int32_t bits_in_high{64 - leading_zeros};
+        const std::size_t total_bits{high_limb_idx * 64U + static_cast<std::size_t>(bits_in_high)};
 
-        std::string result;
-        result.reserve((this->m_sign < 0 ? 1 : 0) + total_bits);
+        std::string result{};
+        result.reserve((this->m_sign < 0 ? 1U : 0U) + total_bits);
         if (this->m_sign < 0) {
             result.push_back('-');
         }
-        for (int b = bits_in_high - 1; b >= 0; --b) {
-            result.push_back(((high_val >> b) & 1ULL) ? '1' : '0');
+        for (std::int32_t b{bits_in_high - 1}; b >= 0; --b) {
+            result.push_back(((high_val >> b) & 1ULL) != 0ULL ? '1' : '0');
         }
-        for (size_t i = high_limb_idx; i > 0; --i) {
-            uint64_t val = this->m_data[i - 1];
-            for (int b = 63; b >= 0; --b) {
-                result.push_back(((val >> b) & 1ULL) ? '1' : '0');
+        for (std::size_t i{high_limb_idx}; i > 0U; --i) {
+            const std::uint64_t val{limbs_view[i - 1U]};
+            for (std::int32_t b{63}; b >= 0; --b) {
+                result.push_back(((val >> b) & 1ULL) != 0ULL ? '1' : '0');
             }
         }
         return result;
     }
 
-    /// <summary>
-    /// 一元正號運算子。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt operator+() const {
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator+() const -> BasicBigInt {
         return *this;
     }
 
-    /// <summary>
-    /// 一元負號運算子（右值優化）：原地反轉正負號，保證零動態記憶體配置。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt operator-() && noexcept {
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator-() && noexcept -> BasicBigInt {
         this->negate();
         return std::move(*this);
     }
 
-    /// <summary>
-    /// 一元負號運算子（左值）：拷貝後反轉正負號。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt operator-() const & {
-        BasicBigInt res(*this);
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator-() const & -> BasicBigInt {
+        BasicBigInt res{*this};
         res.negate();
         return res;
     }
 
-    /// <summary>
-    /// 賦值並反轉正負號：將 other 拷貝至目前物件並取負。
-    /// 若目前物件已分配足夠容量，則直接重用緩衝區，達成 0 次動態記憶體配置。
-    /// </summary>
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& assign_negated(const BasicBigInt<OtherLimbs>& other) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 auto assign_negated(const BasicBigInt<OtherLimbs>& other) -> BasicBigInt& {
         this->assign_from(other);
         this->negate();
         return *this;
     }
 
-    /// <summary>
-    /// 前置遞增運算子：++a。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator++() {
+    NUMERIC_CONSTEXPR_20 auto operator++() -> BasicBigInt& {
         *this += 1;
         return *this;
     }
 
-    /// <summary>
-    /// 後置遞增運算子：a++。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt operator++(int) {
-        BasicBigInt tmp = *this;
+    NUMERIC_CONSTEXPR_20 auto operator++(int) -> BasicBigInt {
+        BasicBigInt tmp{*this};
         *this += 1;
         return tmp;
     }
 
-    /// <summary>
-    /// 前置遞減運算子：--a。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator--() {
+    NUMERIC_CONSTEXPR_20 auto operator--() -> BasicBigInt& {
         *this -= 1;
         return *this;
     }
 
-    /// <summary>
-    /// 後置遞減運算子：a--。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt operator--(int) {
-        BasicBigInt tmp = *this;
+    NUMERIC_CONSTEXPR_20 auto operator--(int) -> BasicBigInt {
+        BasicBigInt tmp{*this};
         *this -= 1;
         return tmp;
     }
 
-    /// <summary>
-    /// 位元非運算子：~a = -a - 1。
-    /// </summary>
-    NUMERIC_CONSTEXPR_20 BasicBigInt operator~() const {
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator~() const -> BasicBigInt {
         BasicBigInt res;
         detail::BigIntCore::bitwise_not(res, *this);
         return res;
     }
 
-    /// <summary>
-    /// 加法複合賦值運算子（同容量或跨容量）。
-    /// </summary>
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator+=(const BasicBigInt<OtherLimbs>& rhs) {
-        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 1 && rhs.m_size == 1) {
-            uint8_t c = detail::BigIntCore::adc64(0, this->m_data[0], rhs.m_data[0], &this->m_data[0]);
-            if (c != 0) {
-                this->m_data[1] = 1;
-                this->m_size = 2;
+    template <std::size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 auto operator+=(const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt& {
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 1U && rhs.m_size == 1U) {
+            const std::uint8_t c{detail::BigIntCore::adc64(0, this->m_data[0], rhs.m_data[0], this->m_data[0])};
+            if (c != 0U) {
+                this->capacity_span()[1] = 1ULL;
+                this->m_size = 2U;
             }
             return *this;
         }
-        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 2 && rhs.m_size == 2) {
-            uint8_t c = detail::BigIntCore::adc64(0, this->m_data[0], rhs.m_data[0], &this->m_data[0]);
-            c = detail::BigIntCore::adc64(c, this->m_data[1], rhs.m_data[1], &this->m_data[1]);
-            if (c != 0) {
-                this->m_data[2] = 1;
-                this->m_size = 3;
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 2U && rhs.m_size == 2U) {
+            std::uint8_t c{detail::BigIntCore::adc64(0, this->m_data[0], rhs.m_data[0], this->m_data[0])};
+            c = detail::BigIntCore::adc64(c, this->m_data[1], rhs.m_data[1], this->m_data[1]);
+            if (c != 0U) {
+                this->capacity_span()[2] = 1ULL;
+                this->m_size = 3U;
             }
             return *this;
         }
@@ -5601,46 +5781,45 @@ public:
         return *this;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator+=(T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_CONSTEXPR_20 auto operator+=(const T rhs) -> BasicBigInt& {
+        const BasicBigInt tmp{rhs};
         detail::BigIntCore::add_signed(*this, *this, tmp);
         return *this;
     }
 
-    /// <summary>
-    /// 減法複合賦值運算子（同容量或跨容量）。
-    /// </summary>
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator-=(const BasicBigInt<OtherLimbs>& rhs) {
-        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 1 && rhs.m_size == 1) {
-            uint64_t a0 = this->m_data[0];
-            uint64_t b0 = rhs.m_data[0];
+    template <std::size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 auto operator-=(const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt& {
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 1U && rhs.m_size == 1U) {
+            const std::uint64_t a0{this->as_span()[0]};
+            const std::uint64_t b0{rhs.as_span()[0]};
             if (a0 > b0) {
-                this->m_data[0] = a0 - b0;
-                return *this;
-            } else if (a0 < b0) {
-                this->m_data[0] = b0 - a0;
-                this->m_sign = -1;
-                return *this;
-            } else {
-                this->m_size = 0;
-                this->m_sign = 0;
+                this->as_span()[0] = a0 - b0;
                 return *this;
             }
+            if (a0 < b0) {
+                this->as_span()[0] = b0 - a0;
+                this->m_sign = -1;
+                return *this;
+            }
+            this->m_size = 0U;
+            this->m_sign = 0;
+            return *this;
         }
-        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 2 && rhs.m_size == 2) {
-            uint64_t a0 = this->m_data[0], a1 = this->m_data[1];
-            uint64_t b0 = rhs.m_data[0], b1 = rhs.m_data[1];
+        if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 2U && rhs.m_size == 2U) {
+            const std::uint64_t a0{this->as_span()[0]};
+            const std::uint64_t a1{this->as_span()[1]};
+            const std::uint64_t b0{rhs.as_span()[0]};
+            const std::uint64_t b1{rhs.as_span()[1]};
             if (a1 > b1 || (a1 == b1 && a0 >= b0)) {
-                uint8_t borrow = detail::BigIntCore::sbb64(0, a0, b0, &this->m_data[0]);
-                detail::BigIntCore::sbb64(borrow, a1, b1, &this->m_data[1]);
-                if (this->m_data[1] == 0) {
-                    if (this->m_data[0] == 0) {
-                        this->m_size = 0;
+                const std::uint8_t borrow{detail::BigIntCore::sbb64(0, a0, b0, this->as_span()[0])};
+                (void)detail::BigIntCore::sbb64(borrow, a1, b1, this->as_span()[1]);
+                if (this->as_span()[1] == 0ULL) {
+                    if (this->as_span()[0] == 0ULL) {
+                        this->m_size = 0U;
                         this->m_sign = 0;
                     } else {
-                        this->m_size = 1;
+                        this->m_size = 1U;
                     }
                 }
                 return *this;
@@ -5650,53 +5829,48 @@ public:
         return *this;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator-=(T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_CONSTEXPR_20 auto operator-=(const T rhs) -> BasicBigInt& {
+        const BasicBigInt tmp{rhs};
         detail::BigIntCore::sub_signed(*this, *this, tmp);
         return *this;
     }
 
-    /// <summary>
-    /// 乘法複合賦值運算子。
-    /// In-place multiplication compound operator.
-    /// 單肢段與小數值乘法採堆疊暫存直接寫回，消除動態配置並保持緩衝區容量。
-    /// </summary>
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator*=(const BasicBigInt<OtherLimbs>& rhs) {
-        if (this->m_size == 0 || this->m_sign == 0) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 auto operator*=(const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt& {
+        if (this->m_size == 0U || this->m_sign == 0) {
             return *this;
         }
-        if (rhs.m_size == 0 || rhs.m_sign == 0) {
-            this->m_size = 0;
+        if (rhs.m_size == 0U || rhs.m_sign == 0) {
+            this->m_size = 0U;
             this->m_sign = 0;
             return *this;
         }
-        if (rhs.m_size == 1) {
-            uint64_t mult = rhs.m_data[0];
-            int8_t new_sign = static_cast<int8_t>(this->m_sign * rhs.m_sign);
-            if (this->m_capacity < this->m_size + 1) {
-                this->reserve(this->m_size + 1);
+        if (rhs.m_size == 1U) {
+            const std::uint64_t mult{rhs.as_span()[0]};
+            const std::int8_t new_sign{static_cast<std::int8_t>(this->m_sign * rhs.m_sign)};
+            if (this->m_capacity < this->m_size + 1U) {
+                this->reserve(this->m_size + 1U);
             }
-            uint64_t carry = detail::BigIntCore::mul_1_raw(this->data(), this->data(), this->m_size, mult);
-            if (carry != 0) {
-                this->data()[this->m_size] = carry;
-                this->m_size += 1;
+            const std::uint64_t carry{detail::BigIntCore::mul_1_raw(this->as_span(), this->as_span(), mult)};
+            if (carry != 0ULL) {
+                this->capacity_span()[this->m_size] = carry;
+                this->m_size += 1U;
             }
             this->m_sign = new_sign;
             this->normalize();
             return *this;
         }
-        size_t total_len = this->m_size + rhs.m_size;
-        if (total_len <= 16) {
-            uint64_t stack_buf[16];
-            detail::BigIntCore::mul_schoolbook_raw(stack_buf, this->data(), this->m_size, rhs.data(), rhs.m_size);
-            int8_t new_sign = static_cast<int8_t>(this->m_sign * rhs.m_sign);
+        const std::size_t total_len{this->m_size + rhs.m_size};
+        if (total_len <= 16U) {
+            std::array<std::uint64_t, 16> stack_buf{};
+            detail::BigIntCore::mul_schoolbook_raw(stack_buf, this->as_span(), rhs.as_span());
+            const std::int8_t new_sign{static_cast<std::int8_t>(this->m_sign * rhs.m_sign)};
             if (this->m_capacity < total_len) {
                 this->reserve(total_len);
             }
-            BigIntBase::copy_limbs(this->data(), stack_buf, total_len);
-            this->m_size = static_cast<uint32_t>(total_len);
+            BigIntBase::copy_limbs(this->capacity_span(), std::span<const std::uint64_t>{stack_buf}.subspan(0U, total_len));
+            this->m_size = static_cast<std::uint32_t>(total_len);
             this->m_sign = new_sign;
             this->normalize();
             return *this;
@@ -5707,33 +5881,29 @@ public:
         return *this;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator*=(T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_CONSTEXPR_20 auto operator*=(const T rhs) -> BasicBigInt& {
+        const BasicBigInt tmp{rhs};
         return *this *= tmp;
     }
 
-    /// <summary>
-    /// 除法複合賦值運算子。
-    /// In-place division compound operator.
-    /// 單肢段除數採原地暫存除法直寫商數，消除物件建構開銷。
-    /// </summary>
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator/=(const BasicBigInt<OtherLimbs>& rhs) {
-        if (rhs.m_size == 0) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 auto operator/=(const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt& {
+        if (rhs.m_size == 0U) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("division by zero"));
         }
-        if (this->m_size == 0) return *this;
-        if (rhs.m_size == 1) {
-            uint64_t divisor = rhs.m_data[0];
-            int8_t new_sign = static_cast<int8_t>(this->m_sign * rhs.m_sign);
-            uint64_t rem = 0;
-            for (size_t i = this->m_size; i > 0; --i) {
-                uint64_t next_rem = 0;
-                this->m_data[i - 1] = detail::BigIntCore::div128_64(rem, this->m_data[i - 1], divisor, next_rem);
+        if (this->m_size == 0U) return *this;
+        if (rhs.m_size == 1U) {
+            const std::uint64_t divisor{rhs.as_span()[0]};
+            const std::int8_t new_sign{static_cast<std::int8_t>(this->m_sign * rhs.m_sign)};
+            std::uint64_t rem{0};
+            const std::span<std::uint64_t> d{this->as_span()};
+            for (std::size_t i{this->m_size}; i > 0U; --i) {
+                std::uint64_t next_rem{0};
+                d[i - 1U] = detail::BigIntCore::div128_64(rem, d[i - 1U], divisor, next_rem);
                 rem = next_rem;
             }
-            this->m_sign = (this->m_size > 0) ? new_sign : 0;
+            this->m_sign = (this->m_size > 0U) ? new_sign : 0;
             this->normalize();
             return *this;
         }
@@ -5741,34 +5911,30 @@ public:
         return *this;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator/=(T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_CONSTEXPR_20 auto operator/=(const T rhs) -> BasicBigInt& {
+        const BasicBigInt tmp{rhs};
         return *this /= tmp;
     }
 
-    /// <summary>
-    /// 取模複合賦值運算子。
-    /// In-place modulo compound operator.
-    /// 單肢段除數採原地暫存除法直寫餘數，消除物件建構開銷。
-    /// </summary>
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator%=(const BasicBigInt<OtherLimbs>& rhs) {
-        if (rhs.m_size == 0) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 auto operator%=(const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt& {
+        if (rhs.m_size == 0U) {
             NUMERIC_THROW_OR_ABORT(std::invalid_argument("division by zero"));
         }
-        if (this->m_size == 0) return *this;
-        if (rhs.m_size == 1) {
-            uint64_t divisor = rhs.m_data[0];
-            int8_t orig_sign = this->m_sign;
-            uint64_t rem = 0;
-            for (size_t i = this->m_size; i > 0; --i) {
-                uint64_t next_rem = 0;
-                detail::BigIntCore::div128_64(rem, this->m_data[i - 1], divisor, next_rem);
+        if (this->m_size == 0U) return *this;
+        if (rhs.m_size == 1U) {
+            const std::uint64_t divisor{rhs.as_span()[0]};
+            const std::int8_t orig_sign{this->m_sign};
+            std::uint64_t rem{0};
+            const std::span<const std::uint64_t> d{this->as_span()};
+            for (std::size_t i{this->m_size}; i > 0U; --i) {
+                std::uint64_t next_rem{0};
+                (void)detail::BigIntCore::div128_64(rem, d[i - 1U], divisor, next_rem);
                 rem = next_rem;
             }
-            if (rem == 0) {
-                this->m_size = 0;
+            if (rem == 0ULL) {
+                this->m_size = 0U;
                 this->m_sign = 0;
             } else {
                 this->set_uint64(rem, orig_sign);
@@ -5779,77 +5945,71 @@ public:
         return *this;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator%=(T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_CONSTEXPR_20 auto operator%=(const T rhs) -> BasicBigInt& {
+        const BasicBigInt tmp{rhs};
         return *this %= tmp;
     }
 
-    /// <summary>
-    /// 位元及複合賦值運算子。
-    /// In-place bitwise AND compound operator.
-    /// </summary>
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator&=(const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 auto operator&=(const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt& {
         if (this->m_sign > 0 && rhs.m_sign > 0) {
-            size_t min_len = (this->m_size < rhs.m_size) ? this->m_size : rhs.m_size;
-            if (min_len == 1) {
-                this->m_data[0] &= rhs.m_data[0];
-                this->m_size = (this->m_data[0] != 0) ? 1 : 0;
-                this->m_sign = (this->m_size != 0) ? 1 : 0;
+            std::size_t min_len{std::min<std::size_t>(this->m_size, rhs.m_size)};
+            const std::span<std::uint64_t> d{this->as_span()};
+            const std::span<const std::uint64_t> s{rhs.as_span()};
+            if (min_len == 1U) {
+                d[0] &= s[0];
+                this->m_size = (d[0] != 0ULL) ? 1U : 0U;
+                this->m_sign = (this->m_size != 0U) ? 1 : 0;
                 return *this;
             }
-            if (min_len == 2) {
-                this->m_data[0] &= rhs.m_data[0];
-                this->m_data[1] &= rhs.m_data[1];
-                this->m_size = (this->m_data[1] != 0) ? 2 : ((this->m_data[0] != 0) ? 1 : 0);
-                this->m_sign = (this->m_size != 0) ? 1 : 0;
+            if (min_len == 2U) {
+                d[0] &= s[0];
+                d[1] &= s[1];
+                this->m_size = (d[1] != 0ULL) ? 2U : ((d[0] != 0ULL) ? 1U : 0U);
+                this->m_sign = (this->m_size != 0U) ? 1 : 0;
                 return *this;
             }
-            if (min_len == 4) {
-                this->m_data[0] &= rhs.m_data[0];
-                this->m_data[1] &= rhs.m_data[1];
-                this->m_data[2] &= rhs.m_data[2];
-                this->m_data[3] &= rhs.m_data[3];
-                size_t sz = 4;
-                while (sz > 0 && this->m_data[sz - 1] == 0) --sz;
-                this->m_size = static_cast<uint32_t>(sz);
-                this->m_sign = (sz != 0) ? 1 : 0;
+            if (min_len == 4U) {
+                d[0] &= s[0];
+                d[1] &= s[1];
+                d[2] &= s[2];
+                d[3] &= s[3];
+                std::size_t sz{4U};
+                while (sz > 0U && d[sz - 1U] == 0ULL) --sz;
+                this->m_size = static_cast<std::uint32_t>(sz);
+                this->m_sign = (sz != 0U) ? 1 : 0;
                 return *this;
             }
-            uint64_t* NUMERIC_RESTRICT d = this->m_data;
-            const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
-            size_t i = 0;
-            for (; i + 3 < min_len; i += 4) {
-                d[i] &= s[i];
-                d[i + 1] &= s[i + 1];
-                d[i + 2] &= s[i + 2];
-                d[i + 3] &= s[i + 3];
+            std::uint64_t* NUMERIC_RESTRICT dp{this->m_data};
+            const std::uint64_t* NUMERIC_RESTRICT sp{rhs.m_data};
+            std::size_t i{0};
+            for (; i + 3U < min_len; i += 4U) {
+                dp[i] &= sp[i];
+                dp[i + 1U] &= sp[i + 1U];
+                dp[i + 2U] &= sp[i + 2U];
+                dp[i + 3U] &= sp[i + 3U];
             }
             for (; i < min_len; ++i) {
-                d[i] &= s[i];
+                dp[i] &= sp[i];
             }
-            while (min_len > 0 && d[min_len - 1] == 0) --min_len;
-            this->m_size = static_cast<uint32_t>(min_len);
-            this->m_sign = (min_len != 0) ? 1 : 0;
+            while (min_len > 0U && d[min_len - 1U] == 0ULL) --min_len;
+            this->m_size = static_cast<std::uint32_t>(min_len);
+            this->m_sign = (min_len != 0U) ? 1 : 0;
             return *this;
         }
         detail::BigIntCore::bitwise_and(*this, *this, rhs);
         return *this;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator&=(T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_CONSTEXPR_20 auto operator&=(const T rhs) -> BasicBigInt& {
+        const BasicBigInt tmp{rhs};
         return *this &= tmp;
     }
 
-    /// <summary>
-    /// 位元或複合賦值運算子。
-    /// In-place bitwise OR compound operator.
-    /// </summary>
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator|=(const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 auto operator|=(const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt& {
         if (this->m_sign == 0) {
             *this = rhs;
             return *this;
@@ -5859,74 +6019,71 @@ public:
         }
         if (this->m_sign > 0 && rhs.m_sign > 0) {
             if (this->m_size >= rhs.m_size) {
-                if (rhs.m_size == 1) {
-                    this->m_data[0] |= rhs.m_data[0];
+                const std::span<std::uint64_t> d{this->as_span()};
+                const std::span<const std::uint64_t> s{rhs.as_span()};
+                if (rhs.m_size == 1U) {
+                    d[0] |= s[0];
                     return *this;
                 }
-                if (rhs.m_size == 2) {
-                    this->m_data[0] |= rhs.m_data[0];
-                    this->m_data[1] |= rhs.m_data[1];
+                if (rhs.m_size == 2U) {
+                    d[0] |= s[0];
+                    d[1] |= s[1];
                     return *this;
                 }
-                if (rhs.m_size == 4) {
-                    this->m_data[0] |= rhs.m_data[0];
-                    this->m_data[1] |= rhs.m_data[1];
-                    this->m_data[2] |= rhs.m_data[2];
-                    this->m_data[3] |= rhs.m_data[3];
+                if (rhs.m_size == 4U) {
+                    d[0] |= s[0];
+                    d[1] |= s[1];
+                    d[2] |= s[2];
+                    d[3] |= s[3];
                     return *this;
                 }
-                uint64_t* NUMERIC_RESTRICT d = this->m_data;
-                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
-                size_t i = 0;
-                for (; i + 3 < rhs.m_size; i += 4) {
-                    d[i] |= s[i];
-                    d[i + 1] |= s[i + 1];
-                    d[i + 2] |= s[i + 2];
-                    d[i + 3] |= s[i + 3];
+                std::uint64_t* NUMERIC_RESTRICT dp{this->m_data};
+                const std::uint64_t* NUMERIC_RESTRICT sp{rhs.m_data};
+                std::size_t i{0};
+                for (; i + 3U < rhs.m_size; i += 4U) {
+                    dp[i] |= sp[i];
+                    dp[i + 1U] |= sp[i + 1U];
+                    dp[i + 2U] |= sp[i + 2U];
+                    dp[i + 3U] |= sp[i + 3U];
                 }
                 for (; i < rhs.m_size; ++i) {
-                    d[i] |= s[i];
+                    dp[i] |= sp[i];
                 }
-                return *this;
-            } else {
-                size_t old_size = this->m_size;
-                size_t new_size = rhs.m_size;
-                if (this->m_capacity < new_size) {
-                    this->reserve(new_size);
-                }
-                uint64_t* NUMERIC_RESTRICT d = this->m_data;
-                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
-                size_t i = 0;
-                for (; i + 3 < old_size; i += 4) {
-                    d[i] |= s[i];
-                    d[i + 1] |= s[i + 1];
-                    d[i + 2] |= s[i + 2];
-                    d[i + 3] |= s[i + 3];
-                }
-                for (; i < old_size; ++i) {
-                    d[i] |= s[i];
-                }
-                detail::BigIntStorage::copy_limbs(d + old_size, s + old_size, new_size - old_size);
-                this->m_size = static_cast<uint32_t>(new_size);
                 return *this;
             }
+            const std::size_t old_size{this->m_size};
+            const std::size_t new_size{rhs.m_size};
+            if (this->m_capacity < new_size) {
+                this->reserve(new_size);
+            }
+            std::uint64_t* NUMERIC_RESTRICT dp{this->m_data};
+            const std::uint64_t* NUMERIC_RESTRICT sp{rhs.m_data};
+            std::size_t i{0};
+            for (; i + 3U < old_size; i += 4U) {
+                dp[i] |= sp[i];
+                dp[i + 1U] |= sp[i + 1U];
+                dp[i + 2U] |= sp[i + 2U];
+                dp[i + 3U] |= sp[i + 3U];
+            }
+            for (; i < old_size; ++i) {
+                dp[i] |= sp[i];
+            }
+            BigIntBase::copy_limbs(this->capacity_span().subspan(old_size), rhs.as_span().subspan(old_size));
+            this->m_size = static_cast<std::uint32_t>(new_size);
+            return *this;
         }
         detail::BigIntCore::bitwise_or(*this, *this, rhs);
         return *this;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator|=(T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_CONSTEXPR_20 auto operator|=(const T rhs) -> BasicBigInt& {
+        const BasicBigInt tmp{rhs};
         return *this |= tmp;
     }
 
-    /// <summary>
-    /// 位元互斥或複合賦值運算子。
-    /// In-place bitwise XOR compound operator.
-    /// </summary>
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator^=(const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_CONSTEXPR_20 auto operator^=(const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt& {
         if (this->m_sign == 0) {
             *this = rhs;
             return *this;
@@ -5936,544 +6093,517 @@ public:
         }
         if (this->m_sign > 0 && rhs.m_sign > 0) {
             if (this->m_size == rhs.m_size) {
-                if (this->m_size == 1) {
-                    this->m_data[0] ^= rhs.m_data[0];
-                    this->m_size = (this->m_data[0] != 0) ? 1 : 0;
-                    this->m_sign = (this->m_size != 0) ? 1 : 0;
+                const std::span<std::uint64_t> d{this->as_span()};
+                const std::span<const std::uint64_t> s{rhs.as_span()};
+                if (this->m_size == 1U) {
+                    d[0] ^= s[0];
+                    this->m_size = (d[0] != 0ULL) ? 1U : 0U;
+                    this->m_sign = (this->m_size != 0U) ? 1 : 0;
                     return *this;
                 }
-                if (this->m_size == 2) {
-                    this->m_data[0] ^= rhs.m_data[0];
-                    this->m_data[1] ^= rhs.m_data[1];
-                    this->m_size = (this->m_data[1] != 0) ? 2 : ((this->m_data[0] != 0) ? 1 : 0);
-                    this->m_sign = (this->m_size != 0) ? 1 : 0;
+                if (this->m_size == 2U) {
+                    d[0] ^= s[0];
+                    d[1] ^= s[1];
+                    this->m_size = (d[1] != 0ULL) ? 2U : ((d[0] != 0ULL) ? 1U : 0U);
+                    this->m_sign = (this->m_size != 0U) ? 1 : 0;
                     return *this;
                 }
-                if (this->m_size == 4) {
-                    this->m_data[0] ^= rhs.m_data[0];
-                    this->m_data[1] ^= rhs.m_data[1];
-                    this->m_data[2] ^= rhs.m_data[2];
-                    this->m_data[3] ^= rhs.m_data[3];
-                    size_t sz = 4;
-                    while (sz > 0 && this->m_data[sz - 1] == 0) --sz;
-                    this->m_size = static_cast<uint32_t>(sz);
-                    this->m_sign = (sz != 0) ? 1 : 0;
+                if (this->m_size == 4U) {
+                    d[0] ^= s[0];
+                    d[1] ^= s[1];
+                    d[2] ^= s[2];
+                    d[3] ^= s[3];
+                    std::size_t sz{4U};
+                    while (sz > 0U && d[sz - 1U] == 0ULL) --sz;
+                    this->m_size = static_cast<std::uint32_t>(sz);
+                    this->m_sign = (sz != 0U) ? 1 : 0;
                     return *this;
                 }
-                uint64_t* NUMERIC_RESTRICT d = this->m_data;
-                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
-                size_t i = 0;
-                for (; i + 3 < this->m_size; i += 4) {
-                    d[i] ^= s[i];
-                    d[i + 1] ^= s[i + 1];
-                    d[i + 2] ^= s[i + 2];
-                    d[i + 3] ^= s[i + 3];
+                std::uint64_t* NUMERIC_RESTRICT dp{this->m_data};
+                const std::uint64_t* NUMERIC_RESTRICT sp{rhs.m_data};
+                std::size_t i{0};
+                for (; i + 3U < this->m_size; i += 4U) {
+                    dp[i] ^= sp[i];
+                    dp[i + 1U] ^= sp[i + 1U];
+                    dp[i + 2U] ^= sp[i + 2U];
+                    dp[i + 3U] ^= sp[i + 3U];
                 }
                 for (; i < this->m_size; ++i) {
-                    d[i] ^= s[i];
+                    dp[i] ^= sp[i];
                 }
-                size_t sz = this->m_size;
-                while (sz > 0 && d[sz - 1] == 0) --sz;
-                this->m_size = static_cast<uint32_t>(sz);
-                this->m_sign = (sz != 0) ? 1 : 0;
-                return *this;
-            } else if (this->m_size > rhs.m_size) {
-                uint64_t* NUMERIC_RESTRICT d = this->m_data;
-                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
-                size_t i = 0;
-                for (; i + 3 < rhs.m_size; i += 4) {
-                    d[i] ^= s[i];
-                    d[i + 1] ^= s[i + 1];
-                    d[i + 2] ^= s[i + 2];
-                    d[i + 3] ^= s[i + 3];
-                }
-                for (; i < rhs.m_size; ++i) {
-                    d[i] ^= s[i];
-                }
-                return *this;
-            } else {
-                size_t old_size = this->m_size;
-                size_t new_size = rhs.m_size;
-                if (this->m_capacity < new_size) {
-                    this->reserve(new_size);
-                }
-                uint64_t* NUMERIC_RESTRICT d = this->m_data;
-                const uint64_t* NUMERIC_RESTRICT s = rhs.m_data;
-                size_t i = 0;
-                for (; i + 3 < old_size; i += 4) {
-                    d[i] ^= s[i];
-                    d[i + 1] ^= s[i + 1];
-                    d[i + 2] ^= s[i + 2];
-                    d[i + 3] ^= s[i + 3];
-                }
-                for (; i < old_size; ++i) {
-                    d[i] ^= s[i];
-                }
-                detail::BigIntStorage::copy_limbs(d + old_size, s + old_size, new_size - old_size);
-                this->m_size = static_cast<uint32_t>(new_size);
+                std::size_t sz{this->m_size};
+                while (sz > 0U && d[sz - 1U] == 0ULL) --sz;
+                this->m_size = static_cast<std::uint32_t>(sz);
+                this->m_sign = (sz != 0U) ? 1 : 0;
                 return *this;
             }
+            if (this->m_size > rhs.m_size) {
+                std::uint64_t* NUMERIC_RESTRICT dp{this->m_data};
+                const std::uint64_t* NUMERIC_RESTRICT sp{rhs.m_data};
+                std::size_t i{0};
+                for (; i + 3U < rhs.m_size; i += 4U) {
+                    dp[i] ^= sp[i];
+                    dp[i + 1U] ^= sp[i + 1U];
+                    dp[i + 2U] ^= sp[i + 2U];
+                    dp[i + 3U] ^= sp[i + 3U];
+                }
+                for (; i < rhs.m_size; ++i) {
+                    dp[i] ^= sp[i];
+                }
+                return *this;
+            }
+            const std::size_t old_size{this->m_size};
+            const std::size_t new_size{rhs.m_size};
+            if (this->m_capacity < new_size) {
+                this->reserve(new_size);
+            }
+            std::uint64_t* NUMERIC_RESTRICT dp{this->m_data};
+            const std::uint64_t* NUMERIC_RESTRICT sp{rhs.m_data};
+            std::size_t i{0};
+            for (; i + 3U < old_size; i += 4U) {
+                dp[i] ^= sp[i];
+                dp[i + 1U] ^= sp[i + 1U];
+                dp[i + 2U] ^= sp[i + 2U];
+                dp[i + 3U] ^= sp[i + 3U];
+            }
+            for (; i < old_size; ++i) {
+                dp[i] ^= sp[i];
+            }
+            BigIntBase::copy_limbs(this->capacity_span().subspan(old_size), rhs.as_span().subspan(old_size));
+            this->m_size = static_cast<std::uint32_t>(new_size);
+            return *this;
         }
         detail::BigIntCore::bitwise_xor(*this, *this, rhs);
         return *this;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator^=(T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_CONSTEXPR_20 auto operator^=(const T rhs) -> BasicBigInt& {
+        const BasicBigInt tmp{rhs};
         return *this ^= tmp;
     }
 
-    /// <summary>
-    /// 位元左移複合賦值運算子。
-    /// In-place bitwise left shift compound operator.
-    /// 直接於目前物件緩衝區就地執行位元左移，消除暫存物件與動態配置開銷。
-    /// </summary>
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator<<=(T shift) {
-        if (shift < 0) {
-            NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
+    template <std::integral T>
+    NUMERIC_CONSTEXPR_20 auto operator<<=(const T shift) -> BasicBigInt& {
+        if constexpr (std::is_signed_v<T>) {
+            if (shift < 0) {
+                NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
+            }
         }
-        detail::BigIntCore::shift_left(*this, *this, static_cast<size_t>(shift));
+        detail::BigIntCore::shift_left(*this, *this, static_cast<std::size_t>(shift));
         return *this;
     }
 
-    /// <summary>
-    /// 位元右移複合賦值運算子。
-    /// In-place bitwise right shift compound operator.
-    /// 直接於目前物件緩衝區就地執行位元右移，消除暫存物件與動態配置開銷。
-    /// </summary>
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    NUMERIC_CONSTEXPR_20 BasicBigInt& operator>>=(T shift) {
-        if (shift < 0) {
-            NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
+    template <std::integral T>
+    NUMERIC_CONSTEXPR_20 auto operator>>=(const T shift) -> BasicBigInt& {
+        if constexpr (std::is_signed_v<T>) {
+            if (shift < 0) {
+                NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
+            }
         }
-        detail::BigIntCore::shift_right(*this, *this, static_cast<size_t>(shift));
+        detail::BigIntCore::shift_right(*this, *this, static_cast<std::size_t>(shift));
         return *this;
     }
 
-    // --- 異質雙目運算子（以 LHS 容量為回傳基準） ---
+    // --- Heterogeneous Binary Operators / 異質雙目運算子 ---
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator+(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt res(lhs);
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator+(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt {
+        BasicBigInt res{lhs};
         res += rhs;
         return res;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator+(BasicBigInt&& lhs, const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator+(BasicBigInt&& lhs, const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt {
         lhs += rhs;
         return std::move(lhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator+(const BasicBigInt& lhs, T rhs) {
-        BasicBigInt res(lhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator+(const BasicBigInt& lhs, const T rhs) -> BasicBigInt {
+        BasicBigInt res{lhs};
         res += rhs;
         return res;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator+(BasicBigInt&& lhs, T rhs) {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator+(BasicBigInt&& lhs, const T rhs) -> BasicBigInt {
         lhs += rhs;
         return std::move(lhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator+(T lhs, const BasicBigInt& rhs) {
-        BasicBigInt res(lhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator+(const T lhs, const BasicBigInt& rhs) -> BasicBigInt {
+        BasicBigInt res{lhs};
         res += rhs;
         return res;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator-(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) {
-        BasicBigInt res(lhs);
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator-(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt {
+        BasicBigInt res{lhs};
         res -= rhs;
         return res;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator-(BasicBigInt&& lhs, const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator-(BasicBigInt&& lhs, const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt {
         lhs -= rhs;
         return std::move(lhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator-(const BasicBigInt& lhs, T rhs) {
-        BasicBigInt res(lhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator-(const BasicBigInt& lhs, const T rhs) -> BasicBigInt {
+        BasicBigInt res{lhs};
         res -= rhs;
         return res;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator-(BasicBigInt&& lhs, T rhs) {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator-(BasicBigInt&& lhs, const T rhs) -> BasicBigInt {
         lhs -= rhs;
         return std::move(lhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator-(T lhs, const BasicBigInt& rhs) {
-        BasicBigInt res(lhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator-(const T lhs, const BasicBigInt& rhs) -> BasicBigInt {
+        BasicBigInt res{lhs};
         res -= rhs;
         return res;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator*(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator*(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt {
         BasicBigInt res;
         detail::BigIntCore::mul_signed(res, lhs, rhs);
         return res;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator*(const BasicBigInt& lhs, T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator*(const BasicBigInt& lhs, const T rhs) -> BasicBigInt {
+        const BasicBigInt tmp{rhs};
         return lhs * tmp;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator*(T lhs, const BasicBigInt& rhs) {
-        BasicBigInt tmp(lhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator*(const T lhs, const BasicBigInt& rhs) -> BasicBigInt {
+        const BasicBigInt tmp{lhs};
         return tmp * rhs;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator/(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator/(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt {
         BasicBigInt res;
         detail::BigIntCore::div_q_signed(res, lhs, rhs);
         return res;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator/(const BasicBigInt& lhs, T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator/(const BasicBigInt& lhs, const T rhs) -> BasicBigInt {
+        const BasicBigInt tmp{rhs};
         return lhs / tmp;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator/(T lhs, const BasicBigInt& rhs) {
-        BasicBigInt tmp(lhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator/(const T lhs, const BasicBigInt& rhs) -> BasicBigInt {
+        const BasicBigInt tmp{lhs};
         return tmp / rhs;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator%(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator%(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt {
         BasicBigInt res;
         detail::BigIntCore::div_r_signed(res, lhs, rhs);
         return res;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator%(const BasicBigInt& lhs, T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator%(const BasicBigInt& lhs, const T rhs) -> BasicBigInt {
+        const BasicBigInt tmp{rhs};
         return lhs % tmp;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator%(T lhs, const BasicBigInt& rhs) {
-        BasicBigInt tmp(lhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator%(const T lhs, const BasicBigInt& rhs) -> BasicBigInt {
+        const BasicBigInt tmp{lhs};
         return tmp % rhs;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator&(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator&(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt {
         BasicBigInt res;
         detail::BigIntCore::bitwise_and(res, lhs, rhs);
         return res;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator&(BasicBigInt&& lhs, const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator&(BasicBigInt&& lhs, const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt {
         lhs &= rhs;
         return std::move(lhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator&(const BasicBigInt& lhs, T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator&(const BasicBigInt& lhs, const T rhs) -> BasicBigInt {
+        const BasicBigInt tmp{rhs};
         return lhs & tmp;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator&(BasicBigInt&& lhs, T rhs) {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator&(BasicBigInt&& lhs, const T rhs) -> BasicBigInt {
         lhs &= rhs;
         return std::move(lhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator&(T lhs, const BasicBigInt& rhs) {
-        BasicBigInt tmp(lhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator&(const T lhs, const BasicBigInt& rhs) -> BasicBigInt {
+        const BasicBigInt tmp{lhs};
         return tmp & rhs;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator|(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator|(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt {
         BasicBigInt res;
         detail::BigIntCore::bitwise_or(res, lhs, rhs);
         return res;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator|(BasicBigInt&& lhs, const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator|(BasicBigInt&& lhs, const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt {
         lhs |= rhs;
         return std::move(lhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator|(const BasicBigInt& lhs, T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator|(const BasicBigInt& lhs, const T rhs) -> BasicBigInt {
+        const BasicBigInt tmp{rhs};
         return lhs | tmp;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator|(BasicBigInt&& lhs, T rhs) {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator|(BasicBigInt&& lhs, const T rhs) -> BasicBigInt {
         lhs |= rhs;
         return std::move(lhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator|(T lhs, const BasicBigInt& rhs) {
-        BasicBigInt tmp(lhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator|(const T lhs, const BasicBigInt& rhs) -> BasicBigInt {
+        const BasicBigInt tmp{lhs};
         return tmp | rhs;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator^(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator^(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt {
         BasicBigInt res;
         detail::BigIntCore::bitwise_xor(res, lhs, rhs);
         return res;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator^(BasicBigInt&& lhs, const BasicBigInt<OtherLimbs>& rhs) {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator^(BasicBigInt&& lhs, const BasicBigInt<OtherLimbs>& rhs) -> BasicBigInt {
         lhs ^= rhs;
         return std::move(lhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator^(const BasicBigInt& lhs, T rhs) {
-        BasicBigInt tmp(rhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator^(const BasicBigInt& lhs, const T rhs) -> BasicBigInt {
+        const BasicBigInt tmp{rhs};
         return lhs ^ tmp;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator^(BasicBigInt&& lhs, T rhs) {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator^(BasicBigInt&& lhs, const T rhs) -> BasicBigInt {
         lhs ^= rhs;
         return std::move(lhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator^(T lhs, const BasicBigInt& rhs) {
-        BasicBigInt tmp(lhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator^(const T lhs, const BasicBigInt& rhs) -> BasicBigInt {
+        const BasicBigInt tmp{lhs};
         return tmp ^ rhs;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator<<(const BasicBigInt& lhs, T shift) {
-        if (shift < 0) {
-            NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator<<(const BasicBigInt& lhs, const T shift) -> BasicBigInt {
+        if constexpr (std::is_signed_v<T>) {
+            if (shift < 0) {
+                NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
+            }
         }
         BasicBigInt result;
-        detail::BigIntCore::shift_left(result, lhs, static_cast<size_t>(shift));
+        detail::BigIntCore::shift_left(result, lhs, static_cast<std::size_t>(shift));
         return result;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator<<(BasicBigInt&& lhs, T shift) {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator<<(BasicBigInt&& lhs, const T shift) -> BasicBigInt {
         lhs <<= shift;
         return std::move(lhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator>>(const BasicBigInt& lhs, T shift) {
-        if (shift < 0) {
-            NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator>>(const BasicBigInt& lhs, const T shift) -> BasicBigInt {
+        if constexpr (std::is_signed_v<T>) {
+            if (shift < 0) {
+                NUMERIC_THROW_OR_ABORT(std::invalid_argument("negative bit shift"));
+            }
         }
         BasicBigInt result;
-        detail::BigIntCore::shift_right(result, lhs, static_cast<size_t>(shift));
+        detail::BigIntCore::shift_right(result, lhs, static_cast<std::size_t>(shift));
         return result;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 BasicBigInt operator>>(BasicBigInt&& lhs, T shift) {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator>>(BasicBigInt&& lhs, const T shift) -> BasicBigInt {
         lhs >>= shift;
         return std::move(lhs);
     }
 
-    // --- 異質與整數比較運算子 ---
+    // --- Comparison Operators / 比較運算子 ---
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 bool operator==(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept {
-        if (lhs.m_sign != rhs.m_sign) return false;
-        if (lhs.m_size != rhs.m_size) return false;
-        if (lhs.m_size == 0) return true;
-        if (lhs.m_size == 1) return lhs.m_data[0] == rhs.m_data[0];
-        if (lhs.m_size == 2) return lhs.m_data[0] == rhs.m_data[0] && lhs.m_data[1] == rhs.m_data[1];
-        if (lhs.m_size == 4) {
-            return lhs.m_data[0] == rhs.m_data[0] && lhs.m_data[1] == rhs.m_data[1] &&
-                   lhs.m_data[2] == rhs.m_data[2] && lhs.m_data[3] == rhs.m_data[3];
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator==(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept -> bool {
+        if (lhs.m_sign != rhs.m_sign || lhs.m_size != rhs.m_size) return false;
+        const std::span<const std::uint64_t> a{lhs.as_span()};
+        const std::span<const std::uint64_t> b{rhs.as_span()};
+        if (a.empty()) return true;
+        if (a.size() == 1U) return a[0] == b[0];
+        if (a.size() == 2U) return a[0] == b[0] && a[1] == b[1];
+        if (a.size() == 4U) {
+            return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
         }
-        for (size_t i = 0; i < lhs.m_size; ++i) {
-            if (lhs.m_data[i] != rhs.m_data[i]) return false;
-        }
-        return true;
+        return std::ranges::equal(a, b);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bool operator==(const BasicBigInt& lhs, T rhs) noexcept {
-        return lhs == BasicBigInt(rhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator==(const BasicBigInt& lhs, const T rhs) noexcept -> bool {
+        return lhs == BasicBigInt{rhs};
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bool operator==(T lhs, const BasicBigInt& rhs) noexcept {
-        return BasicBigInt(lhs) == rhs;
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator==(const T lhs, const BasicBigInt& rhs) noexcept -> bool {
+        return BasicBigInt{lhs} == rhs;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 bool operator!=(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator!=(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept -> bool {
         return !(lhs == rhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bool operator!=(const BasicBigInt& lhs, T rhs) noexcept {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator!=(const BasicBigInt& lhs, const T rhs) noexcept -> bool {
         return !(lhs == rhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bool operator!=(T lhs, const BasicBigInt& rhs) noexcept {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator!=(const T lhs, const BasicBigInt& rhs) noexcept -> bool {
         return !(lhs == rhs);
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 bool operator<(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator<(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept -> bool {
         if (lhs.m_sign != rhs.m_sign) {
             return lhs.m_sign < rhs.m_sign;
         }
         if (lhs.m_sign == 0) return false;
+        const std::span<const std::uint64_t> a{lhs.as_span()};
+        const std::span<const std::uint64_t> b{rhs.as_span()};
         if (lhs.m_sign > 0) {
-            if (lhs.m_size != rhs.m_size) {
-                return lhs.m_size < rhs.m_size;
+            if (a.size() != b.size()) return a.size() < b.size();
+            if (a.size() == 1U) return a[0] < b[0];
+            if (a.size() == 2U) {
+                if (a[1] != b[1]) return a[1] < b[1];
+                return a[0] < b[0];
             }
-            const size_t sz = lhs.m_size;
-            if (sz == 1) {
-                return lhs.m_data[0] < rhs.m_data[0];
+            if (a.size() == 4U) {
+                if (a[3] != b[3]) return a[3] < b[3];
+                if (a[2] != b[2]) return a[2] < b[2];
+                if (a[1] != b[1]) return a[1] < b[1];
+                return a[0] < b[0];
             }
-            if (sz == 2) {
-                if (lhs.m_data[1] != rhs.m_data[1]) return lhs.m_data[1] < rhs.m_data[1];
-                return lhs.m_data[0] < rhs.m_data[0];
-            }
-            if (sz == 4) {
-                if (lhs.m_data[3] != rhs.m_data[3]) return lhs.m_data[3] < rhs.m_data[3];
-                if (lhs.m_data[2] != rhs.m_data[2]) return lhs.m_data[2] < rhs.m_data[2];
-                if (lhs.m_data[1] != rhs.m_data[1]) return lhs.m_data[1] < rhs.m_data[1];
-                return lhs.m_data[0] < rhs.m_data[0];
-            }
-            const uint64_t* a = lhs.m_data;
-            const uint64_t* b = rhs.m_data;
-            for (size_t i = sz; i > 0; --i) {
-                if (a[i - 1] != b[i - 1]) return a[i - 1] < b[i - 1];
-            }
-            return false;
-        } else {
-            if (lhs.m_size != rhs.m_size) {
-                return lhs.m_size > rhs.m_size;
-            }
-            const size_t sz = lhs.m_size;
-            if (sz == 1) {
-                return lhs.m_data[0] > rhs.m_data[0];
-            }
-            if (sz == 2) {
-                if (lhs.m_data[1] != rhs.m_data[1]) return lhs.m_data[1] > rhs.m_data[1];
-                return lhs.m_data[0] > rhs.m_data[0];
-            }
-            if (sz == 4) {
-                if (lhs.m_data[3] != rhs.m_data[3]) return lhs.m_data[3] > rhs.m_data[3];
-                if (lhs.m_data[2] != rhs.m_data[2]) return lhs.m_data[2] > rhs.m_data[2];
-                if (lhs.m_data[1] != rhs.m_data[1]) return lhs.m_data[1] > rhs.m_data[1];
-                return lhs.m_data[0] > rhs.m_data[0];
-            }
-            const uint64_t* a = lhs.m_data;
-            const uint64_t* b = rhs.m_data;
-            for (size_t i = sz; i > 0; --i) {
-                if (a[i - 1] != b[i - 1]) return a[i - 1] > b[i - 1];
+            for (std::size_t i{a.size()}; i > 0U; --i) {
+                if (a[i - 1U] != b[i - 1U]) return a[i - 1U] < b[i - 1U];
             }
             return false;
         }
+        if (a.size() != b.size()) return a.size() > b.size();
+        if (a.size() == 1U) return a[0] > b[0];
+        if (a.size() == 2U) {
+            if (a[1] != b[1]) return a[1] > b[1];
+            return a[0] > b[0];
+        }
+        if (a.size() == 4U) {
+            if (a[3] != b[3]) return a[3] > b[3];
+            if (a[2] != b[2]) return a[2] > b[2];
+            if (a[1] != b[1]) return a[1] > b[1];
+            return a[0] > b[0];
+        }
+        for (std::size_t i{a.size()}; i > 0U; --i) {
+            if (a[i - 1U] != b[i - 1U]) return a[i - 1U] > b[i - 1U];
+        }
+        return false;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bool operator<(const BasicBigInt& lhs, T rhs) noexcept {
-        return lhs < BasicBigInt(rhs);
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator<(const BasicBigInt& lhs, const T rhs) noexcept -> bool {
+        return lhs < BasicBigInt{rhs};
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bool operator<(T lhs, const BasicBigInt& rhs) noexcept {
-        return BasicBigInt(lhs) < rhs;
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator<(const T lhs, const BasicBigInt& rhs) noexcept -> bool {
+        return BasicBigInt{lhs} < rhs;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 bool operator<=(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator<=(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept -> bool {
         return !(rhs < lhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bool operator<=(const BasicBigInt& lhs, T rhs) noexcept {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator<=(const BasicBigInt& lhs, const T rhs) noexcept -> bool {
         return !(rhs < lhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bool operator<=(T lhs, const BasicBigInt& rhs) noexcept {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator<=(const T lhs, const BasicBigInt& rhs) noexcept -> bool {
         return !(rhs < lhs);
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 bool operator>(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator>(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept -> bool {
         return rhs < lhs;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bool operator>(const BasicBigInt& lhs, T rhs) noexcept {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator>(const BasicBigInt& lhs, const T rhs) noexcept -> bool {
         return rhs < lhs;
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bool operator>(T lhs, const BasicBigInt& rhs) noexcept {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator>(const T lhs, const BasicBigInt& rhs) noexcept -> bool {
         return rhs < lhs;
     }
 
-    template <size_t OtherLimbs>
-    friend NUMERIC_CONSTEXPR_20 bool operator>=(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator>=(const BasicBigInt& lhs, const BasicBigInt<OtherLimbs>& rhs) noexcept -> bool {
         return !(lhs < rhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bool operator>=(const BasicBigInt& lhs, T rhs) noexcept {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator>=(const BasicBigInt& lhs, const T rhs) noexcept -> bool {
         return !(lhs < rhs);
     }
 
-    template <typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-    friend NUMERIC_CONSTEXPR_20 bool operator>=(T lhs, const BasicBigInt& rhs) noexcept {
+    template <std::integral T>
+    NUMERIC_NODISCARD friend NUMERIC_CONSTEXPR_20 auto operator>=(const T lhs, const BasicBigInt& rhs) noexcept -> bool {
         return !(lhs < rhs);
     }
 
-    /// <summary>
-    /// 輸出串流運算子。
-    /// </summary>
-    friend std::ostream& operator<<(std::ostream& os, const BasicBigInt& val) {
+    friend auto operator<<(std::ostream& os, const BasicBigInt& val) -> std::ostream& {
         os << val.to_string();
         return os;
     }
 };
-
-#if (NUMERIC_CPLUSPLUS < NUMERIC_CXX_17)
-template <size_t SboLimbs>
-constexpr detail::BigIntConstantProxy BasicBigInt<SboLimbs>::zero;
-
-template <size_t SboLimbs>
-constexpr detail::BigIntConstantProxy BasicBigInt<SboLimbs>::one;
-#endif
 
 #if defined(_WIN64) || defined(__x86_64__) || defined(__aarch64__) || (defined(__SIZEOF_POINTER__) && __SIZEOF_POINTER__ == 8)
 static_assert(sizeof(BasicBigInt<4>) == 64, "BasicBigInt<4> must be exactly 64 bytes (1 cache line) on 64-bit platforms!");
@@ -6482,104 +6612,96 @@ static_assert(sizeof(BasicBigInt<8>) == 96, "BasicBigInt<8> must be exactly 96 b
 
 namespace detail {
 
-    template <size_t SboLimbs>
+    template <std::size_t SboLimbs>
     NUMERIC_CONSTEXPR_20 BigIntConstantProxy::operator BasicBigInt<SboLimbs>() const noexcept {
-        return BasicBigInt<SboLimbs>(value);
+        return BasicBigInt<SboLimbs>{value};
     }
 
-    template <size_t SboLimbs>
-    NUMERIC_CONSTEXPR_20 BasicBigInt<SboLimbs> BigIntConstantProxy::operator()() const noexcept {
-        return BasicBigInt<SboLimbs>(value);
+    template <std::size_t SboLimbs>
+    NUMERIC_CONSTEXPR_20 auto BigIntConstantProxy::operator()() const noexcept -> BasicBigInt<SboLimbs> {
+        return BasicBigInt<SboLimbs>{value};
     }
 
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 bool operator==(BigIntConstantProxy p, const BasicBigInt<OtherLimbs>& other) noexcept {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator==(const BigIntConstantProxy p, const BasicBigInt<OtherLimbs>& other) noexcept -> bool {
         return other == p.value;
     }
 
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 bool operator==(const BasicBigInt<OtherLimbs>& other, BigIntConstantProxy p) noexcept {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator==(const BasicBigInt<OtherLimbs>& other, const BigIntConstantProxy p) noexcept -> bool {
         return other == p.value;
     }
 
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 bool operator!=(BigIntConstantProxy p, const BasicBigInt<OtherLimbs>& other) noexcept {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator!=(const BigIntConstantProxy p, const BasicBigInt<OtherLimbs>& other) noexcept -> bool {
         return !(other == p.value);
     }
 
-    template <size_t OtherLimbs>
-    NUMERIC_CONSTEXPR_20 bool operator!=(const BasicBigInt<OtherLimbs>& other, BigIntConstantProxy p) noexcept {
+    template <std::size_t OtherLimbs>
+    NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator!=(const BasicBigInt<OtherLimbs>& other, const BigIntConstantProxy p) noexcept -> bool {
         return !(other == p.value);
     }
 
 } // namespace detail
 
-/// <summary>
-/// 雙目邏輯及運算子。
-/// </summary>
-template <size_t N1, size_t N2>
-NUMERIC_CONSTEXPR_20 bool operator&&(const BasicBigInt<N1>& lhs, const BasicBigInt<N2>& rhs) noexcept {
+template <std::size_t N1, std::size_t N2>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator&&(const BasicBigInt<N1>& lhs, const BasicBigInt<N2>& rhs) noexcept -> bool {
     return static_cast<bool>(lhs) && static_cast<bool>(rhs);
 }
 
-/// <summary>
-/// 雙目邏輯或運算子。
-/// </summary>
-template <size_t N1, size_t N2>
-NUMERIC_CONSTEXPR_20 bool operator||(const BasicBigInt<N1>& lhs, const BasicBigInt<N2>& rhs) noexcept {
+template <std::size_t N1, std::size_t N2>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator||(const BasicBigInt<N1>& lhs, const BasicBigInt<N2>& rhs) noexcept -> bool {
     return static_cast<bool>(lhs) || static_cast<bool>(rhs);
 }
 
-template <size_t N, typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-NUMERIC_CONSTEXPR_20 bool operator&&(const BasicBigInt<N>& lhs, T rhs) noexcept {
+template <std::size_t N, std::integral T>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator&&(const BasicBigInt<N>& lhs, const T rhs) noexcept -> bool {
     return static_cast<bool>(lhs) && (rhs != 0);
 }
 
-template <size_t N, typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-NUMERIC_CONSTEXPR_20 bool operator&&(T lhs, const BasicBigInt<N>& rhs) noexcept {
+template <std::size_t N, std::integral T>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator&&(const T lhs, const BasicBigInt<N>& rhs) noexcept -> bool {
     return (lhs != 0) && static_cast<bool>(rhs);
 }
 
-template <size_t N, typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-NUMERIC_CONSTEXPR_20 bool operator||(const BasicBigInt<N>& lhs, T rhs) noexcept {
+template <std::size_t N, std::integral T>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator||(const BasicBigInt<N>& lhs, const T rhs) noexcept -> bool {
     return static_cast<bool>(lhs) || (rhs != 0);
 }
 
-template <size_t N, typename T, typename std::enable_if<std::is_integral<T>::value, int>::type = 0>
-NUMERIC_CONSTEXPR_20 bool operator||(T lhs, const BasicBigInt<N>& rhs) noexcept {
+template <std::size_t N, std::integral T>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto operator||(const T lhs, const BasicBigInt<N>& rhs) noexcept -> bool {
     return (lhs != 0) || static_cast<bool>(rhs);
 }
 
 } // namespace numeric
 
 #if NUMERIC_HAS_STD_FORMAT
-#include <format>
-
 namespace std {
 
 /// <summary>
-/// std::formatter specialization for numeric::BasicBigInt<SboLimbs>.
+/// std::formatter specialization for numeric::BasicBigInt&lt;SboLimbs&gt;.
 /// </summary>
-template <size_t SboLimbs, typename CharT>
+template <std::size_t SboLimbs, typename CharT>
 struct formatter<numeric::BasicBigInt<SboLimbs>, CharT> {
     template <typename ParseContext>
     constexpr auto parse(ParseContext& ctx) -> decltype(ctx.begin()) {
-        auto it = ctx.begin();
-        auto end = ctx.end();
+        auto it{ctx.begin()};
+        const auto end{ctx.end()};
         if (it != end && *it == ':') {
             ++it;
         }
         if (it != end && *it != '}') {
-            throw std::format_error("invalid format specifier for bigint");
+            throw std::format_error{"invalid format specifier for bigint"};
         }
         return it;
     }
 
     template <typename FormatContext>
     auto format(const numeric::BasicBigInt<SboLimbs>& val, FormatContext& ctx) const -> decltype(ctx.out()) {
-        std::string s = val.to_string();
-        auto it = ctx.out();
-        for (char c : s) {
+        const std::string s{val.to_string()};
+        auto it{ctx.out()};
+        for (const char c : s) {
             *it++ = static_cast<CharT>(c);
         }
         return it;
@@ -6592,38 +6714,36 @@ struct formatter<numeric::BasicBigInt<SboLimbs>, CharT> {
 namespace std {
 
 /// <summary>
-/// std::hash specialization for numeric::BasicBigInt<SboLimbs>.
+/// std::hash specialization for numeric::BasicBigInt&lt;SboLimbs&gt; using FNV-1a + MurmurHash avalanche.
 /// </summary>
-template <size_t SboLimbs>
+template <std::size_t SboLimbs>
 struct hash<numeric::BasicBigInt<SboLimbs>> {
-    size_t operator()(const numeric::BasicBigInt<SboLimbs>& val) const noexcept {
+    NUMERIC_NODISCARD auto operator()(const numeric::BasicBigInt<SboLimbs>& val) const noexcept -> std::size_t {
         if (val.sign() == 0) {
-            return 0;
+            return 0U;
         }
-        uint64_t h = 14695981039346656037ULL;
-        const uint64_t fnv_prime = 1099511628211ULL;
+        std::uint64_t h{14695981039346656037ULL};
+        constexpr std::uint64_t fnv_prime{1099511628211ULL};
 
-        uint64_t s = static_cast<uint64_t>(val.sign() < 0 ? 1 : 2);
+        const std::uint64_t s{static_cast<std::uint64_t>(val.sign() < 0 ? 1ULL : 2ULL)};
         h ^= s;
         h *= fnv_prime;
 
-        const uint64_t* limbs = val.limbs();
-        size_t n = val.limb_count();
-        for (size_t i = 0; i < n; ++i) {
-            h ^= limbs[i];
+        for (const std::uint64_t limb : val.as_span()) {
+            h ^= limb;
             h *= fnv_prime;
         }
 
-        h ^= h >> 33;
+        h ^= h >> 33U;
         h *= 0xff51afd7ed558ccdULL;
-        h ^= h >> 33;
+        h ^= h >> 33U;
         h *= 0xc4ceb9fe1a85ec53ULL;
-        h ^= h >> 33;
+        h ^= h >> 33U;
 
 #if defined(_WIN64) || defined(__x86_64__) || defined(__ppc64__) || defined(__aarch64__)
-        return static_cast<size_t>(h);
+        return static_cast<std::size_t>(h);
 #else
-        return static_cast<size_t>(h ^ (h >> 32));
+        return static_cast<std::size_t>(h ^ (h >> 32U));
 #endif
     }
 };
@@ -6640,54 +6760,97 @@ using numeric::BigInt1024;
 // --- End Section: include/numeric/BigInt.hpp ---
 
 // --- Begin Section: include/numeric/BigIntMath.hpp ---
-// BigIntMath.hpp
-// High-precision mathematical functions for numeric::BasicBigInt.
-// Zero external dependencies, downward compatible from C++23 to C++11.
+// filepath: include/numeric/BigIntMath.hpp
+/**
+ * @file BigIntMath.hpp
+ * @brief High-precision number-theoretic and mathematical functions for numeric::BasicBigInt.
+ *        Implements tail-recursive GCD and exponentiation, integer square/cube roots, LCM,
+ *        std::expected non-throwing try_isqrt, and std:: namespace specializations.
+ *        高精度數論與數學運算函式庫（支援 numeric:: 與 std:: 命名空間）。
+ *        採用尾遞迴實作最大公因數與快速冪，並提供無例外 std::expected 安全平方根介面。
+ */
 
 
 namespace numeric {
 
+namespace detail {
+
+    /// <summary>
+    /// Tail-recursive Euclidean GCD helper operating purely in tail position.
+    /// 處於純尾位置之歐幾里得最大公因數尾遞迴輔助函式。
+    /// </summary>
+    template <std::size_t N>
+    NUMERIC_NODISCARD inline auto gcd_tail(BasicBigInt<N> a, BasicBigInt<N> b) -> BasicBigInt<N> {
+        if (b == 0) {
+            return a;
+        }
+        BasicBigInt<N> rem{a % b};
+        return gcd_tail(std::move(b), std::move(rem));
+    }
+
+    /// <summary>
+    /// Tail-recursive exponentiation with accumulator for unsigned integral exponents.
+    /// 帶累加器之無符號整數快速冪尾遞迴輔助函式。
+    /// </summary>
+    template <std::size_t N>
+    NUMERIC_NODISCARD inline auto pow_tail(
+        BasicBigInt<N> base,
+        const std::uint64_t exp,
+        BasicBigInt<N> acc) -> BasicBigInt<N>
+    {
+        if (exp == 0ULL) {
+            return acc;
+        }
+        if ((exp & 1ULL) != 0ULL) {
+            acc *= base;
+        }
+        const std::uint64_t next_exp{exp >> 1U};
+        if (next_exp == 0ULL) {
+            return acc;
+        }
+        base *= base;
+        return pow_tail(std::move(base), next_exp, std::move(acc));
+    }
+
+} // namespace detail
+
 /// <summary>
+/// Computes the absolute value of BasicBigInt.
 /// 計算 BasicBigInt 之絕對值。
 /// </summary>
-/// <param name="x">輸入整數</param>
-/// <returns>絕對值結果</returns>
-template <size_t N = NUMERIC_BIGINT_SBO_LIMBS>
-NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 BasicBigInt<N> abs(const BasicBigInt<N>& x) noexcept {
+/// <param name="x">Input integer. / 輸入整數。</param>
+/// <returns>Absolute value. / 絕對值結果。</returns>
+template <std::size_t N = NUMERIC_BIGINT_SBO_LIMBS>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto abs(const BasicBigInt<N>& x) noexcept -> BasicBigInt<N> {
     return (x.sign() < 0) ? -x : x;
 }
 
 /// <summary>
-/// 計算 BasicBigInt 之整數平方根，回傳最大滿足 r^2 &lt;= x 之整數。
+/// Monadic non-throwing integer square root returning std::expected&lt;BasicBigInt&lt;N&gt;, BigIntError&gt;.
+/// 無例外單子式整數平方根計算，負數輸入時回傳 BigIntError::NegativeInput。
 /// </summary>
-/// <param name="x">非負輸入整數</param>
-/// <returns>整數平方根</returns>
-/// <exception cref="std::invalid_argument">若 x 為負數時拋出</exception>
-template <size_t N = NUMERIC_BIGINT_SBO_LIMBS>
-NUMERIC_NODISCARD inline BasicBigInt<N> isqrt(const BasicBigInt<N>& x) {
+/// <param name="x">Non-negative input integer. / 非負輸入整數。</param>
+/// <returns>Floor integer square root or BigIntError. / 整數平方根或錯誤狀態。</returns>
+template <std::size_t N = NUMERIC_BIGINT_SBO_LIMBS>
+[[nodiscard]] inline auto try_isqrt(const BasicBigInt<N>& x) -> std::expected<BasicBigInt<N>, BigIntError> {
     if (x.sign() < 0) {
-        NUMERIC_THROW_OR_ABORT(std::invalid_argument("isqrt: square root of negative bigint"));
+        return std::unexpected{BigIntError::NegativeInput};
     }
     if (x == 0) {
-        return BasicBigInt<N>(0);
+        return BasicBigInt<N>{0};
     }
     if (x == 1) {
-        return BasicBigInt<N>(1);
+        return BasicBigInt<N>{1};
     }
 
-    size_t count = x.limb_count();
-    const uint64_t* limbs = x.limbs();
-    uint64_t high_limb = limbs[count - 1];
-    int high_bits = 0;
-    while (high_limb > 0) {
-        high_bits++;
-        high_limb >>= 1;
-    }
-    size_t bit_len = (count - 1) * 64 + static_cast<size_t>(high_bits);
-    size_t shift = (bit_len + 1) / 2;
+    const std::size_t count{x.limb_count()};
+    const std::uint64_t high_limb{x.as_span()[count - 1U]};
+    const std::int32_t high_bits{64 - static_cast<std::int32_t>(std::countl_zero(high_limb))};
+    const std::size_t bit_len{(count - 1U) * 64U + static_cast<std::size_t>(high_bits)};
+    const std::size_t shift{(bit_len + 1U) / 2U};
 
-    BasicBigInt<N> x0 = BasicBigInt<N>(1) << shift;
-    BasicBigInt<N> x1 = (x0 + x / x0) >> 1;
+    BasicBigInt<N> x0{BasicBigInt<N>{1} << shift};
+    BasicBigInt<N> x1{(x0 + x / x0) >> 1};
     while (x1 < x0) {
         x0 = std::move(x1);
         x1 = (x0 + x / x0) >> 1;
@@ -6699,46 +6862,54 @@ NUMERIC_NODISCARD inline BasicBigInt<N> isqrt(const BasicBigInt<N>& x) {
 }
 
 /// <summary>
-/// 計算 BasicBigInt 之整數平方根（isqrt 之別名）。
+/// Computes integer floor square root: greatest r such that r^2 &lt;= x.
+/// 計算 BasicBigInt 之整數平方根，回傳滿足 r^2 &lt;= x 之最大整數。
 /// </summary>
-/// <param name="x">非負輸入整數</param>
-/// <returns>整數平方根</returns>
-/// <exception cref="std::invalid_argument">若 x 為負數時拋出</exception>
-template <size_t N = NUMERIC_BIGINT_SBO_LIMBS>
-NUMERIC_NODISCARD inline BasicBigInt<N> sqrt(const BasicBigInt<N>& x) {
+/// <param name="x">Non-negative input integer. / 非負輸入整數。</param>
+/// <returns>Integer square root. / 整數平方根。</returns>
+template <std::size_t N = NUMERIC_BIGINT_SBO_LIMBS>
+NUMERIC_NODISCARD inline auto isqrt(const BasicBigInt<N>& x) -> BasicBigInt<N> {
+    auto res{try_isqrt<N>(x)};
+    if (!res) {
+        NUMERIC_THROW_OR_ABORT(std::invalid_argument("isqrt: square root of negative bigint"));
+    }
+    return std::move(*res);
+}
+
+/// <summary>
+/// Alias for isqrt(). / isqrt() 之別名。
+/// </summary>
+template <std::size_t N = NUMERIC_BIGINT_SBO_LIMBS>
+NUMERIC_NODISCARD inline auto sqrt(const BasicBigInt<N>& x) -> BasicBigInt<N> {
     return isqrt<N>(x);
 }
 
 /// <summary>
-/// 計算 BasicBigInt 之整數立方根，回傳整數立方根（奇函數，支援負數）。
+/// Computes integer cube root supporting negative operands as an odd function.
+/// 計算 BasicBigInt 之整數立方根（支援負數奇函數語意）。
 /// </summary>
-/// <param name="x">輸入整數</param>
-/// <returns>整數立方根</returns>
-template <size_t N = NUMERIC_BIGINT_SBO_LIMBS>
-NUMERIC_NODISCARD inline BasicBigInt<N> icbrt(const BasicBigInt<N>& x) noexcept {
+/// <param name="x">Input integer. / 輸入整數。</param>
+/// <returns>Integer cube root. / 整數立方根。</returns>
+template <std::size_t N = NUMERIC_BIGINT_SBO_LIMBS>
+NUMERIC_NODISCARD inline auto icbrt(const BasicBigInt<N>& x) noexcept -> BasicBigInt<N> {
     if (x == 0) {
-        return BasicBigInt<N>(0);
+        return BasicBigInt<N>{0};
     }
     if (x.sign() < 0) {
         return -icbrt(-x);
     }
     if (x == 1) {
-        return BasicBigInt<N>(1);
+        return BasicBigInt<N>{1};
     }
 
-    size_t count = x.limb_count();
-    const uint64_t* limbs = x.limbs();
-    uint64_t high_limb = limbs[count - 1];
-    int high_bits = 0;
-    while (high_limb > 0) {
-        high_bits++;
-        high_limb >>= 1;
-    }
-    size_t bit_len = (count - 1) * 64 + static_cast<size_t>(high_bits);
-    size_t shift = (bit_len + 2) / 3;
+    const std::size_t count{x.limb_count()};
+    const std::uint64_t high_limb{x.as_span()[count - 1U]};
+    const std::int32_t high_bits{64 - static_cast<std::int32_t>(std::countl_zero(high_limb))};
+    const std::size_t bit_len{(count - 1U) * 64U + static_cast<std::size_t>(high_bits)};
+    const std::size_t shift{(bit_len + 2U) / 3U};
 
-    BasicBigInt<N> x0 = BasicBigInt<N>(1) << shift;
-    BasicBigInt<N> x1 = (x0 * 2 + x / (x0 * x0)) / 3;
+    BasicBigInt<N> x0{BasicBigInt<N>{1} << shift};
+    BasicBigInt<N> x1{(x0 * 2 + x / (x0 * x0)) / 3};
     while (x1 < x0) {
         x0 = std::move(x1);
         x1 = (x0 * 2 + x / (x0 * x0)) / 3;
@@ -6753,84 +6924,71 @@ NUMERIC_NODISCARD inline BasicBigInt<N> icbrt(const BasicBigInt<N>& x) noexcept 
 }
 
 /// <summary>
-/// 計算 BasicBigInt 之整數立方根（icbrt 之別名）。
+/// Alias for icbrt(). / icbrt() 之別名。
 /// </summary>
-/// <param name="x">輸入整數</param>
-/// <returns>整數立方根</returns>
-template <size_t N = NUMERIC_BIGINT_SBO_LIMBS>
-NUMERIC_NODISCARD inline BasicBigInt<N> cbrt(const BasicBigInt<N>& x) noexcept {
+template <std::size_t N = NUMERIC_BIGINT_SBO_LIMBS>
+NUMERIC_NODISCARD inline auto cbrt(const BasicBigInt<N>& x) noexcept -> BasicBigInt<N> {
     return icbrt<N>(x);
 }
 
 /// <summary>
-/// 計算 BasicBigInt 之整數非負次方冪（快速冪演算法）。
+/// Fast binary exponentiation using tail-recursive accumulator pattern.
+/// 採用尾遞迴累加器模式計算無符號整數指數之快速冪。
 /// </summary>
-/// <param name="base">底數</param>
-/// <param name="exp">無符號指數</param>
-/// <returns>冪次結果</returns>
-template <size_t N = NUMERIC_BIGINT_SBO_LIMBS>
-NUMERIC_NODISCARD inline BasicBigInt<N> pow(const BasicBigInt<N>& base, unsigned int exp) {
+/// <param name="base">Base value. / 底數。</param>
+/// <param name="exp">Unsigned integral exponent. / 無符號整數指數。</param>
+/// <returns>Power result. / 冪次結果。</returns>
+template <std::size_t N = NUMERIC_BIGINT_SBO_LIMBS, std::unsigned_integral ExpT = std::uint32_t>
+NUMERIC_NODISCARD inline auto pow(const BasicBigInt<N>& base, const ExpT exp) -> BasicBigInt<N> {
     if (exp == 0) {
-        return BasicBigInt<N>(1);
+        return BasicBigInt<N>{1};
     }
     if (base == 0) {
-        return BasicBigInt<N>(0);
+        return BasicBigInt<N>{0};
     }
     if (base == 1) {
-        return BasicBigInt<N>(1);
+        return BasicBigInt<N>{1};
     }
     if (base == -1) {
-        return (exp & 1u) ? BasicBigInt<N>(-1) : BasicBigInt<N>(1);
+        return ((exp & ExpT{1}) != 0) ? BasicBigInt<N>{-1} : BasicBigInt<N>{1};
     }
-
-    BasicBigInt<N> res(1);
-    BasicBigInt<N> b = base;
-    while (exp > 0) {
-        if (exp & 1u) {
-            res *= b;
-        }
-        exp >>= 1;
-        if (exp > 0) {
-            b *= b;
-        }
-    }
-    return res;
+    return detail::pow_tail<N>(base, static_cast<std::uint64_t>(exp), BasicBigInt<N>{1});
 }
 
 /// <summary>
-/// 計算 BasicBigInt 之整數冪（支援 BasicBigInt 指數）。
+/// Fast binary exponentiation with signed integer exponent (convenience overload for literals).
+/// 支援有符號整數指數之快速冪多載（負指數時非 1/-1 將拋出例外）。
 /// </summary>
-/// <param name="base">底數</param>
-/// <param name="exp">指數</param>
-/// <returns>冪次結果</returns>
-/// <exception cref="std::invalid_argument">若指數為負且底數非 1 或 -1 時拋出</exception>
-template <size_t N1 = NUMERIC_BIGINT_SBO_LIMBS, size_t N2 = NUMERIC_BIGINT_SBO_LIMBS>
-NUMERIC_NODISCARD inline BasicBigInt<N1> pow(const BasicBigInt<N1>& base, const BasicBigInt<N2>& exp) {
-    if (exp.sign() < 0) {
-        if (base == 1) {
-            return BasicBigInt<N1>(1);
-        }
-        if (base == -1) {
-            return (exp % 2 != 0) ? BasicBigInt<N1>(-1) : BasicBigInt<N1>(1);
-        }
+template <std::size_t N = NUMERIC_BIGINT_SBO_LIMBS, std::signed_integral ExpT>
+    requires (!std::same_as<ExpT, bool>)
+NUMERIC_NODISCARD inline auto pow(const BasicBigInt<N>& base, const ExpT exp) -> BasicBigInt<N> {
+    if (exp < 0) {
+        if (base == 1) return BasicBigInt<N>{1};
+        if (base == -1) return ((exp % 2) != 0) ? BasicBigInt<N>{-1} : BasicBigInt<N>{1};
         NUMERIC_THROW_OR_ABORT(std::invalid_argument("pow: negative exponent in bigint pow"));
     }
-    if (exp == 0) {
-        return BasicBigInt<N1>(1);
-    }
-    if (base == 0) {
-        return BasicBigInt<N1>(0);
-    }
-    if (base == 1) {
-        return BasicBigInt<N1>(1);
-    }
-    if (base == -1) {
-        return (exp % 2 != 0) ? BasicBigInt<N1>(-1) : BasicBigInt<N1>(1);
-    }
+    return pow<N>(base, static_cast<std::uint64_t>(exp));
+}
 
-    BasicBigInt<N1> res(1);
-    BasicBigInt<N1> b = base;
-    BasicBigInt<N2> e = exp;
+/// <summary>
+/// Exponentiation supporting arbitrary-precision BasicBigInt exponents.
+/// 支援 BasicBigInt 任意精度指數之冪次計算。
+/// </summary>
+template <std::size_t N1 = NUMERIC_BIGINT_SBO_LIMBS, std::size_t N2 = NUMERIC_BIGINT_SBO_LIMBS>
+NUMERIC_NODISCARD inline auto pow(const BasicBigInt<N1>& base, const BasicBigInt<N2>& exp) -> BasicBigInt<N1> {
+    if (exp.sign() < 0) {
+        if (base == 1) return BasicBigInt<N1>{1};
+        if (base == -1) return (exp % 2 != 0) ? BasicBigInt<N1>{-1} : BasicBigInt<N1>{1};
+        NUMERIC_THROW_OR_ABORT(std::invalid_argument("pow: negative exponent in bigint pow"));
+    }
+    if (exp == 0) return BasicBigInt<N1>{1};
+    if (base == 0) return BasicBigInt<N1>{0};
+    if (base == 1) return BasicBigInt<N1>{1};
+    if (base == -1) return (exp % 2 != 0) ? BasicBigInt<N1>{-1} : BasicBigInt<N1>{1};
+
+    BasicBigInt<N1> res{1};
+    BasicBigInt<N1> b{base};
+    BasicBigInt<N2> e{exp};
     while (e > 0) {
         if (e % 2 != 0) {
             res *= b;
@@ -6844,39 +7002,28 @@ NUMERIC_NODISCARD inline BasicBigInt<N1> pow(const BasicBigInt<N1>& base, const 
 }
 
 /// <summary>
-/// 計算兩 BasicBigInt 之最大公因數 (Greatest Common Divisor)。
+/// Computes non-negative Greatest Common Divisor (GCD) via tail recursion.
+/// 透過純尾遞迴計算兩 BasicBigInt 之非負最大公因數 (GCD)。
 /// </summary>
-/// <param name="a">第一個整數</param>
-/// <param name="b">第二個整數</param>
-/// <returns>最大公因數（恆為非負）</returns>
-template <size_t N1 = NUMERIC_BIGINT_SBO_LIMBS, size_t N2 = NUMERIC_BIGINT_SBO_LIMBS>
-NUMERIC_NODISCARD inline BasicBigInt<N1> gcd(BasicBigInt<N1> a, BasicBigInt<N2> b) {
-    a = (a.sign() < 0) ? -a : a;
-    BasicBigInt<N1> b_copy(b);
-    b_copy = (b_copy.sign() < 0) ? -b_copy : b_copy;
-    while (b_copy != 0) {
-        BasicBigInt<N1> r = a % b_copy;
-        a = std::move(b_copy);
-        b_copy = std::move(r);
-    }
-    return a;
+template <std::size_t N1 = NUMERIC_BIGINT_SBO_LIMBS, std::size_t N2 = NUMERIC_BIGINT_SBO_LIMBS>
+NUMERIC_NODISCARD inline auto gcd(BasicBigInt<N1> a, const BasicBigInt<N2>& b) -> BasicBigInt<N1> {
+    BasicBigInt<N1> abs_a{(a.sign() < 0) ? -std::move(a) : std::move(a)};
+    BasicBigInt<N1> abs_b{(b.sign() < 0) ? BasicBigInt<N1>{-b} : BasicBigInt<N1>{b}};
+    return detail::gcd_tail<N1>(std::move(abs_a), std::move(abs_b));
 }
 
 /// <summary>
-/// 計算兩 BasicBigInt 之最小公倍數 (Least Common Multiple)。
+/// Computes Least Common Multiple (LCM) using divide-before-multiply overflow avoidance.
+/// 計算兩 BasicBigInt 之最小公倍數 (LCM)，採除後乘演算法防止中間值不必要膨脹。
 /// </summary>
-/// <param name="a">第一個整數</param>
-/// <param name="b">第二個整數</param>
-/// <returns>最小公倍數（恆為非負）</returns>
-template <size_t N1 = NUMERIC_BIGINT_SBO_LIMBS, size_t N2 = NUMERIC_BIGINT_SBO_LIMBS>
-NUMERIC_NODISCARD inline BasicBigInt<N1> lcm(const BasicBigInt<N1>& a, const BasicBigInt<N2>& b) {
+template <std::size_t N1 = NUMERIC_BIGINT_SBO_LIMBS, std::size_t N2 = NUMERIC_BIGINT_SBO_LIMBS>
+NUMERIC_NODISCARD inline auto lcm(const BasicBigInt<N1>& a, const BasicBigInt<N2>& b) -> BasicBigInt<N1> {
     if (a == 0 || b == 0) {
-        return BasicBigInt<N1>(0);
+        return BasicBigInt<N1>{0};
     }
-    BasicBigInt<N1> g = gcd(a, b);
-    BasicBigInt<N1> abs_a = (a.sign() < 0) ? -a : a;
-    BasicBigInt<N1> abs_b(b);
-    abs_b = (abs_b.sign() < 0) ? -abs_b : abs_b;
+    const BasicBigInt<N1> g{gcd(a, b)};
+    const BasicBigInt<N1> abs_a{(a.sign() < 0) ? -a : a};
+    const BasicBigInt<N1> abs_b{(b.sign() < 0) ? BasicBigInt<N1>{-b} : BasicBigInt<N1>{b}};
     return (abs_a / g) * abs_b;
 }
 
@@ -6884,48 +7031,48 @@ NUMERIC_NODISCARD inline BasicBigInt<N1> lcm(const BasicBigInt<N1>& a, const Bas
 
 namespace std {
 
-template <size_t N>
-NUMERIC_CONSTEXPR_20 numeric::BasicBigInt<N> abs(const numeric::BasicBigInt<N>& x) noexcept {
+template <std::size_t N>
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto abs(const numeric::BasicBigInt<N>& x) noexcept -> numeric::BasicBigInt<N> {
     return numeric::abs(x);
 }
 
-template <size_t N>
-inline numeric::BasicBigInt<N> sqrt(const numeric::BasicBigInt<N>& x) {
+template <std::size_t N>
+NUMERIC_NODISCARD inline auto sqrt(const numeric::BasicBigInt<N>& x) -> numeric::BasicBigInt<N> {
     return numeric::sqrt(x);
 }
 
-template <size_t N>
-inline numeric::BasicBigInt<N> isqrt(const numeric::BasicBigInt<N>& x) {
+template <std::size_t N>
+NUMERIC_NODISCARD inline auto isqrt(const numeric::BasicBigInt<N>& x) -> numeric::BasicBigInt<N> {
     return numeric::isqrt(x);
 }
 
-template <size_t N>
-inline numeric::BasicBigInt<N> cbrt(const numeric::BasicBigInt<N>& x) noexcept {
+template <std::size_t N>
+NUMERIC_NODISCARD inline auto cbrt(const numeric::BasicBigInt<N>& x) noexcept -> numeric::BasicBigInt<N> {
     return numeric::cbrt(x);
 }
 
-template <size_t N>
-inline numeric::BasicBigInt<N> icbrt(const numeric::BasicBigInt<N>& x) noexcept {
+template <std::size_t N>
+NUMERIC_NODISCARD inline auto icbrt(const numeric::BasicBigInt<N>& x) noexcept -> numeric::BasicBigInt<N> {
     return numeric::icbrt(x);
 }
 
-template <size_t N>
-inline numeric::BasicBigInt<N> pow(const numeric::BasicBigInt<N>& base, unsigned int exp) {
+template <std::size_t N, std::integral ExpT>
+NUMERIC_NODISCARD inline auto pow(const numeric::BasicBigInt<N>& base, const ExpT exp) -> numeric::BasicBigInt<N> {
     return numeric::pow(base, exp);
 }
 
-template <size_t N1, size_t N2>
-inline numeric::BasicBigInt<N1> pow(const numeric::BasicBigInt<N1>& base, const numeric::BasicBigInt<N2>& exp) {
+template <std::size_t N1, std::size_t N2>
+NUMERIC_NODISCARD inline auto pow(const numeric::BasicBigInt<N1>& base, const numeric::BasicBigInt<N2>& exp) -> numeric::BasicBigInt<N1> {
     return numeric::pow(base, exp);
 }
 
-template <size_t N1, size_t N2>
-inline numeric::BasicBigInt<N1> gcd(const numeric::BasicBigInt<N1>& a, const numeric::BasicBigInt<N2>& b) {
+template <std::size_t N1, std::size_t N2>
+NUMERIC_NODISCARD inline auto gcd(const numeric::BasicBigInt<N1>& a, const numeric::BasicBigInt<N2>& b) -> numeric::BasicBigInt<N1> {
     return numeric::gcd(a, b);
 }
 
-template <size_t N1, size_t N2>
-inline numeric::BasicBigInt<N1> lcm(const numeric::BasicBigInt<N1>& a, const numeric::BasicBigInt<N2>& b) {
+template <std::size_t N1, std::size_t N2>
+NUMERIC_NODISCARD inline auto lcm(const numeric::BasicBigInt<N1>& a, const numeric::BasicBigInt<N2>& b) -> numeric::BasicBigInt<N1> {
     return numeric::lcm(a, b);
 }
 
@@ -6933,43 +7080,57 @@ inline numeric::BasicBigInt<N1> lcm(const numeric::BasicBigInt<N1>& a, const num
 // --- End Section: include/numeric/BigIntMath.hpp ---
 
 // --- Begin Section: include/numeric/Bitset.hpp ---
-// Bitset.hpp
-// Interoperability shims and bidirectional conversions between numeric::BasicBigInt and std::bitset.
-// Zero external dependencies, downward compatible from C++23 to C++11.
+// filepath: include/numeric/Bitset.hpp
+/**
+ * @file Bitset.hpp
+ * @brief Bidirectional conversion helpers between numeric::BasicBigInt and std::bitset&lt;N&gt;.
+ *        Enforces exact two's complement extension for negative values.
+ *        提供 numeric::BasicBigInt 與任意寬度 std::bitset&lt;N&gt; 雙向轉換輔助介面，
+ *        負數時嚴格遵循標準二補數延伸。
+ */
 
 
 namespace numeric {
 
     /// <summary>
-    /// 將 numeric::BasicBigInt<SboLimbs> 轉換為指定寬度之 std::bitset，負數時採用標準二補數表示法。
+    /// Converts numeric::BasicBigInt&lt;SboLimbs&gt; into std::bitset&lt;N&gt; with two's complement sign extension.
+    /// 將 numeric::BasicBigInt&lt;SboLimbs&gt; 轉換為指定寬度之 std::bitset，負數採用標準二補數表示法。
     /// </summary>
-    /// <typeparam name="N">目標位元寬度</typeparam>
-    /// <typeparam name="SboLimbs">SBO 內聯容量</typeparam>
-    /// <param name="b">來源任意精度整數</param>
-    /// <returns>對應之 std::bitset 物件</returns>
-    template <size_t N, size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
-    inline std::bitset<N> to_bitset(const BasicBigInt<SboLimbs>& b) {
+    /// <typeparam name="N">Target bitset width. / 目標位元寬度。</typeparam>
+    /// <typeparam name="SboLimbs">Source SBO limb capacity. / 來源 SBO 內聯容量。</typeparam>
+    /// <param name="b">Source integer. / 來源任意精度整數。</param>
+    /// <returns>Converted std::bitset&lt;N&gt;. / 對應之 std::bitset 物件。</returns>
+    template <std::size_t N, std::size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
+    NUMERIC_NODISCARD inline auto to_bitset(const BasicBigInt<SboLimbs>& b) -> std::bitset<N> {
         return b.template to_bitset<N>();
     }
 
     /// <summary>
-    /// 將 std::bitset 轉換為非負 numeric::BasicBigInt<SboLimbs>（按無符號二進位數解析）。
+    /// Converts std::bitset&lt;N&gt; into a non-negative numeric::BasicBigInt&lt;SboLimbs&gt;.
+    /// 將 std::bitset&lt;N&gt; 轉換為非負之 numeric::BasicBigInt&lt;SboLimbs&gt;（按無符號二進位數解析）。
     /// </summary>
-    /// <typeparam name="N">來源位元寬度</typeparam>
-    /// <typeparam name="SboLimbs">目標 SBO 內聯容量</typeparam>
-    /// <param name="bs">來源 bitset 物件</param>
-    /// <returns>對應之 numeric::BasicBigInt<SboLimbs> 物件</returns>
-    template <size_t N, size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
-    inline BasicBigInt<SboLimbs> to_bigint(const std::bitset<N>& bs) {
-        return BasicBigInt<SboLimbs>(bs);
+    /// <typeparam name="N">Source bitset width. / 來源位元寬度。</typeparam>
+    /// <typeparam name="SboLimbs">Target SBO limb capacity. / 目標 SBO 內聯容量。</typeparam>
+    /// <param name="bs">Source bitset. / 來源 bitset 物件。</param>
+    /// <returns>Non-negative BasicBigInt. / 非負 BasicBigInt 物件。</returns>
+    template <std::size_t N, std::size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
+    NUMERIC_NODISCARD inline auto to_bigint(const std::bitset<N>& bs) -> BasicBigInt<SboLimbs> {
+        return BasicBigInt<SboLimbs>{bs};
     }
 
 } // namespace numeric
 // --- End Section: include/numeric/Bitset.hpp ---
 
 // --- Begin Section: include/numeric/c_api.h ---
+// filepath: include/numeric/c_api.h
 #ifndef NUMERIC_C_API_H
 #define NUMERIC_C_API_H
+
+/**
+ * @file c_api.h
+ * @brief Flat C99/C11 ABI header for the arbitrary-precision BigInt library.
+ *        任意精度大數函式庫之扁平 C99/C11 ABI 標頭檔。
+ */
 
 /**
  * @file c_api.h
@@ -6997,10 +7158,6 @@ namespace numeric {
 #  else
 #    define BIGINT_C_API
 #  endif
-#endif
-
-#ifdef __cplusplus
-extern "C" {
 #endif
 
 /* ------------------------------------------------------------------------- */
@@ -7039,6 +7196,10 @@ typedef struct bigint_sbo256_t {
 typedef struct bigint_sbo512_t {
     uint64_t _raw[12];
 } bigint_sbo512_t;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* ------------------------------------------------------------------------- */
 /* Lifecycle & Memory Management (Opaque Handle Mode)                        */
