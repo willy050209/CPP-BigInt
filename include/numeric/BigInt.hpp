@@ -670,6 +670,9 @@ public:
         if (this->m_sign > 0 && rhs.m_sign > 0 && this->m_size == 1U && rhs.m_size == 1U) {
             const std::uint8_t c{detail::BigIntCore::adc64(0, this->m_data[0], rhs.m_data[0], this->m_data[0])};
             if (c != 0U) {
+                if (this->m_capacity < 2U) {
+                    this->reserve(2U);
+                }
                 this->capacity_span()[1] = 1ULL;
                 this->m_size = 2U;
             }
@@ -679,6 +682,9 @@ public:
             std::uint8_t c{detail::BigIntCore::adc64(0, this->m_data[0], rhs.m_data[0], this->m_data[0])};
             c = detail::BigIntCore::adc64(c, this->m_data[1], rhs.m_data[1], this->m_data[1]);
             if (c != 0U) {
+                if (this->m_capacity < 3U) {
+                    this->reserve(3U);
+                }
                 this->capacity_span()[2] = 1ULL;
                 this->m_size = 3U;
             }

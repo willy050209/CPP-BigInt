@@ -591,5 +591,29 @@ void run_test_bigint() {
         TEST_ASSERT(sqrt_neg.error() == numeric::BigIntError::NegativeInput);
     }
 
+    // 20. Small SBO (0/1/2) fast-path carry overflow into heap / 極小 SBO 進位溢位堆積擴容測試
+    {
+        std::array<numeric::BasicBigInt<0>, 2> sbo0{
+            numeric::BasicBigInt<0>{"18446744073709551615"},
+            numeric::BasicBigInt<0>{77ULL}};
+        sbo0[0] += sbo0[1];
+        TEST_ASSERT(sbo0[0] == numeric::BasicBigInt<0>{"18446744073709551692"});
+        TEST_ASSERT(sbo0[1] == 77ULL);
+
+        std::array<numeric::BasicBigInt<1>, 2> sbo1{
+            numeric::BasicBigInt<1>{"18446744073709551615"},
+            numeric::BasicBigInt<1>{99ULL}};
+        sbo1[0] += sbo1[1];
+        TEST_ASSERT(sbo1[0] == numeric::BasicBigInt<1>{"18446744073709551714"});
+        TEST_ASSERT(sbo1[1] == 99ULL);
+
+        std::array<numeric::BasicBigInt<2>, 2> sbo2{
+            (numeric::BasicBigInt<2>{1} << 128) - 1,
+            (numeric::BasicBigInt<2>{1} << 127)};
+        sbo2[0] += sbo2[1];
+        TEST_ASSERT(sbo2[0] == ((numeric::BasicBigInt<2>{1} << 128) + (numeric::BasicBigInt<2>{1} << 127) - 1));
+        TEST_ASSERT(sbo2[1] == (numeric::BasicBigInt<2>{1} << 127));
+    }
+
     std::cout << "--- BigInt Tests Completed Successfully ---" << std::endl;
 }
