@@ -2,7 +2,7 @@
 
 高效、跨標準、零外部依賴的現代 C++ 任意精度整數函式庫 (Arbitrary-Precision Integer Library)。
 
-向下相容至 **C++11**，並於 **C++20+** 全面支援編譯期常數求值 (`constexpr`)。
+全面基於 **C++23** 現代標準建構，具備完整編譯期常數求值 (`constexpr`)、`std::expected` 單子式安全錯誤處理與 `std::span` 邊界視圖檢查。
 
 ---
 
@@ -10,10 +10,14 @@
 
 - **樣板化 Small Buffer Optimization (SBO) 雙層架構**：
   - 借鑒 **LLVM SmallVector** 設計，將核心運算邏輯解耦至中介層 `BigIntBase`，上層樣板 `BasicBigInt<SboLimbs>` 僅宣告內聯容量，徹底杜絕多樣板實例化之編譯代碼膨脹（Zero Code Bloat）。
-  - **預設 `BigInt` / `bigint`**：256 位元（4 個 64-bit limbs），結構大小為 64 位元組剛好對齊單一 L1 快取行，享有 **0 次 Heap 動態記憶體配置**。
+  - **預設 `BigInt` / `bigint`**：256 位元（4 個 64-bit limbs），結構大小為 64 位元組剛好對齊單一 L1 快取行，享有 **0 次 Heap 動態記憶體配置**；即使以 `BasicBigInt<0/1/2>` 配置極小 SBO，亦透過 `reserve()` 容量防衛確保跨肢數運算安全。
   - **專用別名 `BigInt512` / `bigint512`**：8 limbs（512 位元，96 位元組），為 SHA-512、Curve25519、Ed448 及 512-bit 密碼學運算提供完全零堆疊配置的棧上運算保障。
   - **異質運算與右值取負**：支援不同 SBO 容量型別無縫混算（回傳型別嚴格由 LHS 決定），且單元取負支援右值暫存緩衝區原地重用（`operator-() &&`）。
   - 數值擴展時自動平滑晉升至動態陣列；運算回縮至 SBO 容量以內時自動退回 SBO，維持極高快取局部性。
+- **C++23 型別安全與無例外單子式錯誤處理 (`std::expected` & Concepts)**：
+  - **Concepts 型別約束與防誤轉**：以 `std::signed_integral` / `std::unsigned_integral` 取代傳統 SFINAE，並對 `bool`、`std::bitset<N>` 與字串建構子標註 `explicit`，杜絕隱式截斷或非預期轉換。
+  - **無例外錯誤恢復介面 (`BigIntError`)**：提供 `try_from_string()`、`try_from_binary_string()`、`try_to_int64()`、`try_to_uint64()` 與 `numeric::try_isqrt()`，回傳 `std::expected<T, BigIntError>`。
+  - **生命週期與邊界安全**：底層 `BigIntBase` 提供 `as_span()`、`capacity_span()` 與 `inline_span()`，並以 `NUMERIC_LIFETIMEBOUND`（MSVC 展開為 `[[msvc::lifetimebound]]`）標註衍生指標與視圖，搭配 `std::unique_ptr` RAII 管理堆積陣列。
 - **高效數值運算法與硬體原語加速**：
   - **標量與對稱加減法 (~3.0 ns ~ 5 ns)**：針對 1-limb / 2-limb 標量運算提供純暫存器 `+=` / `-=` 快速路徑，並直接編譯為硬體進位/借位指令（MSVC `_addcarry_u64` / `_subborrow_u64`，GCC/Clang `__builtin_addcll` / `__builtin_subcll`），配合 SBO 4-limb 完全無分支展開路徑（`add_unsigned_sbo4` / `sub_unsigned_sbo4`）及 Direct-Result / Move-Reuse 機制。
   - **三層階梯式乘法**：
@@ -39,9 +43,9 @@
   - **正式 .NET 10 跨語言封裝 (`Numeric.BigInt`)**：完整支援 **C# 14**、**F# 10** 與 **VB.NET 10**，提供不可變 `BigInt` 類別（含完整運算子重載與 VB `\` 整數除法）、`SafeHandle` 自動資源安全管理、零設定動態庫探查器 `NativeResolver`，以及 **0 Bytes GC 配置** 的 `ref struct BigIntScope` 與 `BigIntSbo256` 堆疊運算層。
   - 透過 .NET 10 `[LibraryImport]` P/Invoke 實測，相較原生 `System.Numerics.BigInteger` 獲得 **2.8x ~ 6.9x** 加速並徹底消弭託管堆積配置（[docs/dotnet.md](docs/dotnet.md)）。
 - **進階擴充支援**：
-  - **整數數學函式 (`numeric/BigIntMath.hpp`)**：`abs`, `isqrt`, `sqrt`, `icbrt`, `cbrt`, `pow`, `gcd`, `lcm`（同時支援 `numeric::` 與 `std::` 命名空間）。
+  - **整數數學函式 (`numeric/BigIntMath.hpp`)**：`abs`, `try_isqrt`, `isqrt`, `sqrt`, `icbrt`, `cbrt`, `pow`, `gcd`, `lcm`（同時支援 `numeric::` 與 `std::` 命名空間；`gcd` / `pow` 採用純尾位置累加遞迴）。
   - **位元集合互轉 (`numeric/Bitset.hpp`)**：支援任意寬度 `std::bitset<N>` 雙向轉換，負數嚴格遵循標準二補數延伸。
-  - **現代格式化與容器**：支援 C++20 `std::format` 及 `std::hash<numeric::bigint>`（可直接作為 `std::unordered_set` / `std::unordered_map` 的 Key）。
+  - **現代格式化與容器**：支援 `std::format` 及 `std::hash<numeric::BasicBigInt<SboLimbs>>`（可直接作為 `std::unordered_set` / `std::unordered_map` 的 Key）。
 
 ---
 
@@ -93,8 +97,11 @@ target_link_libraries(your_target PRIVATE bigint)
 import bigint;
 ```
 
-#### 4. C-ABI 與正式 .NET 跨語言函式庫引入 (C# 14 / F# 10 / VB.NET 10)
-CMake 建置時預設開啟 `-DBIGINT_BUILD_C_API=ON`，產出 `bigint_c.dll` / `libbigint_c.so`，並提供純 C 標頭檔 `dist/bigint_c.h`。
+#### 4. C-ABI、舊版 C++（C++11～20）與正式 .NET 跨語言函式庫引入 (C# 14 / F# 10 / VB.NET 10)
+核心標頭檔全面要求 **C++23**；若需於 **舊版 C++（C++11～20）**、純 C 或 Python / Rust / Go / .NET 呼叫，可透過 C-ABI 匯出腳本一鍵建置並封裝獨立 SDK（含 `bigint_c.h`、`bigint_c.dll` / `libbigint_c.so` 與多語言範例）：
+```bash
+python scripts/export_c_api.py --verify
+```
 若需於 .NET 10 中作為 `System.Numerics.BigInteger` 的高速替代方案，可直接引用解決方案 [`dotnet/NumericBigInt.slnx`](dotnet/NumericBigInt.slnx) 或打包 NuGet 套件：
 ```powershell
 dotnet.exe build dotnet\NumericBigInt.slnx -c Release
@@ -152,18 +159,20 @@ int main() {
 
 ---
 
-## C++ 標準支援矩陣
+## C++23 環境需求與特性矩陣
 
-| 特性 | C++11 | C++14 | C++17 | C++20 | C++23 |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| 基礎任意精度運算 | ✔ | ✔ | ✔ | ✔ | ✔ |
-| 256-bit SBO 緩衝區 (0 Heap) | ✔ | ✔ | ✔ | ✔ | ✔ |
-| ADC / SBB 硬體原語加速 | ✔ | ✔ | ✔ | ✔ | ✔ |
-| 8192-bit 0-Heap 字串轉換 | ✔ | ✔ | ✔ | ✔ | ✔ |
-| `[[nodiscard]]` 屬性檢查 | 模擬 | 模擬 | 原生 | 原生 | 原生 |
-| 字串視圖 `string_view` | 內建相容 | 內建相容 | `std::string_view` | `std::string_view` | `std::string_view` |
-| `constexpr` 編譯期求值 | ✕ | ✕ | ✕ | ✔ | ✔ |
-| `std::format` 格式化輸出 | ✕ | ✕ | ✕ | ✔ (若編譯器支援) | ✔ |
+本專案嚴格要求 **C++23**（CMake 預設 `CMAKE_CXX_STANDARD 23`；MSVC 使用 `/std:c++latest`，GCC / Clang 使用 `-std=c++23`）：
+
+| 特性 | 實作機制與標準要求 | 支援狀態 |
+| :--- | :--- | :---: |
+| 任意精度與 256-bit SBO | `BigIntBase` (32B) + `BasicBigInt<SboLimbs>` `std::array` | ✔ (C++23) |
+| 硬體原語與 `<bit>` 支援 | `ADC`/`SBB`/`MUL64`/`DIV128` + `std::countl_zero` / `std::bit_width` | ✔ (C++23) |
+| 邊界安全視圖與生命週期標註 | `std::span` (`as_span`, `capacity_span`) + `[[msvc::lifetimebound]]` | ✔ (C++23) |
+| 型別約束與安全介面 | `std::signed_integral` / `std::unsigned_integral` Concepts + `[[nodiscard]]` | ✔ (C++23) |
+| 無例外單子式錯誤處理 | `std::expected<T, BigIntError>` (`try_from_string`, `try_to_int64`, `try_isqrt`) | ✔ (C++23) |
+| 字串視圖 `numeric::string_view` | `std::string_view` 型別別名（零拷貝） | ✔ (C++23) |
+| `constexpr` 編譯期常數求值 | 核心建構子、四則、比較與位元運算 | ✔ (C++23) |
+| `std::format` 格式化輸出 | `std::formatter<numeric::BasicBigInt<SboLimbs>, CharT>`（依 `<version>` 探測） | ✔ (C++23) |
 
 ---
 

@@ -47,29 +47,52 @@ internal static class NativeResolver
             return handle;
         }
 
-        // 3. Fallback win-x64 directly if on Windows x64
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && RuntimeInformation.ProcessArchitecture == Architecture.X64)
+        // 3. Fallback to portable RID (<os>-<arch>, e.g., win-x64 / linux-x64)
+        string? portableOs = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win" :
+                             RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? "linux" :
+                             RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx" : null;
+        string? portableArch = RuntimeInformation.ProcessArchitecture switch
         {
-            string win64Path = Path.Combine(baseDir, "runtimes", "win-x64", "native", filename);
-            if (File.Exists(win64Path) && NativeLibrary.TryLoad(win64Path, out handle))
+            Architecture.X64 => "x64",
+            Architecture.Arm64 => "arm64",
+            Architecture.X86 => "x86",
+            _ => null
+        };
+        if (portableOs is not null && portableArch is not null)
+        {
+            string portableRid = $"{portableOs}-{portableArch}";
+            if (!string.Equals(portableRid, rid, StringComparison.OrdinalIgnoreCase))
             {
-                return handle;
+                string portablePath = Path.Combine(baseDir, "runtimes", portableRid, "native", filename);
+                if (File.Exists(portablePath) && NativeLibrary.TryLoad(portablePath, out handle))
+                {
+                    return handle;
+                }
             }
         }
 
-        // 4. Check typical build output paths in dev repo
-        string[] devCandidates = [
-            Path.Combine(baseDir, "..", "..", "..", "..", "build", "Release", filename),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "build", "Release", filename),
-            Path.Combine(baseDir, "..", "..", "..", "build", "Release", filename),
-            Path.Combine(baseDir, "..", "..", "build", "Release", filename),
-            Path.Combine(baseDir, "..", "build", "Release", filename)
+        // 4. Check typical build output paths in dev repo (multi-config and single-config)
+        string[] buildSubDirs = [
+            Path.Combine("build", "Release"),
+            "build",
+            "build-linux"
         ];
-        foreach (string devPath in devCandidates)
+        string[] relativePrefixes = [
+            Path.Combine("..", "..", "..", "..", ".."),
+            Path.Combine("..", "..", "..", ".."),
+            Path.Combine("..", "..", ".."),
+            Path.Combine("..", ".."),
+            ".."
+        ];
+        foreach (string relDir in relativePrefixes)
         {
-            if (File.Exists(devPath) && NativeLibrary.TryLoad(Path.GetFullPath(devPath), out handle))
+            foreach (string buildSubDir in buildSubDirs)
             {
-                return handle;
+                string devPath = Path.Combine(baseDir, relDir, buildSubDir, filename);
+                if (File.Exists(devPath) && NativeLibrary.TryLoad(Path.GetFullPath(devPath), out handle))
+                {
+                    return handle;
+                }
             }
         }
 

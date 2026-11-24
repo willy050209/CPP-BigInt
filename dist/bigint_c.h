@@ -3,6 +3,11 @@
 
 /**
  * @file c_api.h
+ * @brief Flat C99/C11 ABI header for the arbitrary-precision BigInt library.
+ */
+
+/**
+ * @file c_api.h
  * @brief C-compatible ABI (extern "C") interface for CPP-BigInt.
  * @details Enables consumption by pure C, Python (ctypes/cffi), Rust (bindgen),
  *          .NET ([DllImport]/[LibraryImport]), and Go (cgo).
@@ -27,10 +32,6 @@
 #  else
 #    define BIGINT_C_API
 #  endif
-#endif
-
-#ifdef __cplusplus
-extern "C" {
 #endif
 
 /* ------------------------------------------------------------------------- */
@@ -69,6 +70,10 @@ typedef struct bigint_sbo256_t {
 typedef struct bigint_sbo512_t {
     uint64_t _raw[12];
 } bigint_sbo512_t;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* ------------------------------------------------------------------------- */
 /* Lifecycle & Memory Management (Opaque Handle Mode)                        */

@@ -1,17 +1,25 @@
+// filepath: tests/test_main.cpp
+/**
+ * @file test_main.cpp
+ * @brief Entry point executing all C++23 BigInt unit test suites.
+ *        執行所有 C++23 BigInt 單元測試套件的進入點。
+ */
+
 #include "test_helpers.hpp"
 #include <iostream>
 
-void run_test_bigint();
-void run_test_operators();
-void run_test_bitset();
-void run_test_constexpr();
-void run_test_bz_division();
-void run_test_toom3();
+auto run_test_bigint() -> void;
+auto run_test_operators() -> void;
+auto run_test_bitset() -> void;
+auto run_test_constexpr() -> void;
+auto run_test_bz_division() -> void;
+auto run_test_toom3() -> void;
 
 int main() {
-    std::cout << "========================================" << std::endl;
-    std::cout << "  Starting CPP-BigInt Full Test Suite   " << std::endl;
-    std::cout << "========================================" << std::endl;
+    std::cout << std::unitbuf;
+    std::cout << "========================================\n";
+    std::cout << "  Starting CPP-BigInt Unit Test Suite   \n";
+    std::cout << "========================================\n";
 
     run_test_bigint();
     run_test_operators();
@@ -20,19 +28,19 @@ int main() {
     run_test_bz_division();
     run_test_toom3();
 
-    TestStats& stats = GetGlobalTestStats();
-    std::cout << "========================================" << std::endl;
-    std::cout << "Test Summary:" << std::endl;
-    std::cout << "  Total Assertions: " << stats.total << std::endl;
-    std::cout << "  Passed:           " << stats.passed << std::endl;
-    std::cout << "  Failed:           " << stats.failed << std::endl;
-    std::cout << "========================================" << std::endl;
+    const auto& stats = numeric::test::GetGlobalTestStats();
+    std::cout << "========================================\n";
+    std::cout << "Test Results Summary:\n";
+    std::cout << "  Total Assertions: " << stats.total << "\n";
+    std::cout << "  Passed:           " << stats.passed << "\n";
+    std::cout << "  Failed:           " << stats.failed << "\n";
+    std::cout << "========================================\n";
 
-    if (stats.failed == 0) {
-        std::cout << "ALL BIGINT TESTS PASSED SUCCESSFULLY!" << std::endl;
-        return 0;
-    } else {
-        std::cerr << "TEST SUITE FAILED WITH " << stats.failed << " ERRORS." << std::endl;
+    if (stats.failed > 0) {
+        std::cerr << "[ERROR] Some tests failed!\n";
         return 1;
     }
+
+    std::cout << "[SUCCESS] All tests passed!\n";
+    return 0;
 }

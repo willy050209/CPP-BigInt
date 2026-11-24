@@ -1,59 +1,62 @@
+// filepath: tests/test_helpers.hpp
 #pragma once
+/**
+ * @file test_helpers.hpp
+ * @brief Lightweight unit-test assertion helpers and statistics tracker.
+ *        輕量級單元測試斷言輔助工具與統計追蹤器。
+ */
 
+#include <cstdint>
 #include <iostream>
 #include <stdexcept>
-#include <cstdlib>
-#include <string>
-#include <cstdint>
 
-/// <summary>
-/// 輕量型單元測試統計資料結構。
-/// </summary>
+namespace numeric {
+namespace test {
+
 struct TestStats {
-    int32_t total{0};
-    int32_t passed{0};
-    int32_t failed{0};
+    std::int32_t total{0};
+    std::int32_t passed{0};
+    std::int32_t failed{0};
 };
 
-/// <summary>
-/// 取得全域測試統計參考。
-/// </summary>
-/// <returns>全域 TestStats 參考</returns>
-inline TestStats& GetGlobalTestStats() noexcept {
+[[nodiscard]] inline auto GetGlobalTestStats() noexcept -> TestStats& {
     static TestStats stats;
     return stats;
 }
 
-#define TEST_ASSERT(cond) \
-    do { \
-        GetGlobalTestStats().total++; \
-        if (cond) { \
-            GetGlobalTestStats().passed++; \
-        } else { \
-            GetGlobalTestStats().failed++; \
-            std::cerr << "[FAIL] Assertion failed: (" #cond ") at " << __FILE__ << ":" << __LINE__ << std::endl; \
-            std::exit(1); \
-        } \
-    } while (false)
+} // namespace test
+} // namespace numeric
 
-#define TEST_ASSERT_THROWS(expr, ExceptionType) \
-    do { \
-        GetGlobalTestStats().total++; \
-        bool threw = false; \
-        try { \
-            (void)(expr); \
-        } catch (const ExceptionType&) { \
-            threw = true; \
-        } catch (...) { \
-            GetGlobalTestStats().failed++; \
-            std::cerr << "[FAIL] Expected " #ExceptionType " but caught unexpected exception type at " << __FILE__ << ":" << __LINE__ << std::endl; \
-            std::exit(1); \
-        } \
-        if (threw) { \
-            GetGlobalTestStats().passed++; \
-        } else { \
-            GetGlobalTestStats().failed++; \
-            std::cerr << "[FAIL] Expected " #ExceptionType " was not thrown at " << __FILE__ << ":" << __LINE__ << std::endl; \
-            std::exit(1); \
-        } \
-    } while (false)
+#define TEST_ASSERT(cond)                                                          \
+    do {                                                                           \
+        ++numeric::test::GetGlobalTestStats().total;                               \
+        if (cond) {                                                                \
+            ++numeric::test::GetGlobalTestStats().passed;                          \
+        } else {                                                                   \
+            ++numeric::test::GetGlobalTestStats().failed;                          \
+            std::cerr << "[FAIL] " << __FILE__ << ":" << __LINE__                  \
+                      << " - Assertion failed: " << #cond << "\n";                 \
+        }                                                                          \
+    } while (0)
+
+#define TEST_ASSERT_THROWS(expr, exception_type)                                   \
+    do {                                                                           \
+        ++numeric::test::GetGlobalTestStats().total;                               \
+        bool caught = false;                                                       \
+        try {                                                                      \
+            (void)(expr);                                                          \
+        } catch (const exception_type&) {                                          \
+            caught = true;                                                         \
+        } catch (...) {                                                            \
+            std::cerr << "[FAIL] " << __FILE__ << ":" << __LINE__                  \
+                      << " - Wrong exception type thrown for: " << #expr << "\n";  \
+        }                                                                          \
+        if (caught) {                                                              \
+            ++numeric::test::GetGlobalTestStats().passed;                          \
+        } else {                                                                   \
+            ++numeric::test::GetGlobalTestStats().failed;                          \
+            std::cerr << "[FAIL] " << __FILE__ << ":" << __LINE__                  \
+                      << " - Expected exception " << #exception_type               \
+                      << " not thrown by: " << #expr << "\n";                      \
+        }                                                                          \
+    } while (0)

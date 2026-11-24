@@ -1,91 +1,122 @@
+// filepath: include/numeric/detail/Arithmetic.hpp
+/**
+ * @file Arithmetic.hpp
+ * @brief Core arbitrary-precision addition, subtraction, and comparison algorithms for CPP-BigInt.
+ *        Features 256-bit unrolled SBO fast paths, zero-allocation branch elimination,
+ *        std::span bounds safety, and signed dispatch with self-aliasing protection.
+ *        核心任意精度加法、減法與比較演算法模組。
+ *        具備 256 位元展開 SBO 快速路徑、無分支比較消除、std::span 邊界安全與自我別名防護。
+ */
 #pragma once
-
-// Arithmetic.hpp
-// Core addition, subtraction, and comparison algorithms for CPP-BigInt.
-// Features 256-bit unrolled SBO fast-paths, zero-allocation branch elimination, and signed dispatch.
-// Zero external dependencies, downward compatible from C++23 to C++11.
 
 #include "Intrinsics.hpp"
 #include "Storage.hpp"
 #include <algorithm>
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <ranges>
+#include <span>
 #include <vector>
 
 namespace numeric {
 namespace detail {
 
 /// <summary>
-/// 核心加法與減法演算法結構。
+/// Core unsigned/signed addition, subtraction, and magnitude comparison algorithms.
+/// 核心加法、減法與大小比較演算法結構。
 /// </summary>
 struct BigIntArithmetic : public BigIntIntrinsics {
     /// <summary>
-    /// 比較兩無符號 limbs 陣列之大小。
+    /// Compares the magnitudes of two unsigned limb spans.
+    /// Specialized branchless-friendly fast paths for 1, 2, and 4 limbs.
+    /// 比較兩無符號 limbs span 之數值大小，針對 1、2、4 limbs 提供展開快速路徑。
     /// </summary>
-    /// <param name="a">陣列 a</param>
-    /// <param name="a_len">陣列 a 長度</param>
-    /// <param name="b">陣列 b</param>
-    /// <param name="b_len">陣列 b 長度</param>
-    /// <returns>若 a &gt; b 回傳 1，a &lt; b 回傳 -1，相等回傳 0</returns>
-    static NUMERIC_CONSTEXPR_20 int compare_unsigned(const uint64_t* a, size_t a_len, const uint64_t* b, size_t b_len) noexcept {
-        if (a_len != b_len) return (a_len > b_len) ? 1 : -1;
-        if (a_len == 1) {
+    /// <param name="a">First unsigned limb span. / 第一個無符號 limbs span。</param>
+    /// <param name="b">Second unsigned limb span. / 第二個無符號 limbs span。</param>
+    /// <returns>1 if a > b, -1 if a < b, 0 if equal. / 若 a > b 回傳 1，a < b 回傳 -1，相等回傳 0。</returns>
+    NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto compare_unsigned(
+        const std::span<const std::uint64_t> a,
+        const std::span<const std::uint64_t> b) noexcept -> std::int32_t
+    {
+        const std::size_t a_len{a.size()};
+        const std::size_t b_len{b.size()};
+        if (a_len != b_len) {
+            return (a_len > b_len) ? 1 : -1;
+        }
+        if (a_len == 1U) {
             if (a[0] != b[0]) return (a[0] > b[0]) ? 1 : -1;
             return 0;
         }
-        if (a_len == 2) {
+        if (a_len == 2U) {
             if (a[1] != b[1]) return (a[1] > b[1]) ? 1 : -1;
             if (a[0] != b[0]) return (a[0] > b[0]) ? 1 : -1;
             return 0;
         }
-        if (a_len == 4) {
+        if (a_len == 4U) {
             if (a[3] != b[3]) return (a[3] > b[3]) ? 1 : -1;
             if (a[2] != b[2]) return (a[2] > b[2]) ? 1 : -1;
             if (a[1] != b[1]) return (a[1] > b[1]) ? 1 : -1;
             if (a[0] != b[0]) return (a[0] > b[0]) ? 1 : -1;
             return 0;
         }
-        for (size_t i = a_len; i > 0; --i) {
-            if (a[i - 1] != b[i - 1]) return (a[i - 1] > b[i - 1]) ? 1 : -1;
+        for (std::size_t i{a_len}; i > 0U; --i) {
+            if (a[i - 1U] != b[i - 1U]) {
+                return (a[i - 1U] > b[i - 1U]) ? 1 : -1;
+            }
         }
         return 0;
     }
 
     /// <summary>
-    /// 256-bit SBO 靜態展開快路徑加法 (1 ~ 4 Limbs)。
-    /// 安全零填充提取，純暫存器 ADC 流水線，延遲進位擴容，保證自我別名與全零規格化安全。
+    /// Unrolled 256-bit SBO fast-path unsigned addition (1..4 limbs).
+    /// Pure register ADC pipeline with delayed carry expansion and self-aliasing safety.
+    /// 256-bit SBO 靜態展開快路徑加法 (1 ~ 4 Limbs)，純暫存器 ADC 流水線並保證自我別名安全。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void add_unsigned_sbo4(
-        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    /// <param name="res">Destination storage. / 目標輸出儲存體。</param>
+    /// <param name="a">First operand storage. / 運算元 a。</param>
+    /// <param name="b">Second operand storage. / 運算元 b。</param>
+    static NUMERIC_CONSTEXPR_20 auto add_unsigned_sbo4(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) noexcept -> void
     {
-        const uint64_t* a_data = a.data();
-        const uint64_t* b_data = b.data();
-        size_t a_size = a.m_size;
-        size_t b_size = b.m_size;
+        const std::span<const std::uint64_t> a_span{a.as_span()};
+        const std::span<const std::uint64_t> b_span{b.as_span()};
+        const std::size_t a_size{a_span.size()};
+        const std::size_t b_size{b_span.size()};
 
-        const uint64_t a0 = (0 < a_size) ? a_data[0] : 0;
-        const uint64_t a1 = (1 < a_size) ? a_data[1] : 0;
-        const uint64_t a2 = (2 < a_size) ? a_data[2] : 0;
-        const uint64_t a3 = (3 < a_size) ? a_data[3] : 0;
+        const std::uint64_t a0{(0U < a_size) ? a_span[0] : 0ULL};
+        const std::uint64_t a1{(1U < a_size) ? a_span[1] : 0ULL};
+        const std::uint64_t a2{(2U < a_size) ? a_span[2] : 0ULL};
+        const std::uint64_t a3{(3U < a_size) ? a_span[3] : 0ULL};
 
-        const uint64_t b0 = (0 < b_size) ? b_data[0] : 0;
-        const uint64_t b1 = (1 < b_size) ? b_data[1] : 0;
-        const uint64_t b2 = (2 < b_size) ? b_data[2] : 0;
-        const uint64_t b3 = (3 < b_size) ? b_data[3] : 0;
+        const std::uint64_t b0{(0U < b_size) ? b_span[0] : 0ULL};
+        const std::uint64_t b1{(1U < b_size) ? b_span[1] : 0ULL};
+        const std::uint64_t b2{(2U < b_size) ? b_span[2] : 0ULL};
+        const std::uint64_t b3{(3U < b_size) ? b_span[3] : 0ULL};
 
-        uint64_t r0 = 0, r1 = 0, r2 = 0, r3 = 0;
-        uint8_t c = 0;
-        c = adc64(c, a0, b0, &r0);
-        c = adc64(c, a1, b1, &r1);
-        c = adc64(c, a2, b2, &r2);
-        c = adc64(c, a3, b3, &r3);
+        std::uint64_t r0{0};
+        std::uint64_t r1{0};
+        std::uint64_t r2{0};
+        std::uint64_t r3{0};
+        std::uint8_t c{0};
+        c = adc64(c, a0, b0, r0);
+        c = adc64(c, a1, b1, r1);
+        c = adc64(c, a2, b2, r2);
+        c = adc64(c, a3, b3, r3);
 
-        if (c == 0) {
-            size_t s = 4;
-            if (r3 == 0) {
-                if (r2 == 0) {
-                    if (r1 == 0) s = (r0 == 0) ? 0 : 1;
-                    else s = 2;
+        if (c == 0U) {
+            std::size_t s{4U};
+            if (r3 == 0ULL) {
+                if (r2 == 0ULL) {
+                    if (r1 == 0ULL) {
+                        s = (r0 == 0ULL) ? 0U : 1U;
+                    } else {
+                        s = 2U;
+                    }
                 } else {
-                    s = 3;
+                    s = 3U;
                 }
             }
 
@@ -97,67 +128,81 @@ struct BigIntArithmetic : public BigIntIntrinsics {
                 res.reserve(s);
             }
 
-            uint64_t* d = res.data();
+            const std::span<std::uint64_t> d{res.capacity_span()};
             switch (s) {
-            case 4: d[3] = r3; /* fallthrough */
-            case 3: d[2] = r2; /* fallthrough */
-            case 2: d[1] = r1; /* fallthrough */
-            case 1: d[0] = r0; break;
+            case 4U: d[3] = r3; [[fallthrough]];
+            case 3U: d[2] = r2; [[fallthrough]];
+            case 2U: d[1] = r1; [[fallthrough]];
+            case 1U: d[0] = r0; break;
             default: break;
             }
 
-            res.m_size = static_cast<uint32_t>(s);
-            if (s == 0) {
+            res.m_size = static_cast<std::uint32_t>(s);
+            if (s == 0U) {
                 res.m_sign = 0;
             }
         } else {
-            if (res.capacity() < 5) {
-                res.reserve(5);
+            if (res.capacity() < 5U) {
+                res.reserve(5U);
             }
-            uint64_t* d = res.data();
-            d[0] = r0; d[1] = r1; d[2] = r2; d[3] = r3;
-            d[4] = 1;
-            res.m_size = 5;
+            const std::span<std::uint64_t> d{res.capacity_span()};
+            d[0] = r0;
+            d[1] = r1;
+            d[2] = r2;
+            d[3] = r3;
+            d[4] = 1ULL;
+            res.m_size = 5U;
         }
     }
 
     /// <summary>
-    /// 256-bit SBO 靜態展開快路徑減法 (1 ~ 4 Limbs)。
-    /// 前置條件：|a| >= |b| 且 a.m_size <= 4, b.m_size <= 4。
-    /// 純暫存器 SBB 流水線，直接輸出至 SBO 陣列，保證自我別名與全零規格化安全。
+    /// Unrolled 256-bit SBO fast-path unsigned subtraction (1..4 limbs).
+    /// Precondition: |a| >= |b| and a.size() <= 4, b.size() <= 4.
+    /// 256-bit SBO 靜態展開快路徑減法 (1 ~ 4 Limbs)，前置合約：|a| >= |b| 且皆 <= 4 limbs。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void sub_unsigned_sbo4(
-        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    /// <param name="res">Destination storage. / 目標輸出儲存體。</param>
+    /// <param name="a">Minuend storage. / 被減數儲存體。</param>
+    /// <param name="b">Subtrahend storage. / 減數儲存體。</param>
+    static NUMERIC_CONSTEXPR_20 auto sub_unsigned_sbo4(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) noexcept -> void
     {
-        const uint64_t* a_data = a.data();
-        const uint64_t* b_data = b.data();
-        size_t a_size = a.m_size;
-        size_t b_size = b.m_size;
+        const std::span<const std::uint64_t> a_span{a.as_span()};
+        const std::span<const std::uint64_t> b_span{b.as_span()};
+        const std::size_t a_size{a_span.size()};
+        const std::size_t b_size{b_span.size()};
 
-        const uint64_t a0 = (0 < a_size) ? a_data[0] : 0;
-        const uint64_t a1 = (1 < a_size) ? a_data[1] : 0;
-        const uint64_t a2 = (2 < a_size) ? a_data[2] : 0;
-        const uint64_t a3 = (3 < a_size) ? a_data[3] : 0;
+        const std::uint64_t a0{(0U < a_size) ? a_span[0] : 0ULL};
+        const std::uint64_t a1{(1U < a_size) ? a_span[1] : 0ULL};
+        const std::uint64_t a2{(2U < a_size) ? a_span[2] : 0ULL};
+        const std::uint64_t a3{(3U < a_size) ? a_span[3] : 0ULL};
 
-        const uint64_t b0 = (0 < b_size) ? b_data[0] : 0;
-        const uint64_t b1 = (1 < b_size) ? b_data[1] : 0;
-        const uint64_t b2 = (2 < b_size) ? b_data[2] : 0;
-        const uint64_t b3 = (3 < b_size) ? b_data[3] : 0;
+        const std::uint64_t b0{(0U < b_size) ? b_span[0] : 0ULL};
+        const std::uint64_t b1{(1U < b_size) ? b_span[1] : 0ULL};
+        const std::uint64_t b2{(2U < b_size) ? b_span[2] : 0ULL};
+        const std::uint64_t b3{(3U < b_size) ? b_span[3] : 0ULL};
 
-        uint64_t r0 = 0, r1 = 0, r2 = 0, r3 = 0;
-        uint8_t borrow = 0;
-        borrow = sbb64(borrow, a0, b0, &r0);
-        borrow = sbb64(borrow, a1, b1, &r1);
-        borrow = sbb64(borrow, a2, b2, &r2);
-        borrow = sbb64(borrow, a3, b3, &r3);
+        std::uint64_t r0{0};
+        std::uint64_t r1{0};
+        std::uint64_t r2{0};
+        std::uint64_t r3{0};
+        std::uint8_t borrow{0};
+        borrow = sbb64(borrow, a0, b0, r0);
+        borrow = sbb64(borrow, a1, b1, r1);
+        borrow = sbb64(borrow, a2, b2, r2);
+        (void)sbb64(borrow, a3, b3, r3);
 
-        size_t s = 4;
-        if (r3 == 0) {
-            if (r2 == 0) {
-                if (r1 == 0) s = (r0 == 0) ? 0 : 1;
-                else s = 2;
+        std::size_t s{4U};
+        if (r3 == 0ULL) {
+            if (r2 == 0ULL) {
+                if (r1 == 0ULL) {
+                    s = (r0 == 0ULL) ? 0U : 1U;
+                } else {
+                    s = 2U;
+                }
             } else {
-                s = 3;
+                s = 3U;
             }
         }
 
@@ -169,96 +214,230 @@ struct BigIntArithmetic : public BigIntIntrinsics {
             res.reserve(s);
         }
 
-        uint64_t* d = res.data();
+        const std::span<std::uint64_t> d{res.capacity_span()};
         switch (s) {
-        case 4: d[3] = r3; /* fallthrough */
-        case 3: d[2] = r2; /* fallthrough */
-        case 2: d[1] = r1; /* fallthrough */
-        case 1: d[0] = r0; break;
+        case 4U: d[3] = r3; [[fallthrough]];
+        case 3U: d[2] = r2; [[fallthrough]];
+        case 2U: d[1] = r1; [[fallthrough]];
+        case 1U: d[0] = r0; break;
         default: break;
         }
 
-        res.m_size = static_cast<uint32_t>(s);
-        if (s == 0) {
+        res.m_size = static_cast<std::uint32_t>(s);
+        if (s == 0U) {
             res.m_sign = 0;
         }
     }
 
     /// <summary>
-    /// 多肢段通用加法，含別名指針備份防護、空間預留與長邊 Early-Exit 進位鏈。
+    /// General multi-limb unsigned addition with alias backup, pre-reservation, and early-exit carry loop.
+    /// 多肢段通用加法，含別名備份防護、空間預留與長邊 Early-Exit 進位鏈。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void add_unsigned_general(
-        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    /// <param name="res">Destination storage. / 目標輸出儲存體。</param>
+    /// <param name="a">First operand storage. / 運算元 a。</param>
+    /// <param name="b">Second operand storage. / 運算元 b。</param>
+    static NUMERIC_CONSTEXPR_20 auto add_unsigned_general(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) noexcept -> void
     {
-        size_t a_len = a.m_size;
-        size_t b_len = b.m_size;
-        size_t min_len = std::min(a_len, b_len);
-        size_t max_len = std::max(a_len, b_len);
+        const std::size_t a_len{a.m_size};
+        const std::size_t b_len{b.m_size};
+        const std::size_t min_len{std::min(a_len, b_len)};
+        const std::size_t max_len{std::max(a_len, b_len)};
 
-        uint64_t a_stack[128], b_stack[128];
-        const uint64_t* a_ptr = a.data();
-        const uint64_t* b_ptr = b.data();
-        std::vector<uint64_t> a_heap, b_heap;
+        std::span<const std::uint64_t> a_span{a.as_span()};
+        std::span<const std::uint64_t> b_span{b.as_span()};
 
-        if (&res == &a && a_len < b_len) {
-            if (a_len <= 128) {
-                std::copy_n(a.data(), a_len, a_stack);
-                a_ptr = a_stack;
-            } else {
-                a_heap.resize(a_len);
-                std::copy_n(a.data(), a_len, a_heap.data());
-                a_ptr = a_heap.data();
+        // Alias backup is only needed when res aliases the shorter operand and may reallocate
+        // 僅於 res 別名較短運算元並可能重新配置時才需備份（避開常規熱路徑之堆疊歸零與 EH 開銷）
+        if ((&res == &a && a_len < b_len) || (&res == &b && b_len < a_len)) {
+            if (std::is_constant_evaluated()) {
+                std::array<std::uint64_t, 128> ce_stack{};
+                std::vector<std::uint64_t> ce_heap{};
+                if (&res == &a) {
+                    if (a_len <= 128U) {
+                        std::ranges::copy(a.as_span(), ce_stack.begin());
+                        a_span = std::span<const std::uint64_t>{ce_stack.data(), a_len};
+                    } else {
+                        ce_heap.assign(a.as_span().begin(), a.as_span().end());
+                        a_span = std::span<const std::uint64_t>{ce_heap};
+                    }
+                    res.resize(max_len + 1U, 0ULL);
+                } else {
+                    if (b_len <= 128U) {
+                        std::ranges::copy(b.as_span(), ce_stack.begin());
+                        b_span = std::span<const std::uint64_t>{ce_stack.data(), b_len};
+                    } else {
+                        ce_heap.assign(b.as_span().begin(), b.as_span().end());
+                        b_span = std::span<const std::uint64_t>{ce_heap};
+                    }
+                    res.resize(max_len + 1U, 0ULL);
+                }
+                const std::span<const std::uint64_t> ce_longer{(a_len >= b_len) ? a_span : b_span};
+                const std::span<std::uint64_t> ce_out{res.capacity_span()};
+                std::uint8_t c{0};
+                for (std::size_t i{0}; i < min_len; ++i) {
+                    c = adc64(c, a_span[i], b_span[i], ce_out[i]);
+                }
+                std::size_t idx{min_len};
+                for (; idx < max_len && c != 0U; ++idx) {
+                    c = adc64(c, ce_longer[idx], 0ULL, ce_out[idx]);
+                }
+                if (c == 0U) {
+                    if (res.data() != ce_longer.data() && idx < max_len) {
+                        BigIntStorage::copy_limbs(ce_out.subspan(idx), ce_longer.subspan(idx, max_len - idx));
+                    }
+                    res.m_size = static_cast<std::uint32_t>(max_len);
+                } else {
+                    if (res.m_size < max_len + 1U) {
+                        res.resize(max_len + 1U, 0ULL);
+                    }
+                    res[max_len] = 1ULL;
+                    res.m_size = static_cast<std::uint32_t>(max_len + 1U);
+                }
+                return;
             }
-        } else if (&res == &b && b_len < a_len) {
-            if (b_len <= 128) {
-                std::copy_n(b.data(), b_len, b_stack);
-                b_ptr = b_stack;
-            } else {
-                b_heap.resize(b_len);
-                std::copy_n(b.data(), b_len, b_heap.data());
-                b_ptr = b_heap.data();
+
+            if (&res == &a) {
+                if (a_len <= 128U) {
+                    std::array<std::uint64_t, 128> a_stack;
+                    std::ranges::copy(a.as_span(), a_stack.begin());
+                    res.resize(max_len + 1U, 0ULL);
+                    const std::span<std::uint64_t> out_span{res.capacity_span()};
+                    std::uint8_t carry{0};
+                    for (std::size_t i{0}; i < min_len; ++i) {
+                        carry = adc64(carry, a_stack[i], b_span[i], out_span[i]);
+                    }
+                    std::size_t i{min_len};
+                    for (; i < max_len && carry != 0U; ++i) {
+                        carry = adc64(carry, b_span[i], 0ULL, out_span[i]);
+                    }
+                    if (carry == 0U) {
+                        if (i < max_len) {
+                            BigIntStorage::copy_limbs(out_span.subspan(i), b_span.subspan(i, max_len - i));
+                        }
+                        res.m_size = static_cast<std::uint32_t>(max_len);
+                    } else {
+                        res[max_len] = 1ULL;
+                        res.m_size = static_cast<std::uint32_t>(max_len + 1U);
+                    }
+                    return;
+                }
+                std::vector<std::uint64_t> a_heap(a.as_span().begin(), a.as_span().end());
+                res.resize(max_len + 1U, 0ULL);
+                const std::span<std::uint64_t> out_span{res.capacity_span()};
+                std::uint8_t carry{0};
+                for (std::size_t i{0}; i < min_len; ++i) {
+                    carry = adc64(carry, a_heap[i], b_span[i], out_span[i]);
+                }
+                std::size_t i{min_len};
+                for (; i < max_len && carry != 0U; ++i) {
+                    carry = adc64(carry, b_span[i], 0ULL, out_span[i]);
+                }
+                if (carry == 0U) {
+                    if (i < max_len) {
+                        BigIntStorage::copy_limbs(out_span.subspan(i), b_span.subspan(i, max_len - i));
+                    }
+                    res.m_size = static_cast<std::uint32_t>(max_len);
+                } else {
+                    res[max_len] = 1ULL;
+                    res.m_size = static_cast<std::uint32_t>(max_len + 1U);
+                }
+                return;
             }
+
+            // &res == &b && b_len < a_len
+            if (b_len <= 128U) {
+                std::array<std::uint64_t, 128> b_stack;
+                std::ranges::copy(b.as_span(), b_stack.begin());
+                res.resize(max_len + 1U, 0ULL);
+                const std::span<std::uint64_t> out_span{res.capacity_span()};
+                std::uint8_t carry{0};
+                for (std::size_t i{0}; i < min_len; ++i) {
+                    carry = adc64(carry, a_span[i], b_stack[i], out_span[i]);
+                }
+                std::size_t i{min_len};
+                for (; i < max_len && carry != 0U; ++i) {
+                    carry = adc64(carry, a_span[i], 0ULL, out_span[i]);
+                }
+                if (carry == 0U) {
+                    if (i < max_len) {
+                        BigIntStorage::copy_limbs(out_span.subspan(i), a_span.subspan(i, max_len - i));
+                    }
+                    res.m_size = static_cast<std::uint32_t>(max_len);
+                } else {
+                    res[max_len] = 1ULL;
+                    res.m_size = static_cast<std::uint32_t>(max_len + 1U);
+                }
+                return;
+            }
+            std::vector<std::uint64_t> b_heap(b.as_span().begin(), b.as_span().end());
+            res.resize(max_len + 1U, 0ULL);
+            const std::span<std::uint64_t> out_span{res.capacity_span()};
+            std::uint8_t carry{0};
+            for (std::size_t i{0}; i < min_len; ++i) {
+                carry = adc64(carry, a_span[i], b_heap[i], out_span[i]);
+            }
+            std::size_t i{min_len};
+            for (; i < max_len && carry != 0U; ++i) {
+                carry = adc64(carry, a_span[i], 0ULL, out_span[i]);
+            }
+            if (carry == 0U) {
+                if (i < max_len) {
+                    BigIntStorage::copy_limbs(out_span.subspan(i), a_span.subspan(i, max_len - i));
+                }
+                res.m_size = static_cast<std::uint32_t>(max_len);
+            } else {
+                res[max_len] = 1ULL;
+                res.m_size = static_cast<std::uint32_t>(max_len + 1U);
+            }
+            return;
         }
 
         if (&res != &a && &res != &b) {
-            res.resize(max_len + 1, 0);
-        } else if ((&res == &a && a_len < b_len) || (&res == &b && b_len < a_len)) {
-            res.resize(max_len + 1, 0);
+            res.resize(max_len + 1U, 0ULL);
         }
 
-        const uint64_t* longer_ptr = (a_len >= b_len) ? a_ptr : b_ptr;
+        const std::span<const std::uint64_t> longer_span{(a_len >= b_len) ? a_span : b_span};
+        const std::span<std::uint64_t> out_span{res.capacity_span()};
 
-        uint8_t carry = 0;
-        for (size_t i = 0; i < min_len; ++i) {
-            carry = adc64(carry, a_ptr[i], b_ptr[i], &res.data()[i]);
+        std::uint8_t carry{0};
+        for (std::size_t i{0}; i < min_len; ++i) {
+            carry = adc64(carry, a_span[i], b_span[i], out_span[i]);
         }
 
-        size_t i = min_len;
-        for (; i < max_len && carry != 0; ++i) {
-            carry = adc64(carry, longer_ptr[i], 0, &res.data()[i]);
+        std::size_t i{min_len};
+        for (; i < max_len && carry != 0U; ++i) {
+            carry = adc64(carry, longer_span[i], 0ULL, out_span[i]);
         }
 
-        if (carry == 0) {
-            if (res.data() != longer_ptr && i < max_len) {
-                std::copy_n(longer_ptr + i, max_len - i, res.data() + i);
+        if (carry == 0U) {
+            if (res.data() != longer_span.data() && i < max_len) {
+                BigIntStorage::copy_limbs(
+                    out_span.subspan(i),
+                    longer_span.subspan(i, max_len - i));
             }
-            res.m_size = static_cast<uint32_t>(max_len);
+            res.m_size = static_cast<std::uint32_t>(max_len);
         } else {
-            if (res.m_size < max_len + 1) {
-                res.resize(max_len + 1, 0);
+            if (res.m_size < max_len + 1U) {
+                res.resize(max_len + 1U, 0ULL);
             }
-            res.data()[max_len] = 1;
-            res.m_size = static_cast<uint32_t>(max_len + 1);
+            res[max_len] = 1ULL;
+            res.m_size = static_cast<std::uint32_t>(max_len + 1U);
         }
     }
 
     /// <summary>
-    /// 無符號 limbs 加法：res = a + b。純數值 (Magnitude) 運算。
+    /// Unsigned limb addition: res = a + b (magnitude only).
+    /// 無符號 limbs 加法：res = a + b（純數值大小運算）。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void add_unsigned(
-        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    static NUMERIC_CONSTEXPR_20 auto add_unsigned(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) noexcept -> void
     {
-        if (a.m_size <= 4 && b.m_size <= 4) {
+        if (a.m_size <= 4U && b.m_size <= 4U) {
             add_unsigned_sbo4(res, a, b);
         } else {
             add_unsigned_general(res, a, b);
@@ -266,54 +445,114 @@ struct BigIntArithmetic : public BigIntIntrinsics {
     }
 
     /// <summary>
-    /// 絕對值減法核心演算法：res = a - b (前置合約：|a| >= |b|)。
-    /// 支援小運算元別名備份 (&res == &b)、前置擴容與由高位向下快速規格化。
+    /// Core magnitude subtraction: res = a - b (Precondition: |a| >= |b|).
+    /// Supports alias backup (&res == &b), pre-allocation, and fast top-down normalization.
+    /// 絕對值減法核心演算法：res = a - b（前置合約：|a| >= |b|），支援別名安全與快速規格化。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void sub_magnitude_core(
-        BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept
+    static NUMERIC_CONSTEXPR_20 auto sub_magnitude_core(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) noexcept -> void
     {
-        size_t a_len = a.m_size;
-        size_t b_len = b.m_size;
+        const std::size_t a_len{a.m_size};
+        const std::size_t b_len{b.m_size};
 
-        if (a_len <= 4 && b_len <= 4) {
+        if (a_len <= 4U && b_len <= 4U) {
             sub_unsigned_sbo4(res, a, b);
             return;
         }
 
-        uint64_t b_stack[128];
-        const uint64_t* b_data = b.data();
-        std::vector<uint64_t> b_heap;
         if (&res == &b) {
-            if (b_len <= 128) {
-                std::copy_n(b.data(), b_len, b_stack);
-                b_data = b_stack;
-            } else {
-                b_heap.resize(b_len);
-                std::copy_n(b.data(), b_len, b_heap.data());
-                b_data = b_heap.data();
+            if (std::is_constant_evaluated()) {
+                std::array<std::uint64_t, 128> b_stack{};
+                std::vector<std::uint64_t> b_heap{};
+                std::span<const std::uint64_t> b_span{b.as_span()};
+                if (b_len <= 128U) {
+                    std::ranges::copy(b.as_span(), b_stack.begin());
+                    b_span = std::span<const std::uint64_t>{b_stack.data(), b_len};
+                } else {
+                    b_heap.assign(b.as_span().begin(), b.as_span().end());
+                    b_span = std::span<const std::uint64_t>{b_heap};
+                }
+                const std::span<const std::uint64_t> a_span{a.as_span()};
+                const std::span<std::uint64_t> out_span{res.as_span()};
+                std::uint8_t borrow{0};
+                for (std::size_t i{0}; i < b_len; ++i) {
+                    borrow = sbb64(borrow, a_span[i], b_span[i], out_span[i]);
+                }
+                std::size_t i{b_len};
+                for (; i < a_len && borrow != 0U; ++i) {
+                    borrow = sbb64(borrow, a_span[i], 0ULL, out_span[i]);
+                }
+                if (borrow == 0U && i < a_len) {
+                    BigIntStorage::copy_limbs(out_span.subspan(i), a_span.subspan(i, a_len - i));
+                }
+                res.m_size = static_cast<std::uint32_t>(a_len);
+                return;
             }
+            if (b_len <= 128U) {
+                std::array<std::uint64_t, 128> b_stack;
+                std::ranges::copy(b.as_span(), b_stack.begin());
+                const std::span<const std::uint64_t> a_span{a.as_span()};
+                const std::span<std::uint64_t> out_span{res.as_span()};
+                std::uint8_t borrow{0};
+                for (std::size_t i{0}; i < b_len; ++i) {
+                    borrow = sbb64(borrow, a_span[i], b_stack[i], out_span[i]);
+                }
+                std::size_t i{b_len};
+                for (; i < a_len && borrow != 0U; ++i) {
+                    borrow = sbb64(borrow, a_span[i], 0ULL, out_span[i]);
+                }
+                if (borrow == 0U && i < a_len) {
+                    BigIntStorage::copy_limbs(out_span.subspan(i), a_span.subspan(i, a_len - i));
+                }
+                res.m_size = static_cast<std::uint32_t>(a_len);
+                return;
+            }
+            std::vector<std::uint64_t> b_heap(b.as_span().begin(), b.as_span().end());
+            const std::span<const std::uint64_t> a_span{a.as_span()};
+            const std::span<std::uint64_t> out_span{res.as_span()};
+            std::uint8_t borrow{0};
+            for (std::size_t i{0}; i < b_len; ++i) {
+                borrow = sbb64(borrow, a_span[i], b_heap[i], out_span[i]);
+            }
+            std::size_t i{b_len};
+            for (; i < a_len && borrow != 0U; ++i) {
+                borrow = sbb64(borrow, a_span[i], 0ULL, out_span[i]);
+            }
+            if (borrow == 0U && i < a_len) {
+                BigIntStorage::copy_limbs(out_span.subspan(i), a_span.subspan(i, a_len - i));
+            }
+            res.m_size = static_cast<std::uint32_t>(a_len);
+            return;
         }
 
         if (&res != &a) {
-            res.resize(a_len, 0);
+            res.resize(a_len, 0ULL);
         }
 
-        uint8_t borrow = 0;
-        for (size_t i = 0; i < b_len; ++i) {
-            borrow = sbb64(borrow, a.data()[i], b_data[i], &res.data()[i]);
+        const std::span<const std::uint64_t> b_span{b.as_span()};
+        const std::span<const std::uint64_t> a_span{a.as_span()};
+        const std::span<std::uint64_t> out_span{res.as_span()};
+
+        std::uint8_t borrow{0};
+        for (std::size_t i{0}; i < b_len; ++i) {
+            borrow = sbb64(borrow, a_span[i], b_span[i], out_span[i]);
         }
-        size_t i = b_len;
-        for (; i < a_len && borrow != 0; ++i) {
-            borrow = sbb64(borrow, a.data()[i], 0, &res.data()[i]);
+        std::size_t i{b_len};
+        for (; i < a_len && borrow != 0U; ++i) {
+            borrow = sbb64(borrow, a_span[i], 0ULL, out_span[i]);
         }
-        if (borrow == 0 && &res != &a && i < a_len) {
-            std::copy_n(a.data() + i, a_len - i, res.data() + i);
+        if (borrow == 0U && &res != &a && i < a_len) {
+            BigIntStorage::copy_limbs(out_span.subspan(i), a_span.subspan(i, a_len - i));
         }
 
-        size_t sz = a_len;
-        while (sz > 0 && res.data()[sz - 1] == 0) --sz;
-        res.m_size = static_cast<uint32_t>(sz);
-        if (sz == 0) {
+        std::size_t sz{a_len};
+        while (sz > 0U && out_span[sz - 1U] == 0ULL) {
+            --sz;
+        }
+        res.m_size = static_cast<std::uint32_t>(sz);
+        if (sz == 0U) {
             res.m_sign = 0;
         }
         if (sz <= res.m_sbo_capacity) {
@@ -322,21 +561,31 @@ struct BigIntArithmetic : public BigIntIntrinsics {
     }
 
     /// <summary>
+    /// Unsigned limb subtraction: res = a - b (Precondition: a >= b).
     /// 無符號 limbs 減法：res = a - b（前置條件：a >= b）。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void sub_unsigned(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) noexcept {
-        if (a.m_size <= 4 && b.m_size <= 4) {
+    static NUMERIC_CONSTEXPR_20 auto sub_unsigned(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) noexcept -> void
+    {
+        if (a.m_size <= 4U && b.m_size <= 4U) {
             sub_unsigned_sbo4(res, a, b);
         } else {
             sub_magnitude_core(res, a, b);
         }
-        res.m_sign = (res.m_size > 0) ? 1 : 0;
+        res.m_sign = (res.m_size > 0U) ? 1 : 0;
     }
 
     /// <summary>
-    /// 帶符號加法：res = a + b。
+    /// Signed integer addition: res = a + b.
+    /// 帶符號整數加法：res = a + b。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void add_signed(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
+    static NUMERIC_CONSTEXPR_20 auto add_signed(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) -> void
+    {
         if (a.m_sign == 0) {
             res = b;
             return;
@@ -347,67 +596,72 @@ struct BigIntArithmetic : public BigIntIntrinsics {
         }
         if (a.m_sign == b.m_sign) {
             add_unsigned(res, a, b);
-            res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
+            res.m_sign = (res.m_size > 0U) ? a.m_sign : 0;
         } else {
-            int cmp = compare_unsigned(a.data(), a.m_size, b.data(), b.m_size);
+            const std::int32_t cmp{compare_unsigned(a.as_span(), b.as_span())};
             if (cmp == 0) {
                 res.reset_heap();
                 res.m_size = 0;
                 res.m_sign = 0;
             } else if (cmp > 0) {
-                if (a.m_size <= 4 && b.m_size <= 4) {
+                if (a.m_size <= 4U && b.m_size <= 4U) {
                     sub_unsigned_sbo4(res, a, b);
                 } else {
                     sub_magnitude_core(res, a, b);
                 }
-                res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
+                res.m_sign = (res.m_size > 0U) ? a.m_sign : 0;
             } else {
-                if (a.m_size <= 4 && b.m_size <= 4) {
+                if (a.m_size <= 4U && b.m_size <= 4U) {
                     sub_unsigned_sbo4(res, b, a);
                 } else {
                     sub_magnitude_core(res, b, a);
                 }
-                res.m_sign = (res.m_size > 0) ? b.m_sign : 0;
+                res.m_sign = (res.m_size > 0U) ? b.m_sign : 0;
             }
         }
     }
 
     /// <summary>
-    /// 帶符號減法：res = a - b。
+    /// Signed integer subtraction: res = a - b.
+    /// 帶符號整數減法：res = a - b。
     /// </summary>
-    static NUMERIC_CONSTEXPR_20 void sub_signed(BigIntStorage& res, const BigIntStorage& a, const BigIntStorage& b) {
+    static NUMERIC_CONSTEXPR_20 auto sub_signed(
+        BigIntStorage& res,
+        const BigIntStorage& a,
+        const BigIntStorage& b) -> void
+    {
         if (b.m_sign == 0) {
             res = a;
             return;
         }
         if (a.m_sign == 0) {
             res = b;
-            res.m_sign = -res.m_sign;
+            res.m_sign = static_cast<std::int8_t>(-res.m_sign);
             return;
         }
         if (a.m_sign != b.m_sign) {
             add_unsigned(res, a, b);
-            res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
+            res.m_sign = (res.m_size > 0U) ? a.m_sign : 0;
         } else {
-            int cmp = compare_unsigned(a.data(), a.m_size, b.data(), b.m_size);
+            const std::int32_t cmp{compare_unsigned(a.as_span(), b.as_span())};
             if (cmp == 0) {
                 res.reset_heap();
                 res.m_size = 0;
                 res.m_sign = 0;
             } else if (cmp > 0) {
-                if (a.m_size <= 4 && b.m_size <= 4) {
+                if (a.m_size <= 4U && b.m_size <= 4U) {
                     sub_unsigned_sbo4(res, a, b);
                 } else {
                     sub_magnitude_core(res, a, b);
                 }
-                res.m_sign = (res.m_size > 0) ? a.m_sign : 0;
+                res.m_sign = (res.m_size > 0U) ? a.m_sign : 0;
             } else {
-                if (a.m_size <= 4 && b.m_size <= 4) {
+                if (a.m_size <= 4U && b.m_size <= 4U) {
                     sub_unsigned_sbo4(res, b, a);
                 } else {
                     sub_magnitude_core(res, b, a);
                 }
-                res.m_sign = (res.m_size > 0) ? -b.m_sign : 0;
+                res.m_sign = (res.m_size > 0U) ? static_cast<std::int8_t>(-b.m_sign) : 0;
             }
         }
     }

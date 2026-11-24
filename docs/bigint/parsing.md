@@ -8,26 +8,44 @@
 
 ---
 
-## 靜態成員與常數總覽
+## 靜態成員、錯誤型別與常數總覽
 
 | 成員名稱 | 類型 | 說明 |
 | :--- | :--- | :--- |
-| `from_string` | 靜態方法 | 自十進位字串視圖解析並回傳 `bigint`。 |
-| `from_binary_string` | 靜態方法 | 自二進位字串視圖解析並回傳 `bigint`（支援 `0b`/`0B` 前綴與符號）。 |
+| `BigIntError` | `enum class` (`std::uint8_t`) | 非拋出 API 回傳之強型別錯誤碼（`EmptyInput`, `InvalidFormat`, `DivisionByZero`, `NegativeInput`, `Overflow`）。 |
+| `from_string` | 靜態方法 | 自十進位字串視圖解析並回傳 `BasicBigInt`（失敗拋出 `std::invalid_argument`）。 |
+| `try_from_string` | 靜態方法 | 無例外十進位解析，回傳 `std::expected<BasicBigInt, BigIntError>`。 |
+| `from_binary_string` | 靜態方法 | 自二進位字串視圖解析並回傳 `BasicBigInt`（支援 `0b`/`0B` 前綴與符號，失敗拋出例外）。 |
+| `try_from_binary_string` | 靜態方法 | 無例外二進位解析，回傳 `std::expected<BasicBigInt, BigIntError>`。 |
 | `zero` | 常數代理 | 代表數值 `0`。支援以屬性或函式呼叫方式使用：`bigint::zero` 或 `bigint::zero()`。 |
 | `one` | 常數代理 | 代表數值 `1`。支援以屬性或函式呼叫方式使用：`bigint::one` 或 `bigint::one()`。 |
 
 ---
 
+### 0. 強型別錯誤列舉 `numeric::BigIntError`
+
+```cpp
+enum class BigIntError : std::uint8_t {
+    EmptyInput,     // 空字串輸入
+    InvalidFormat,  // 僅有正負號/前綴或包含非法字元
+    DivisionByZero, // 除數為零
+    NegativeInput,  // 負數輸入不適用於無符號轉換或平方根
+    Overflow        // 數值超出目標純量整數表示範圍
+};
+```
+
+---
+
 ## 詳細說明
 
-### 1. `from_string` 靜態方法
+### 1. `from_string` 與 `try_from_string` 靜態方法
 
-自十進位字串視圖解析並建立 `bigint` 物件。
+自十進位字串視圖解析並建立 `BasicBigInt` 物件。`try_from_string` 提供零例外、回傳 `std::expected<BasicBigInt, BigIntError>` 的單子式驗證路徑。
 
 #### 語法
 ```cpp
-static NUMERIC_CONSTEXPR_20 bigint from_string(numeric::string_view sv);
+NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto from_string(numeric::string_view sv) -> BasicBigInt;
+NUMERIC_NODISCARD static NUMERIC_CONSTEXPR_20 auto try_from_string(numeric::string_view sv) -> std::expected<BasicBigInt, BigIntError>;
 ```
 
 #### 參數
@@ -57,17 +75,25 @@ static NUMERIC_CONSTEXPR_20 bigint from_string(numeric::string_view sv);
 ```cpp
 numeric::bigint val = numeric::bigint::from_string("9876543210123456789");
 std::cout << val << "\n";
+
+// 無例外 safe parsing
+if (auto parsed = numeric::bigint::try_from_string("invalid-123")) {
+    std::cout << *parsed << "\n";
+} else if (parsed.error() == numeric::BigIntError::InvalidFormat) {
+    std::cout << "Parse rejected with InvalidFormat\n";
+}
 ```
 
 ---
 
-### 2. `from_binary_string` 靜態方法
+### 2. `from_binary_string` 與 `try_from_binary_string` 靜態方法
 
-自二進位格式字串解析任意精度整數。
+自二進位格式字串解析任意精度整數。`try_from_binary_string` 為無例外實作，發生空字串時回傳 `BigIntError::EmptyInput`，格式錯誤時回傳 `BigIntError::InvalidFormat`；`from_binary_string` 則將其轉譯為 `std::invalid_argument`。
 
 #### 語法
 ```cpp
-static bigint from_binary_string(numeric::string_view sv);
+NUMERIC_NODISCARD static auto from_binary_string(numeric::string_view sv) -> BasicBigInt;
+NUMERIC_NODISCARD static auto try_from_binary_string(numeric::string_view sv) -> std::expected<BasicBigInt, BigIntError>;
 ```
 
 #### 參數
@@ -149,5 +175,5 @@ std::cout << (z1 == 0) << ", " << (o1 == 1) << "\n"; // 輸出: 1, 1
 ---
 
 ## 適用於
-- C++11 及以上版本。
-- `from_string` 與常數代理在 C++20 起支援 `constexpr` 編譯期常數評估。
+- **C++23** 嚴格標準環境（全面支援 `std::expected<BasicBigInt, BigIntError>` 與 `std::string_view`）。
+- `from_string`、`try_from_string` 與常數代理支援 `constexpr` 編譯期常數評估。

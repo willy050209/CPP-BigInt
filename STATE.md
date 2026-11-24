@@ -1,6 +1,6 @@
 # 專案任務看板 (STATE.md)
 
-## 當前專案狀態: ✅ Phase 5: GMP 追平效能調優與官方 .NET 跨語言套件開發完成 (All C++/C#/F#/VB Tests & Benchmarks Passed)
+## 當前專案狀態: ✅ Phase 6: C++23 現代化重構、安全合規審查與效能修復完成 (All C++/C-ABI/.NET Tests & Benchmarks Passed)
 
 ---
 
@@ -38,6 +38,13 @@
   - [x] 實作 `NativeResolver` 自動本機庫探查與 `[LibraryImport]` 零封送開銷綁定
   - [x] 完成 C# 14、F# 10、VB.NET 10 三語言測試與 `Numeric.BigInt.1.0.0.nupkg` 打包
   - [x] 完善架構、API 與 .NET 技術說明文件 (`docs/dotnet.md`, `README.md`, `ARCHITECTURE.md`)
+
+- [x] **Task 7: C++23 現代化重構與 `cpp-safety-audit` 安全合規 (`refactor/cpp23-safety-compliance`)**
+  - [x] 建置系統與核心標頭全面遷移至 C++23（MSVC `/std:c++latest /W4 /WX`、GCC/Clang `-std=c++23 -Wall -Wextra -Werror`）
+  - [x] `Storage.hpp` 與 `detail/*` 導入 `std::span`、`std::unique_ptr` RAII 管理、`bind_inline()` 兩階段配置與 `NUMERIC_LIFETIMEBOUND`
+  - [x] `BigInt.hpp` / `BigIntMath.hpp` 導入 Concepts 約束、`explicit` 防誤轉、`BigIntError` + `std::expected` 無例外介面及尾遞迴 `gcd_tail` / `pow_tail`
+  - [x] 修復 `BasicBigInt<0/1/2>::operator+=` 跨肢數進位容量防衛（新增回歸測試），並將 `/sdl` 限縮於 Debug 且移除熱路徑無條件全陣列零初始化以恢復 Release 效能
+  - [x] 同步全套技術文件 (`README.md`, `ARCHITECTURE.md`, `RULES.md`, `docs/*.md`) 並通過 `cpp-safety-audit` 與跨編譯器 / .NET 完整回歸驗證
 
 ---
 

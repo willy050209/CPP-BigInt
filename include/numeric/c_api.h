@@ -1,5 +1,13 @@
+// filepath: include/numeric/c_api.h
+#pragma once
 #ifndef NUMERIC_C_API_H
 #define NUMERIC_C_API_H
+
+/**
+ * @file c_api.h
+ * @brief Flat C99/C11 ABI header for the arbitrary-precision BigInt library.
+ *        任意精度大數函式庫之扁平 C99/C11 ABI 標頭檔。
+ */
 
 /**
  * @file c_api.h
@@ -27,10 +35,6 @@
 #  else
 #    define BIGINT_C_API
 #  endif
-#endif
-
-#ifdef __cplusplus
-extern "C" {
 #endif
 
 /* ------------------------------------------------------------------------- */
@@ -69,6 +73,10 @@ typedef struct bigint_sbo256_t {
 typedef struct bigint_sbo512_t {
     uint64_t _raw[12];
 } bigint_sbo512_t;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* ------------------------------------------------------------------------- */
 /* Lifecycle & Memory Management (Opaque Handle Mode)                        */

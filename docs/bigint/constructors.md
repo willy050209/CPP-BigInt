@@ -12,35 +12,35 @@
 
 | 建構函式宣告 | 說明 |
 | :--- | :--- |
-| `bigint() noexcept = default;` | 預設建構子：初始化為數值 `0`。 |
-| `bigint(const bigint& other);` | 複製建構子：深層複製來源物件。 |
-| `bigint(bigint&& other) noexcept;` | 移動建構子：轉移來源物件資源。 |
-| `bigint(bool b) noexcept;` | 自布林值建構：`true` 為 1，`false` 為 0。 |
-| `bigint(int8_t v) noexcept;`<br>`bigint(int16_t v) noexcept;`<br>`bigint(int32_t v) noexcept;`<br>`bigint(int64_t v) noexcept;` | 自特定寬度的有符號整數建構。 |
-| `bigint(uint8_t v) noexcept;`<br>`bigint(uint16_t v) noexcept;`<br>`bigint(uint32_t v) noexcept;`<br>`bigint(uint64_t v) noexcept;` | 自特定寬度的無符號整數建構。 |
-| `template <typename T> bigint(T v) noexcept;` | **泛型模板建構子**：自其他原生整數型別（如 `long`, `char`, `long long` 等）建構。 |
-| `explicit bigint(numeric::string_view sv);` | 自十進位字串視圖解析建構。 |
-| `explicit bigint(const char* s);` | 自 C-style 空結尾字串解析建構。 |
-| `explicit bigint(const std::string& s);` | 自 `std::string` 解析建構。 |
-| `template <size_t N> bigint(const std::bitset<N>& bs);` | **泛型 bitset 建構子**：自指定寬度之 `std::bitset<N>` 按無符號二進位數解析建構。 |
-| `explicit bigint(detail::BigIntStorage storage) noexcept;` | 自底層儲存結構直接接管資源建構。 |
+| `BasicBigInt() noexcept;` | 預設建構子：初始化為 `0`，透過 `bind_inline()` 繫結 `m_inline_storage`。 |
+| `BasicBigInt(const BasicBigInt& other);`<br>`template <std::size_t OtherLimbs> BasicBigInt(const BasicBigInt<OtherLimbs>& other);` | 複製建構子：支援同容量與跨 SBO 容量深層複製。 |
+| `BasicBigInt(BasicBigInt&& other) noexcept;`<br>`template <std::size_t OtherLimbs> BasicBigInt(BasicBigInt<OtherLimbs>&& other) noexcept;` | 移動建構子：支援同容量與跨 SBO 容量資源轉移。 |
+| `explicit BasicBigInt(bool b) noexcept;` | 自布林值 **顯式 (`explicit`)** 建構：`true` 為 `1`，`false` 為 `0`（防止隱式 `bool` 轉 `bigint`）。 |
+| `template <std::signed_integral T> requires (!std::same_as<T, bool>) BasicBigInt(T v) noexcept;` | **C++23 Concepts 有符號整數建構子**：接受所有有符號整數（`int8_t` ~ `int64_t`, `long`, `signed char` 等）。 |
+| `template <std::unsigned_integral T> requires (!std::same_as<T, bool>) BasicBigInt(T v) noexcept;` | **C++23 Concepts 無符號整數建構子**：接受所有無符號整數（`uint8_t` ~ `uint64_t`, `unsigned long`, `std::size_t`, 字元整數等）。 |
+| `explicit BasicBigInt(numeric::string_view sv);` | 自十進位 `std::string_view` 顯式解析建構。 |
+| `explicit BasicBigInt(const char* s);` | 自 C-style 空結尾字串顯式解析建構（傳入 `nullptr` 立即拋出例外）。 |
+| `explicit BasicBigInt(const std::string& s);` | 自 `std::string` 顯式解析建構。 |
+| `template <std::size_t N> explicit BasicBigInt(const std::bitset<N>& bs);` | **顯式泛型 bitset 建構子**：自指定寬度之 `std::bitset<N>` 按無符號二進位數解析建構。 |
+| `BasicBigInt(detail::BigIntConstantProxy proxy) noexcept;` | 自常數代理（`bigint::zero` / `bigint::one`）建構。 |
+| `explicit BasicBigInt(detail::BigIntStorage storage) noexcept;` | 自底層儲存結構顯式移動接管資源建構。 |
 
 ---
 
 ## 詳細說明
 
-### 1. 預設建構子 `bigint()`
+### 1. 預設建構子 `BasicBigInt()`
 
 #### 語法
 ```cpp
-bigint() noexcept = default;
+NUMERIC_CONSTEXPR_20 BasicBigInt() noexcept;
 ```
 
 #### 摘要
-建立並初始化數值為 `0` 的 `bigint` 實例。
+建立並初始化數值為 `0` 的 `BasicBigInt` 實例，並呼叫 `this->bind_inline(this->m_inline_storage)` 完成 SBO 繫結。所有其他建構函式均透過建構函式委派 (`: BasicBigInt{}`) 先建立合法 SBO 狀態。
 
 #### 備註
-預設建構之物件位於 256-bit SBO 模式（4 limbs 空間），不觸發任何動態記憶體配置。其 `sign()` 為 `0`，`limb_count()` 為 `0`。
+預設建構之物件位於 256-bit SBO 模式（預設 4 limbs 空間），不觸發任何動態記憶體配置。其 `sign()` 為 `0`，`limb_count()` 為 `0`。
 
 #### 範例
 ```cpp
@@ -50,82 +50,42 @@ std::cout << a << "\n"; // 輸出: 0
 
 ---
 
-### 2. 原生整數建構子
+### 2. 布林與 C++23 Concepts 整數建構子
 
 #### 語法
 ```cpp
-NUMERIC_CONSTEXPR_20 bigint(bool b) noexcept;
-NUMERIC_CONSTEXPR_20 bigint(int8_t v) noexcept;
-NUMERIC_CONSTEXPR_20 bigint(int16_t v) noexcept;
-NUMERIC_CONSTEXPR_20 bigint(int32_t v) noexcept;
-NUMERIC_CONSTEXPR_20 bigint(int64_t v) noexcept;
-NUMERIC_CONSTEXPR_20 bigint(uint8_t v) noexcept;
-NUMERIC_CONSTEXPR_20 bigint(uint16_t v) noexcept;
-NUMERIC_CONSTEXPR_20 bigint(uint32_t v) noexcept;
-NUMERIC_CONSTEXPR_20 bigint(uint64_t v) noexcept;
+explicit NUMERIC_CONSTEXPR_20 BasicBigInt(bool b) noexcept;
+
+template <std::signed_integral T>
+    requires (!std::same_as<T, bool>)
+NUMERIC_CONSTEXPR_20 BasicBigInt(T v) noexcept;
+
+template <std::unsigned_integral T>
+    requires (!std::same_as<T, bool>)
+NUMERIC_CONSTEXPR_20 BasicBigInt(T v) noexcept;
 ```
 
-#### 參數
-- `v`: 原生純量數值。
+#### 型別與參數
+- `b`: `bool`（必須顯式直接初始化，如 `numeric::bigint b1(true);`；禁止隱式轉換如 `numeric::bigint b1 = true;`）。
+- `v`: 受 `std::signed_integral<T>` 或 `std::unsigned_integral<T>` 約束之任意原生整數（排除 `bool`，涵蓋固定寬度整數、`long`、`char`、`wchar_t` 等）。
 
 #### 備註
-- 若數值為負數，內部將正確處理極值情況（例如 `INT64_MIN`，即 `-9223372036854775808LL`），避免未定義之算術溢位。
-- 所有 64 位元純量整數建構皆完全落在 256-bit SBO 內，保證 `noexcept` 且 0 次 Heap 動態配置。
+- 若數值為負數，內部透過 `-(val + 1) + 1` 正確處理極值情況（例如 `INT64_MIN`，即 `-9223372036854775808LL`），避免未定義之有號算術溢位。
+- 藉由 C++23 Concepts 約束，編譯期自動拒絕浮點數、`bool` 隱式轉型與不相關自訂型別，無需繁瑣的 SFINAE 重載列舉。
+- 所有 64 位元純量整數建構皆保證 `noexcept` 且於預設 SBO 內完成（0 次 Heap 配置）。
 
 #### 範例
 ```cpp
-numeric::bigint b1(true);
-numeric::bigint b2(-42);
-numeric::bigint b3(18446744073709551615ULL); // uint64_t 最大值
-```
-
----
-
-### 3. 泛型原生整數模板建構子
-
-#### 語法
-```cpp
-template <typename T, typename std::enable_if<
-    std::is_integral<T>::value &&
-    !std::is_same<T, bool>::value &&
-    !std::is_same<T, int8_t>::value &&
-    !std::is_same<T, int16_t>::value &&
-    !std::is_same<T, int32_t>::value &&
-    !std::is_same<T, int64_t>::value &&
-    !std::is_same<T, uint8_t>::value &&
-    !std::is_same<T, uint16_t>::value &&
-    !std::is_same<T, uint32_t>::value &&
-    !std::is_same<T, uint64_t>::value, int>::type = 0>
-NUMERIC_CONSTEXPR_20 bigint(T v) noexcept;
-```
-
-#### 型別參數
-- `T`: 原生整數型別。受 `std::is_integral<T>::value` 約束，並排除了已有專屬重載之固定寬度型別。涵蓋：
-  - `long`, `unsigned long`
-  - `char`, `signed char`, `unsigned char`
-  - `wchar_t`, `char16_t`, `char32_t`
-  - 平台的擴充整數型別（若有）
-
-#### 參數
-- `v`: 型別為 `T` 的整數值。
-
-#### 備註
-透過 SFINAE 機制防止浮點數或自訂類別發生非預期的隱式轉換。
-
-#### 範例
-```cpp
+numeric::bigint b1(true);                        // 需使用顯式初始化
+numeric::bigint b2 = -42;                        // std::signed_integral
+numeric::bigint b3(18446744073709551615ULL);     // std::unsigned_integral (UINT64_MAX)
 long l = 100000L;
-unsigned long ul = 200000UL;
-char ch = 'A';
-
-numeric::bigint bl(l);
-numeric::bigint bul(ul);
-numeric::bigint bch(ch);
+numeric::bigint bl = l;
 ```
 
 ---
 
-### 4. 字串解析建構子
+### 3. 字串解析建構子
 
 #### 語法
 ```cpp
@@ -135,7 +95,7 @@ explicit bigint(const std::string& s);
 ```
 
 #### 參數
-- `sv`: 十進位字串視圖（支援 `numeric::string_view` 或 C++17 `std::string_view`）。
+- `sv`: 十進位字串視圖（`numeric::string_view`，即 `std::string_view` 別名）。
 - `s`: C-style 字串指標或 `std::string` 物件。
 
 #### 例外狀況
@@ -147,7 +107,7 @@ explicit bigint(const std::string& s);
 #### 備註
 - 支援選用的前導符號字元 `'+'` 或 `'-'`。
 - 支援任意數量的無效前導零（例如 `"000123"` 將正確解析為 `123`；`"-000"` 將正確正規化為 `0`）。
-- 在 C++20 下，`string_view` 建構子可於 `constexpr` 編譯期常數求值。
+- 在 C++23 下，`string_view` 建構子可於 `constexpr` 編譯期常數求值。
 
 #### 範例
 ```cpp
@@ -162,27 +122,24 @@ numeric::bigint n3("+999");
 
 ---
 
-### 5. 泛型 std::bitset 建構子
+### 4. 泛型 `std::bitset` 顯式建構子
 
 #### 語法
 ```cpp
-template <size_t N, typename std::enable_if<(N == 0), int>::type = 0>
-bigint(const std::bitset<N>&);
-
-template <size_t N, typename std::enable_if<(N > 0), int>::type = 0>
-bigint(const std::bitset<N>& bs);
+template <std::size_t N>
+explicit BasicBigInt(const std::bitset<N>& bs);
 ```
 
 #### 型別參數
-- `size_t N`: 來源 `std::bitset` 的位元寬度（允許任意長度，如 8, 16, 64, 128, 256, 1024 等）。
+- `std::size_t N`: 來源 `std::bitset` 的位元寬度（允許任意長度，如 0, 8, 16, 64, 128, 256, 1024 等）。
 
 #### 參數
 - `bs`: 傳入的 `std::bitset<N>` 物件。
 
 #### 備註
-- 此建構子將 `std::bitset` 視為**無符號純二進位整數**進行解析，建構出的 `bigint` 恆大於等於 0。
-- 若 `N == 0`，建構出的物件數值為 0。
-- 若所有位元皆為 0，則自動正規化為零值並維持 SBO 狀態。
+- 標註 `explicit`，需顯式建構（或使用 [`numeric::to_bigint`](../bitset.md)）。
+- 此建構子將 `std::bitset` 視為**無符號純二進位整數**進行解析，建構出的 `BasicBigInt` 恆大於等於 0。
+- 內部透過 `if constexpr (N > 0U)` 與 `this->as_span()` 進行邊界安全填充；若 `N == 0` 或所有位元皆為 `0`，自動保持為零值且不執行 Heap 配置。
 
 #### 範例
 ```cpp
@@ -196,16 +153,23 @@ std::cout << b << "\n"; // 輸出: 178
 ## 賦值運算子 (Assignment Operators)
 
 ```cpp
-bigint& operator=(const bigint& other) = default;
-bigint& operator=(bigint&& other) noexcept = default;
+NUMERIC_CONSTEXPR_20 auto operator=(const BasicBigInt& other) -> BasicBigInt&;
+template <std::size_t OtherLimbs>
+NUMERIC_CONSTEXPR_20 auto operator=(const BasicBigInt<OtherLimbs>& other) -> BasicBigInt&;
+
+NUMERIC_CONSTEXPR_20 auto operator=(BasicBigInt&& other) noexcept -> BasicBigInt&;
+template <std::size_t OtherLimbs>
+NUMERIC_CONSTEXPR_20 auto operator=(BasicBigInt<OtherLimbs>&& other) noexcept -> BasicBigInt&;
+
+NUMERIC_CONSTEXPR_20 auto operator=(detail::BigIntConstantProxy proxy) noexcept -> BasicBigInt&;
 ```
 
 #### 備註
-- 複製賦值支援自我賦值安全。
-- 移動賦值釋放原先持有的動態記憶體並接收來源物件指標，保證不拋出例外。
+- 支援同容量與跨 SBO 容量之複製與移動賦值，且複製賦值保證自我賦值安全。
+- 移動賦值僅轉移指標或複製極少數內聯 limbs，保證 `noexcept`。
 
 ---
 
 ## 適用於
-- 所有建構子皆相容於 **C++11** 及以上版本。
-- 純量與字串視圖建構子於 **C++20** 起支援 `constexpr` 編譯期常數計算。
+- **C++23** 嚴格標準環境（採用 `<concepts>` 約束與 `if constexpr`）。
+- 純量、複製/移動與 `string_view` 建構子支援 `constexpr` 編譯期常數計算。

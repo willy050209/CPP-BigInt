@@ -1,6 +1,6 @@
 # 編譯配置與巨集環境 (Configuration & Macros)
 
-介紹 `<numeric/Config.hpp>` 中的編譯期環境檢測、跨版本相容性巨集、constexpr 支援等級以及例外處理回退機制。
+介紹 `<numeric/Config.hpp>` 中的 **C++23** 編譯期環境檢測、屬性與生命週期綁定巨集、`constexpr` 支援以及例外處理回退機制。
 
 ## 命名空間與標頭檔
 - **命名空間**: `numeric`
@@ -13,31 +13,39 @@
 | 巨集名稱 | 預期取值 | 說明 |
 | :--- | :--- | :--- |
 | `NUMERIC_BIGINT_SBO_LIMBS` | 正整數（預設 `4`，可設為 `8`） | SBO 小對象最佳化容量（以 64-bit limb 為單位）。預設 4 肢（256 位元），物件大小 64 位元組剛好對齊單一 L1 快取行；設為 8 肢（512 位元）可支援 0-heap 加密運算。 |
-| `NUMERIC_CPLUSPLUS` | 數值（如 `202002L`） | 正規化後的 C++ 語言標準版本代碼（相容 MSVC `_MSVC_LANG` 與 GCC/Clang `__cplusplus`）。 |
-| `NUMERIC_NODISCARD` | `[[nodiscard]]` 或屬性 | 函式傳回值未被使用時觸發編譯器警告之屬性包裝。 |
-| `NUMERIC_CONSTEXPR_14` | `constexpr` 或 `inline` | 於 C++14 及以上展開為 `constexpr`，低於 C++14 時回退為 `inline`。 |
-| `NUMERIC_CONSTEXPR_20` | `constexpr` 或 `inline` | 於 C++20 及以上展開為 `constexpr`，低於 C++20 時回退為 `inline`。 |
-| `NUMERIC_CONSTEXPR_20_FORCEINLINE` | `constexpr ...` 或 `...` | 解決 pre-C++20 下 `NUMERIC_CONSTEXPR_20` 回退為 `inline` 導致與強制內聯重複宣告之巨集。 |
+| `NUMERIC_CPLUSPLUS` | 數值（如 `202302L`） | 正規化後的 C++ 語言標準版本代碼（相容 MSVC `_MSVC_LANG` 與 GCC/Clang `__cplusplus`）。 |
+| `NUMERIC_NODISCARD` | `[[nodiscard]]` | C++23 下強制展開為 `[[nodiscard]]`，防止忽略純運算或檢查狀態回傳值。 |
+| `NUMERIC_CONSTEXPR_20` | `constexpr` | C++23 下直接展開為 `constexpr`。 |
+| `NUMERIC_LIFETIMEBOUND` | `[[msvc::lifetimebound]]` 或空 | 在 MSVC（非 Clang）下展開為 `[[msvc::lifetimebound]]`，標註衍生自 `*this` 之指標或 `std::span` 視圖，防止懸空參考；其餘編譯器展開為空。 |
+| `NUMERIC_CONSTEXPR_20_FORCEINLINE` | `constexpr ...` | 將 `constexpr` 與編譯器強制內聯屬性安全結合的熱路徑巨集。 |
 | `NUMERIC_RESTRICT` | `__restrict` 或 `__restrict__` | 指標無別名（No-Alias）限定詞，指示編譯器指標無記憶體重疊以強化指令平行化。 |
 | `NUMERIC_HAS_EXCEPTIONS` | `1` 或 `0` | 偵測編譯器是否啟用 C++ 例外處理機制。 |
-| `NUMERIC_THROW_OR_ABORT(ex)` | 巨集陳述式 | 若啟用例外則執行 `throw (ex)`；若在無例外環境（`-fno-exceptions`）下則直接呼叫 `std::abort()`。 |
-| `NUMERIC_ALWAYS_INLINE` | 編譯器專屬指示字 | 強制內聯指示（MSVC `__forceinline`、GCC/Clang `__attribute__((always_inline))`）。 |
+| `NUMERIC_THROW_OR_ABORT(ex)` | 巨集陳述式 | 若啟用例外則執行 `throw (ex)`；若在無例外環境（`-fno-exceptions` / `/EHs-c-`）下則直接呼叫 `std::abort()`。 |
+| `NUMERIC_ALWAYS_INLINE` | 編譯器專屬指示字 | 強制內聯指示（MSVC `__forceinline`、GCC/Clang `__attribute__((always_inline)) inline`）。 |
 | `NUMERIC_LIKELY(x)`<br>`NUMERIC_UNLIKELY(x)` | 分支預測提示 | 向編譯器提示分支機率（GCC/Clang `__builtin_expect`）。 |
-| `NUMERIC_HAS_STD_FORMAT` | `1` 或 `0` | 偵測標準庫是否支援 C++20 `<format>` 函式庫。 |
+| `NUMERIC_HAS_STD_FORMAT` | `1` 或 `0` | 透過 `<version>`（`__cpp_lib_format`）偵測標準庫是否支援 `<format>`。 |
 | `NUMERIC_HAS_INT128` | `1` 或 `0` | 偵測平台是否具備原生 128 位元整數（`__int128`）。 |
 
 ---
 
 ## 詳細說明
 
-### 1. 例外處理安全機制 (`NUMERIC_THROW_OR_ABORT`)
+### 1. 例外處理安全機制 (`NUMERIC_THROW_OR_ABORT`) & `NUMERIC_LIFETIMEBOUND`
 
-為了適用於禁止使用 C++ 例外的嵌入式系統、遊戲引擎或安全關鍵程式碼庫（編譯旗標如 `-fno-exceptions` 或 `/EHs-c-`），CPP-BigInt 提供了安全的例外回退機制：
+為了適用於禁止使用 C++ 例外的嵌入式系統、遊戲引擎或安全關鍵程式碼庫（編譯旗標如 `-fno-exceptions` 或 `/EHs-c-`），CPP-BigInt 提供了安全的例外回退機制（若需完全非拋出的錯誤恢復，亦可直接呼叫回傳 `std::expected<T, BigIntError>` 的 `try_*` API）：
 
 ```cpp
-#if NUMERIC_HAS_EXCEPTIONS
+#if defined(_MSC_VER) && !defined(__clang__)
+#  define NUMERIC_LIFETIMEBOUND [[msvc::lifetimebound]]
+#else
+#  define NUMERIC_LIFETIMEBOUND
+#endif
+
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || (defined(_MSC_VER) && defined(_CPPUNWIND))
+#  define NUMERIC_HAS_EXCEPTIONS 1
 #  define NUMERIC_THROW_OR_ABORT(ex) throw (ex)
 #else
+#  define NUMERIC_HAS_EXCEPTIONS 0
 #  define NUMERIC_THROW_OR_ABORT(ex) std::abort()
 #endif
 ```
@@ -45,35 +53,30 @@
 #### 行為說明
 - **標準模式**：當發生非法字串輸入或除以零時，拋出標準例外物件（如 `std::invalid_argument`），調用端可透過 `try ... catch` 捕獲處理。
 - **無例外模式**：當編譯器關閉例外時，立即安全中止執行（呼叫 `std::abort()`），避免任何未定義行為。
+- **生命週期綁定標註**：`BigIntBase::limbs()`、`as_span()`、`capacity_span()`、`inline_span()` 與 `BasicBigInt::storage()` 等視圖與存取函式均標註 `NUMERIC_LIFETIMEBOUND`，協助 MSVC 靜態分析攔截綁定至暫時 `BasicBigInt` 的懸空參考。
 
 ---
 
-### 2. `numeric::string_view` 輕量型抽象
+### 2. `numeric::string_view` 標準別名
 
-在 C++17 之前，標準庫缺乏 `std::string_view`。為了兼顧無記憶體配置的高效字串視圖與 C++11 相容性，`Config.hpp` 提供了自動適配：
+在 C++23 基準下，`numeric::string_view` 直接對齊標準庫零拷貝視圖 `std::string_view`：
 
 ```cpp
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_17)
 namespace numeric {
     using string_view = std::string_view;
 }
-#else
-namespace numeric {
-    class string_view { ... };
-}
-#endif
 ```
 
 #### 備註
-在 C++17 及更高版本中，`numeric::string_view` 即為 `std::string_view` 之型別別名；在 C++11/C++14 中，則自動啟用零外部依賴的自製精簡版視圖。
+所有接收字串檢視的介面（如 `from_string`、`try_from_string`、`from_binary_string`、`try_from_binary_string`）皆透過 `numeric::string_view`（即 `std::string_view`）達成零堆積複製。
 
 ---
 
 ### 3. 編譯期常數計算 (`NUMERIC_CONSTEXPR_20`)
 
-在 C++20 中，標準放寬了 `constexpr` 對動態記憶體配置（Transient Allocation）與虛擬函式等的限制。`CPP-BigInt` 的核心運算法在 C++20 下均符合 `constexpr` 要求。
+在 C++23 基準下，標準支援 `constexpr` 動態記憶體配置（Transient Allocation），`CPP-BigInt` 的核心運算法均符合編譯期 `constexpr` 要求。
 
-#### 範例 (C++20 編譯期運算)
+#### 範例 (C++23 編譯期運算)
 ```cpp
 #include <numeric/BigInt.hpp>
 
@@ -94,16 +97,17 @@ int main() {
 
 ### 4. 內聯與編譯期巨集組合 (`NUMERIC_CONSTEXPR_20_FORCEINLINE`)
 
-在低於 C++20 的環境中，`NUMERIC_CONSTEXPR_20` 會自動回退退化為 `inline`。若函式同時被宣告為 `NUMERIC_CONSTEXPR_20 NUMERIC_ALWAYS_INLINE`，在 GCC/Clang 下會展開為：
+將 `constexpr` 與各編譯器的強制內聯關鍵字統一結合於熱路徑原語中：
 ```cpp
-inline __attribute__((always_inline)) inline // 觸發 duplicate 'inline' 語法編譯錯誤
-```
-為了確保在所有 C++ 標準（C++11/14/17/20/23）下皆能無縫編譯並取得最強制的內聯優化，定義了此專用組合巨集：
-```cpp
-#if (NUMERIC_CPLUSPLUS >= NUMERIC_CXX_20)
-#  define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr NUMERIC_ALWAYS_INLINE
+#if defined(_MSC_VER)
+#  define NUMERIC_ALWAYS_INLINE __forceinline
+#  define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#  define NUMERIC_ALWAYS_INLINE __attribute__((always_inline)) inline
+#  define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr __attribute__((always_inline)) inline
 #else
-#  define NUMERIC_CONSTEXPR_20_FORCEINLINE NUMERIC_ALWAYS_INLINE
+#  define NUMERIC_ALWAYS_INLINE inline
+#  define NUMERIC_CONSTEXPR_20_FORCEINLINE constexpr inline
 #endif
 ```
 
@@ -127,11 +131,11 @@ inline __attribute__((always_inline)) inline // 觸發 duplicate 'inline' 語法
 ### 6. SBO 小對象最佳化容量配置與樣板化 (`BasicBigInt<SboLimbs>`)
 
 CPP-BigInt 採用了借鑒 **LLVM SmallVector** 的雙層儲存與演算法解耦架構：
-- **底層核心**：`numeric::BigIntBase`（非樣板中介層），封裝指針、大小、容量、符號，並實作 Karatsuba、Toom-3、Burnikel-Ziegler 等所有重量級演算法，杜絕樣板代碼膨脹（Zero Code Bloat）。
-- **最上層**：`numeric::BasicBigInt<size_t SboLimbs>`，僅負責靜態內聯陣列宣告與容量傳遞。
+- **底層核心**：`numeric::BigIntBase`（32 bytes 非樣板中介層），封裝指標、大小、容量、符號與 `std::unique_ptr` RAII 堆積管理，並透過 `bind_inline(std::span<std::uint64_t>)` 繫結衍生類別內聯空間。
+- **最上層**：`numeric::BasicBigInt<std::size_t SboLimbs>`，透過 `std::array<std::uint64_t, ACTUAL_SBO>` 宣告靜態內聯陣列，並在預設建構階段將該 `std::span` 綁定給基底類別（當 `SboLimbs == 0` 時，內部保留 `ACTUAL_SBO = 1` 並保持 `m_sbo_capacity = 0`）。
 
 ```cpp
-template <size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
+template <std::size_t SboLimbs = NUMERIC_BIGINT_SBO_LIMBS>
 class BasicBigInt;
 
 using BigInt     = BasicBigInt<NUMERIC_BIGINT_SBO_LIMBS>; // 預設 4 limbs (256-bit, 64B)
@@ -171,5 +175,6 @@ using bigint1024 = BigInt1024;
 ---
 
 ## 適用於
-- 所有現代 C++ 編譯器（MSVC 2015+、GCC 4.8+、Clang 3.4+）。
-- 涵蓋 C++11, C++14, C++17, C++20, C++23 等各版本標準。
+- **C++23** 嚴格標準環境（CMake `CMAKE_CXX_STANDARD 23`）。
+- 支援 MSVC（`/std:c++latest` / Visual Studio 2022 17.6+ / VS 2026）、GCC（13+ `-std=c++23`）與 Clang（16+ `-std=c++23`）。
+- CMake 預設對 MSVC Debug 組態開啟 `/sdl`，於 Release 組態維持高效能原生最佳化。

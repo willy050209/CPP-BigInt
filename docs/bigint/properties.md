@@ -12,13 +12,16 @@
 
 | 方法名稱 | 語法宣告摘要 | 說明 |
 | :--- | :--- | :--- |
-| `is_sbo` | `bool is_sbo() const noexcept;` | 查詢目前是否處於 SBO 內建緩衝區（預設 4 limbs / 256 位元，或依 `NUMERIC_BIGINT_SBO_LIMBS` 配置；0 次 Heap 配置）。 |
-| `is_small` | `bool is_small() const noexcept;` | `is_sbo()` 之別名方法。 |
-| `is_zero` | `bool is_zero() const noexcept;` | 判斷數值是否等於零。 |
-| `sign` | `int8_t sign() const noexcept;` | 取得數值正負符號代碼（`-1`, `0`, `1`）。 |
-| `limb_count` | `size_t limb_count() const noexcept;` | 取得內部有效 64-bit limbs 陣列長度。 |
-| `limbs` | `const uint64_t* limbs() const noexcept;` | 取得指向內部 64-bit limbs 陣列首項之唯讀指標。 |
-| `storage` | `detail::BigIntStorage& storage() noexcept;`<br>`const detail::BigIntStorage& storage() const noexcept;` | 存取內部底層儲存層物件。 |
+| `is_sbo` | `auto is_sbo() const noexcept -> bool;` | 查詢目前是否處於 SBO 內建緩衝區（預設 4 limbs / 256 位元，或依 `NUMERIC_BIGINT_SBO_LIMBS` 配置；0 次 Heap 配置）。 |
+| `is_small` | `auto is_small() const noexcept -> bool;` | `is_sbo()` 之別名方法。 |
+| `is_zero` | `auto is_zero() const noexcept -> bool;` | 判斷數值是否等於零。 |
+| `sign` | `auto sign() const noexcept -> std::int8_t;` | 取得數值正負符號代碼（`-1`, `0`, `1`）。 |
+| `limb_count` | `auto limb_count() const noexcept -> std::size_t;` | 取得內部有效 64-bit limbs 陣列長度。 |
+| `limbs` | `auto limbs() const noexcept -> const std::uint64_t*;` | 取得指向內部 64-bit limbs 陣列首項之唯讀指標（標註 `NUMERIC_LIFETIMEBOUND`）。 |
+| `as_span` | `auto as_span() noexcept -> std::span<std::uint64_t>;`<br>`auto as_span() const noexcept -> std::span<const std::uint64_t>;` | 取得有效 limbs 區間之邊界安全 `std::span` 視圖（標註 `NUMERIC_LIFETIMEBOUND`）。 |
+| `capacity_span` | `auto capacity_span() noexcept -> std::span<std::uint64_t>;` | 取得完整已配置容量區間之 `std::span` 視圖（標註 `NUMERIC_LIFETIMEBOUND`）。 |
+| `inline_span` | `auto inline_span() noexcept -> std::span<std::uint64_t>;` | 取得內聯 SBO 空間區間之 `std::span` 視圖（標註 `NUMERIC_LIFETIMEBOUND`）。 |
+| `storage` | `auto storage() noexcept -> BigIntBase&;`<br>`auto storage() const noexcept -> const BigIntBase&;` | 存取底層基底類別 `BigIntBase`（標註 `NUMERIC_LIFETIMEBOUND`）。 |
 
 ---
 
@@ -118,11 +121,11 @@ std::cout << (int)zero.sign() << "\n"; // 輸出: 0
 
 #### 語法
 ```cpp
-NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 size_t limb_count() const noexcept;
+NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 auto limb_count() const noexcept -> std::size_t;
 ```
 
 #### 傳回值
-- `size_t`
+- `std::size_t`
   - 若數值為 0，回傳 `0`。
   - 其餘回傳表示該數值絕對值所需之 64-bit limbs 總數（以小端序儲存）。
 
@@ -146,43 +149,62 @@ std::cout << c.limb_count() << "\n"; // 輸出: 2
 
 #### 語法
 ```cpp
-NUMERIC_NODISCARD NUMERIC_CONSTEXPR_20 const uint64_t* limbs() const noexcept;
+NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto limbs() const noexcept -> const std::uint64_t*;
 ```
 
 #### 傳回值
-- `const uint64_t*`
-  指向內部連續 `uint64_t` 儲存陣列起始位址的指標（低位 limb 在前，小端序排列）。
+- `const std::uint64_t*`
+  指向內部連續 `std::uint64_t` 儲存陣列起始位址的指標（低位 limb 在前，小端序排列）。
 
 #### 注意事項
 > [!CAUTION]
-> 回傳之指標生命週期與該 `bigint` 物件生命週期繫結。當 `bigint` 執行任何可能擴充或縮減容量的非 const 運算（如 `+=`, `*=`）時，動態儲存區可能重新分配，原指標將失效。
+> 此方法標註 `NUMERIC_LIFETIMEBOUND`（MSVC 展開為 `[[msvc::lifetimebound]]`）。回傳之指標生命週期與該 `bigint` 物件生命週期繫結。當 `bigint` 執行任何可能擴充或縮減容量的非 const 運算（如 `+=`, `*=`）時，動態儲存區可能重新分配，原指標將失效。
 
 #### 範例
 ```cpp
 numeric::bigint b("18446744073709551616"); // 2^64
-const uint64_t* ptr = b.limbs();
+const std::uint64_t* ptr = b.limbs();
 std::cout << "Limb 0: " << ptr[0] << "\n"; // 輸出: 0
 std::cout << "Limb 1: " << ptr[1] << "\n"; // 輸出: 1
 ```
 
 ---
 
-### 6. `storage` 方法
+### 6. `as_span` / `capacity_span` / `inline_span` 方法
 
-存取內部儲存結構層 `detail::BigIntStorage`。
+取得內部儲存區之 C++23 邊界安全 `std::span` 視圖（繼承自 `BigIntBase`）。
 
 #### 語法
 ```cpp
-NUMERIC_CONSTEXPR_20 detail::BigIntStorage& storage() noexcept;
-NUMERIC_CONSTEXPR_20 const detail::BigIntStorage& storage() const noexcept;
+NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto as_span() noexcept -> std::span<std::uint64_t>;
+NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto as_span() const noexcept -> std::span<const std::uint64_t>;
+NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto capacity_span() noexcept -> std::span<std::uint64_t>;
+NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto inline_span() noexcept -> std::span<std::uint64_t>;
+```
+
+#### 傳回值與生命週期規則
+- **`as_span()`**：涵蓋 `[m_data, m_data + m_size)` 之有效 limbs 檢視。推薦優先使用 `b.as_span()` 取代手動指標算術，可搭配標準演算法（如 `std::ranges::equal`）與邊界檢查。
+- **`capacity_span()`**：涵蓋 `[m_data, m_data + m_capacity)` 目前所指向緩衝區（SBO 或 Heap）之總容量檢視。
+- **`inline_span()`**：涵蓋 `[m_inline_data, m_inline_data + m_sbo_capacity)` 之內聯 SBO 空間檢視。
+- 以上皆標註 `NUMERIC_LIFETIMEBOUND`，不可保存並引用已銷毀之暫時 `BasicBigInt` 物件。
+
+---
+
+### 7. `storage` 方法
+
+存取底層儲存基底類別 `BigIntBase`。
+
+#### 語法
+```cpp
+NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto storage() noexcept -> BigIntBase&;
+NUMERIC_NODISCARD NUMERIC_LIFETIMEBOUND NUMERIC_CONSTEXPR_20 auto storage() const noexcept -> const BigIntBase&;
 ```
 
 #### 傳回值
-- `BigIntStorage&` / `const BigIntStorage&`
-  底層儲存層實例參考。供內部演算法或高度特化之效能調試使用。
+- `BigIntBase&` / `const BigIntBase&`
+  底層儲存基底參考（標註 `NUMERIC_LIFETIMEBOUND`）。供核心演算法模組或零拷貝低階操作使用。
 
 ---
 
 ## 適用於
-- C++11 及以上版本。
-- C++20 起支援 `constexpr` 編譯期求值。
+- **C++23** 嚴格標準環境（全面支援 `constexpr` 編譯期求值、`std::span` 與 `NUMERIC_LIFETIMEBOUND`）。

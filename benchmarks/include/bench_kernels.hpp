@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstring>
 #include <algorithm>
+#include <span>
 #include <numeric/detail/BigIntCore.hpp>
 
 #if __has_include(<gmp.h>)
@@ -31,7 +32,7 @@ inline uint64_t raw_add_n(uint64_t* NUMERIC_RESTRICT out,
 {
     uint8_t carry = 0;
     for (size_t i = 0; i < n; ++i) {
-        carry = numeric::detail::BigIntCore::adc64(carry, a[i], b[i], &out[i]);
+        carry = numeric::detail::BigIntCore::adc64(carry, a[i], b[i], out[i]);
     }
     return carry;
 }
@@ -43,7 +44,7 @@ inline uint64_t raw_sub_n(uint64_t* NUMERIC_RESTRICT out,
 {
     uint8_t borrow = 0;
     for (size_t i = 0; i < n; ++i) {
-        borrow = numeric::detail::BigIntCore::sbb64(borrow, a[i], b[i], &out[i]);
+        borrow = numeric::detail::BigIntCore::sbb64(borrow, a[i], b[i], out[i]);
     }
     return borrow;
 }
@@ -52,7 +53,10 @@ inline void raw_mul_schoolbook(uint64_t* NUMERIC_RESTRICT out,
                                const uint64_t* NUMERIC_RESTRICT a, size_t a_len,
                                const uint64_t* NUMERIC_RESTRICT b, size_t b_len) noexcept
 {
-    numeric::detail::BigIntCore::mul_schoolbook_raw(out, a, a_len, b, b_len);
+    numeric::detail::BigIntCore::mul_schoolbook_raw(
+        std::span<uint64_t>{out, a_len + b_len},
+        std::span<const uint64_t>{a, a_len},
+        std::span<const uint64_t>{b, b_len});
 }
 
 inline void raw_mul_karatsuba(uint64_t* NUMERIC_RESTRICT out,
@@ -60,7 +64,12 @@ inline void raw_mul_karatsuba(uint64_t* NUMERIC_RESTRICT out,
                               const uint64_t* NUMERIC_RESTRICT b, size_t b_len,
                               uint64_t* NUMERIC_RESTRICT scratch) noexcept
 {
-    numeric::detail::BigIntCore::mul_karatsuba_raw(out, a, a_len, b, b_len, scratch);
+    const size_t scratch_bound = ((a_len > b_len ? a_len : b_len) * 8U) + 256U;
+    numeric::detail::BigIntCore::mul_karatsuba_raw(
+        std::span<uint64_t>{out, a_len + b_len},
+        std::span<const uint64_t>{a, a_len},
+        std::span<const uint64_t>{b, b_len},
+        std::span<uint64_t>{scratch, scratch_bound});
 }
 
 inline void raw_div_knuth(uint64_t* NUMERIC_RESTRICT q,
@@ -70,23 +79,27 @@ inline void raw_div_knuth(uint64_t* NUMERIC_RESTRICT q,
 {
     numeric::detail::BigIntStorage u_st, v_st, q_st, r_st;
     u_st.resize(u_len, 0);
-    numeric::detail::BigIntStorage::copy_limbs(u_st.data(), u, u_len);
-    u_st.m_size = u_len;
+    numeric::detail::BigIntStorage::copy_limbs(
+        u_st.as_span(), std::span<const uint64_t>{u, u_len});
+    u_st.m_size = static_cast<std::uint32_t>(u_len);
     u_st.m_sign = 1;
     u_st.normalize();
 
     v_st.resize(v_len, 0);
-    numeric::detail::BigIntStorage::copy_limbs(v_st.data(), v, v_len);
-    v_st.m_size = v_len;
+    numeric::detail::BigIntStorage::copy_limbs(
+        v_st.as_span(), std::span<const uint64_t>{v, v_len});
+    v_st.m_size = static_cast<std::uint32_t>(v_len);
     v_st.m_sign = 1;
     v_st.normalize();
 
     numeric::detail::BigIntCore::div_mod_core_knuth(q ? &q_st : nullptr, r ? &r_st : nullptr, u_st, v_st);
-    if (q && q_st.m_size > 0) {
-        numeric::detail::BigIntStorage::copy_limbs(q, q_st.data(), q_st.m_size);
+    if (q && q_st.m_size > 0U) {
+        numeric::detail::BigIntStorage::copy_limbs(
+            std::span<uint64_t>{q, q_st.m_size}, q_st.as_span());
     }
-    if (r && r_st.m_size > 0) {
-        numeric::detail::BigIntStorage::copy_limbs(r, r_st.data(), r_st.m_size);
+    if (r && r_st.m_size > 0U) {
+        numeric::detail::BigIntStorage::copy_limbs(
+            std::span<uint64_t>{r, r_st.m_size}, r_st.as_span());
     }
 }
 
@@ -97,23 +110,27 @@ inline void raw_div_bz(uint64_t* NUMERIC_RESTRICT q,
 {
     numeric::detail::BigIntStorage u_st, v_st, q_st, r_st;
     u_st.resize(u_len, 0);
-    numeric::detail::BigIntStorage::copy_limbs(u_st.data(), u, u_len);
-    u_st.m_size = u_len;
+    numeric::detail::BigIntStorage::copy_limbs(
+        u_st.as_span(), std::span<const uint64_t>{u, u_len});
+    u_st.m_size = static_cast<std::uint32_t>(u_len);
     u_st.m_sign = 1;
     u_st.normalize();
 
     v_st.resize(v_len, 0);
-    numeric::detail::BigIntStorage::copy_limbs(v_st.data(), v, v_len);
-    v_st.m_size = v_len;
+    numeric::detail::BigIntStorage::copy_limbs(
+        v_st.as_span(), std::span<const uint64_t>{v, v_len});
+    v_st.m_size = static_cast<std::uint32_t>(v_len);
     v_st.m_sign = 1;
     v_st.normalize();
 
     numeric::detail::BigIntCore::div_mod_core(q ? &q_st : nullptr, r ? &r_st : nullptr, u_st, v_st);
-    if (q && q_st.m_size > 0) {
-        numeric::detail::BigIntStorage::copy_limbs(q, q_st.data(), q_st.m_size);
+    if (q && q_st.m_size > 0U) {
+        numeric::detail::BigIntStorage::copy_limbs(
+            std::span<uint64_t>{q, q_st.m_size}, q_st.as_span());
     }
-    if (r && r_st.m_size > 0) {
-        numeric::detail::BigIntStorage::copy_limbs(r, r_st.data(), r_st.m_size);
+    if (r && r_st.m_size > 0U) {
+        numeric::detail::BigIntStorage::copy_limbs(
+            std::span<uint64_t>{r, r_st.m_size}, r_st.as_span());
     }
 }
 

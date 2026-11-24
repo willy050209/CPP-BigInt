@@ -1,10 +1,5 @@
 # scripts/bench_cross_standards_and_wsl.ps1
-# Automated cross-standard (C++14 ~ C++23) and cross-platform (Windows MSVC vs WSL2 GCC/Clang)
-# SBO benchmark orchestrator for CPP-BigInt
-
-param (
-    [switch]$Quick
-)
+# Automated C++23 cross-platform (Windows MSVC vs WSL2 GCC/Clang) SBO benchmark orchestrator for CPP-BigInt
 
 $ErrorActionPreference = "Continue"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -23,97 +18,67 @@ if (-not (Test-Path $binDir)) {
 }
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-$vsPath = & $vswhere -prerelease -latest -property installationPath
-if (-not $vsPath) {
-    $vsPath = "C:\Program Files\Microsoft Visual Studio\18\Insiders"
+$vcvars64 = $null
+if (Test-Path $vswhere) {
+    $vsPath = & $vswhere -prerelease -latest -property installationPath 2>$null
+    if ($vsPath) {
+        $candidate = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+        if (Test-Path $candidate) { $vcvars64 = $candidate }
+    }
 }
-$vcvars64 = Join-Path $vsPath "VC\Auxiliary\Build\vcvars64.bat"
+if (-not $vcvars64) {
+    $fallbackVc = "C:\Program Files\Microsoft Visual Studio\18\Insiders\VC\Auxiliary\Build\vcvars64.bat"
+    if (Test-Path $fallbackVc) { $vcvars64 = $fallbackVc }
+}
 
 $benchSource = Join-Path $benchDir "cpp\bench_layer3_overhead.cpp"
 $includeDir1 = Join-Path $rootDir "include"
 $includeDir2 = Join-Path $benchDir "include"
 
 Write-Host "==========================================================================" -ForegroundColor Cyan
-Write-Host "  CPP-BigInt: Cross-Standards & Cross-Platform SBO Benchmark Suite        " -ForegroundColor Cyan
+Write-Host "  CPP-BigInt: C++23 Cross-Platform SBO Benchmark Suite                    " -ForegroundColor Cyan
 Write-Host "==========================================================================" -ForegroundColor Cyan
 
 # -----------------------------------------------------------------------------
-# Part 1: Windows MSVC (C++14, C++17, C++20, C++latest)
+# Part 1: Windows MSVC (C++23 /std:c++latest)
 # -----------------------------------------------------------------------------
-if (Test-Path $vcvars64) {
-    Write-Host "`n>>> [Platform: Windows 11] Compiler: MSVC x64 (cl.exe)" -ForegroundColor Green
-    
-    $msvcStandards = if ($Quick) { @("/std:c++20", "/std:c++latest") } else { @("/std:c++14", "/std:c++17", "/std:c++20", "/std:c++latest") }
-    
-    foreach ($std in $msvcStandards) {
-        $stdLabel = $std.Replace("/std:", "").ToUpper()
-        if ($stdLabel -eq "C++LATEST") { $stdLabel = "C++latest" }
-        Write-Host "  [MSVC Building] Standard: $stdLabel ..." -ForegroundColor Yellow
+if ($vcvars64 -and (Test-Path $vcvars64)) {
+    Write-Host "`n>>> [Platform: Windows] Compiler: MSVC x64 (cl.exe /std:c++latest)" -ForegroundColor Green
 
-        $exeName = "bench_msvc_$($stdLabel.Replace('+', 'p')).exe"
-        $exePath = Join-Path $binDir $exeName
-        $outJson = Join-Path $resultsDir "results_sbo_msvc_$($stdLabel).json"
+    $exePath = Join-Path $binDir "bench_msvc_cpp23.exe"
+    $outJson = Join-Path $resultsDir "results_sbo_msvc_C++latest.json"
 
-        # Build with MSVC
-        cmd.exe /c "`"$vcvars64`" >nul 2>&1 && cl.exe /nologo /O2 /Oi /Ot /Gy /EHsc $std /utf-8 /I`"$includeDir1`" /I`"$includeDir2`" `"$benchSource`" /Fe:`"$exePath`" >nul 2>&1"
-        $buildOk = ($LASTEXITCODE -eq 0) -and (Test-Path $exePath)
-
-        if ($buildOk) {
-            Write-Host "  [MSVC Running] Executing benchmark ($stdLabel) ..." -ForegroundColor Cyan
-            & $exePath $dataDir $outJson | Out-Null
-            Write-Host "  -> Generated: $outJson" -ForegroundColor Green
-        } else {
-            Write-Host "  -> [BUILD FAILED] for MSVC $stdLabel" -ForegroundColor Red
-        }
+    cmd.exe /c "`"$vcvars64`" >nul 2>&1 && cl.exe /nologo /O2 /Oi /Ot /Gy /EHsc /std:c++latest /utf-8 /Zc:__cplusplus /I`"$includeDir1`" /I`"$includeDir2`" `"$benchSource`" /Fe:`"$exePath`" >nul 2>&1"
+    if (($LASTEXITCODE -eq 0) -and (Test-Path $exePath)) {
+        Write-Host "  [MSVC Running] Executing benchmark (C++23 /std:c++latest) ..." -ForegroundColor Cyan
+        & $exePath $dataDir $outJson | Out-Null
+        Write-Host "  -> Generated: $outJson" -ForegroundColor Green
+    } else {
+        Write-Host "  -> [BUILD FAILED] for MSVC C++23" -ForegroundColor Red
     }
 }
 
 # -----------------------------------------------------------------------------
-# Part 2: WSL2 Linux GCC (Ubuntu 24.04: g++ 14.2)
+# Part 2: WSL2 Linux GCC (C++23)
 # -----------------------------------------------------------------------------
 $wslCheck = wsl.exe uname -a 2>&1
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "`n>>> [Platform: WSL2 Linux] Compiler: GCC (g++)" -ForegroundColor Green
-    
-    # Map paths to WSL
+    Write-Host "`n>>> [Platform: WSL2 Linux] Compiler: GCC (-std=c++23)" -ForegroundColor Green
+
     $wslRoot = "/mnt/" + $rootDir.Substring(0, 1).ToLower() + $rootDir.Substring(2).Replace("\", "/")
     wsl.exe --cd $wslRoot mkdir -p build/matrix_bench
     wsl.exe --cd $wslRoot mkdir -p benchmarks/results
 
-    $gccStandards = if ($Quick) { @("-std=c++20", "-std=c++23") } else { @("-std=c++14", "-std=c++17", "-std=c++20", "-std=c++23") }
+    $relExe = "build/matrix_bench/bench_gcc_cpp23"
+    $outJson = "benchmarks/results/results_sbo_wsl_gcc_C++23.json"
 
-    foreach ($std in $gccStandards) {
-        $stdLabel = $std.Replace("-std=", "").ToUpper()
-        Write-Host "  [WSL GCC Building] Standard: $stdLabel ..." -ForegroundColor Yellow
-
-        $relExe = "build/matrix_bench/bench_gcc_$($stdLabel.Replace('+', 'p'))"
-        $outJson = "benchmarks/results/results_sbo_wsl_gcc_$($stdLabel).json"
-
-        wsl.exe --cd $wslRoot g++ $std -O2 -Iinclude -Ibenchmarks/include benchmarks/cpp/bench_layer3_overhead.cpp -o $relExe 2>&1 | Out-Null
-        $buildOk = ($LASTEXITCODE -eq 0)
-
-        if ($buildOk) {
-            Write-Host "  [WSL GCC Running] Executing benchmark ($stdLabel) ..." -ForegroundColor Cyan
-            wsl.exe --cd $wslRoot ./$relExe benchmarks/data $outJson | Out-Null
-            Write-Host "  -> Generated: $outJson" -ForegroundColor Green
-        } else {
-            Write-Host "  -> [BUILD FAILED] for WSL GCC $stdLabel" -ForegroundColor Red
-        }
-    }
-
-    # Optional: WSL Clang++
-    $clangCheck = wsl.exe clang++ --version 2>&1
+    wsl.exe --cd $wslRoot g++ -std=c++23 -O2 -Iinclude -Ibenchmarks/include benchmarks/cpp/bench_layer3_overhead.cpp -o $relExe 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "`n>>> [Platform: WSL2 Linux] Compiler: Clang++ (clang++ 18.1)" -ForegroundColor Green
-        Write-Host "  [WSL Clang Building] Standard: C++23 ..." -ForegroundColor Yellow
-        $relClangExe = "build/matrix_bench/bench_clang_c23"
-        $clangJson = "benchmarks/results/results_sbo_wsl_clang_C++23.json"
-        wsl.exe --cd $wslRoot clang++ -std=c++23 -O2 -Iinclude -Ibenchmarks/include benchmarks/cpp/bench_layer3_overhead.cpp -o $relClangExe 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  [WSL Clang Running] Executing benchmark (C++23) ..." -ForegroundColor Cyan
-            wsl.exe --cd $wslRoot ./$relClangExe benchmarks/data $clangJson | Out-Null
-            Write-Host "  -> Generated: $clangJson" -ForegroundColor Green
-        }
+        Write-Host "  [WSL GCC Running] Executing benchmark (C++23) ..." -ForegroundColor Cyan
+        wsl.exe --cd $wslRoot ./$relExe benchmarks/data $outJson | Out-Null
+        Write-Host "  -> Generated: $outJson" -ForegroundColor Green
+    } else {
+        Write-Host "  -> [BUILD FAILED] for WSL GCC C++23" -ForegroundColor Red
     }
 }
 
@@ -124,7 +89,6 @@ Write-Host "`n>>> Aggregating Matrix & Generating Cross-Platform Report..." -For
 $pythonScript = Join-Path $benchDir "scripts\analyze_sbo_and_cross_platform.py"
 python.exe $pythonScript
 
-# Cleanup binaries
 Remove-Item $binDir -Recurse -Force -ErrorAction SilentlyContinue
 Get-ChildItem -Path $rootDir -Filter *.obj | Remove-Item -Force -ErrorAction SilentlyContinue
 

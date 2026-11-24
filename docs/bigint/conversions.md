@@ -13,12 +13,14 @@
 | 轉換目標 | 語法宣告摘要 | 說明 |
 | :--- | :--- | :--- |
 | `bool` | `explicit operator bool() const noexcept;` | 邏輯真假值轉換（非 0 即真，0 為 false）。 |
-| `int64_t` / `int32_t` | `explicit operator int64_t() const noexcept;`<br>`explicit operator int32_t() const noexcept;` | 轉換至 64/32 位元有符號整數（截斷語意）。 |
-| `uint64_t` / `uint32_t` | `explicit operator uint64_t() const noexcept;`<br>`explicit operator uint32_t() const noexcept;` | 轉換至 64/32 位元無符號整數（截斷語意）。 |
+| `std::int64_t` / `std::int32_t` | `explicit operator std::int64_t() const noexcept;`<br>`explicit operator std::int32_t() const noexcept;` | 轉換至 64/32 位元有符號整數（截斷語意）。 |
+| `std::uint64_t` / `std::uint32_t` | `explicit operator std::uint64_t() const noexcept;`<br>`explicit operator std::uint32_t() const noexcept;` | 轉換至 64/32 位元無符號整數（截斷語意）。 |
+| `try_to_int64` | `[[nodiscard]] auto try_to_int64() const noexcept -> std::expected<std::int64_t, BigIntError>;` | 具備嚴格溢位檢查之無例外 64 位元有符號整數安全轉換。 |
+| `try_to_uint64` | `[[nodiscard]] auto try_to_uint64() const noexcept -> std::expected<std::uint64_t, BigIntError>;` | 具備符號與溢位檢查之無例外 64 位元無符號整數安全轉換。 |
 | `double` | `explicit operator double() const noexcept;` | 轉換至雙精度浮點數（可能捨入）。 |
-| `std::string` (十進位) | `std::string to_string() const;` | 序列化為十進位字串（含選用負號）。 |
-| `std::string` (二進位) | `std::string to_binary_string() const;` | 序列化為純二進位字串（負數含前綴 `'-'`）。 |
-| `std::bitset<N>` | `template <size_t N> std::bitset<N> to_bitset() const;` | **泛型位元集合轉換**：以標準二補數表示法映射至固定寬度 bitset。 |
+| `std::string` (十進位) | `[[nodiscard]] auto to_string() const -> std::string;` | 序列化為十進位字串（含選用負號）。 |
+| `std::string` (二進位) | `[[nodiscard]] auto to_binary_string() const -> std::string;` | 序列化為純二進位字串（負數含前綴 `'-'`）。 |
+| `std::bitset<N>` | `template <std::size_t N> [[nodiscard]] auto to_bitset() const -> std::bitset<N>;` | **泛型位元集合轉換**：以標準二補數表示法映射至固定寬度 bitset。 |
 
 ---
 
@@ -61,13 +63,42 @@ explicit NUMERIC_CONSTEXPR_20 operator uint32_t() const noexcept;
 
 #### 注意事項
 > [!WARNING]
-> 若 `bigint` 的數值範圍超出目標整數寬度，將直接截斷並僅取其最低位的 64 或 32 位元數值並附上正負號，**不會拋出例外**。若需防止溢位，應於轉換前先確認 `limb_count()` 或與邊界常數進行比較。
+> 若 `bigint` 的數值範圍超出目標整數寬度，`explicit operator int64_t()` 等轉型運算子將直接截斷並僅取其最低位元，**不會拋出例外**。若需嚴格檢查負數或範圍溢位，請改用下方之 `try_to_int64()` / `try_to_uint64()` 無例外單子式安全轉換介面。
 
 #### 範例
 ```cpp
 numeric::bigint b(12345);
-int64_t val = static_cast<int64_t>(b);
+std::int64_t val = static_cast<std::int64_t>(b);
 std::cout << "int64: " << val << "\n";
+```
+
+---
+
+### 2.1 `try_to_int64` / `try_to_uint64` 安全轉換介面 (C++23 `std::expected`)
+
+具備完整範圍檢查與符號檢查的非拋出轉換方法，回傳 `std::expected<T, BigIntError>`。
+
+#### 語法
+```cpp
+[[nodiscard]] NUMERIC_CONSTEXPR_20 auto try_to_int64() const noexcept -> std::expected<std::int64_t, BigIntError>;
+[[nodiscard]] NUMERIC_CONSTEXPR_20 auto try_to_uint64() const noexcept -> std::expected<std::uint64_t, BigIntError>;
+```
+
+#### 傳回值與錯誤碼 (`BigIntError`)
+- **`try_to_int64()`**：若數值落於 `[INT64_MIN, INT64_MAX]` 區間內，回傳對應 `std::int64_t`；否則回傳 `std::unexpected{BigIntError::Overflow}`。
+- **`try_to_uint64()`**：
+  - 若數值小於 `0`，回傳 `std::unexpected{BigIntError::NegativeInput}`。
+  - 若數值超過 `UINT64_MAX`（即 `limb_count() > 1`），回傳 `std::unexpected{BigIntError::Overflow}`。
+  - 其餘回傳精確 `std::uint64_t` 值。
+
+#### 範例
+```cpp
+numeric::bigint huge("999999999999999999999999");
+if (auto res = huge.try_to_uint64()) {
+    std::cout << "Value: " << *res << "\n";
+} else if (res.error() == numeric::BigIntError::Overflow) {
+    std::cout << "Overflow when converting to uint64_t\n";
+}
 ```
 
 ---
@@ -121,7 +152,7 @@ NUMERIC_NODISCARD std::string to_string() const;
 3. **$10^{19}$ 乘法求逆除法 (Reciprocal Multiplication Division)**：
    對於 Radix-10 轉換最頻繁的 64 位元除數 $10^{19}$（最大可容納十進位冪次），預先計算 128 位元定點逆元常數 $v = \lfloor (2^{128} - 1) / 10^{19} \rfloor - 2^{64} = \text{0xd83c94fb6d2ac34a}$。以乘法高位與進位加法完全取代 x86-64 硬體 `_udiv128` 指令，將單 limb 除法延遲由 ~40 週期劇降至 ~6 週期。
 4. **分治進位轉換 (Divide-and-Conquer Radix Conversion)**：
-   當數值大於 16 個 chunks（約 304 位數 / 1010 bits）時，自動切換至二分切分演算法。利用 [`Pow10Cache`](../parsing.md) 快取的二分冪次 $10^{19 \cdot 2^k}$，將大數遞迴切半：$Q, R = \operatorname{div\_qr}(A, 10^{19 \cdot 2^k})$。遞迴深度降為 $O(\log N)$，並結合 **Burnikel-Ziegler 快速分治除法**，使 64K-bit `ToString` 耗時進一步由 `710.23 µs` 降低至 **`433.02 µs`**（**1.64x 加速**），大幅超越 C++ MPIR（`1.08 ms`）。
+   當數值大於 16 個 chunks（約 304 位數 / 1010 bits）時，自動切換至二分切分演算法。利用 [`Pow10Cache`](parsing.md) 快取的二分冪次 $10^{19 \cdot 2^k}$，將大數遞迴切半：$Q, R = \operatorname{div\_qr}(A, 10^{19 \cdot 2^k})$。遞迴深度降為 $O(\log N)$，並結合 **Burnikel-Ziegler 快速分治除法**，使 64K-bit `ToString` 耗時進一步由 `710.23 µs` 降低至 **`433.02 µs`**（**1.64x 加速**），大幅超越 C++ MPIR（`1.08 ms`）。
 5. **2-Digit LUT 雙位元查表加速**：
    透過靜態內聯的百位查找表（`char_table2`），將數字轉換為兩兩一組的 ASCII 字元（如 `"00"`, `"01"`, ..., `"99"`），將除法與取模指令次數直接減半，並利用 16-bit 記憶體存取就地填入。
 6. **精確長度配置 (Exact Digit Allocation)**：
@@ -209,5 +240,4 @@ int main() {
 ---
 
 ## 適用於
-- 所有轉換方法均適用於 **C++11** 及以上版本。
-- 整數與布林型別轉換運算子於 **C++20** 起支援 `constexpr`。
+- **C++23** 嚴格標準環境（整數、布林轉換與 `try_to_int64` / `try_to_uint64` 全面支援 `constexpr` 與 `std::expected`）。

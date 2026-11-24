@@ -1,9 +1,11 @@
+// filepath: include/numeric/detail/BigIntCore.hpp
+/**
+ * @file BigIntCore.hpp
+ * @brief Unified arbitrary-precision integer core combining intrinsics, SBO storage,
+ *        arithmetic, bitwise logic, Karatsuba/Toom-3 multiplication, Knuth/BZ division, and string I/O.
+ *        彙聚硬體原語、SBO 儲存、四則運算、位元邏輯、高階乘除法與字串轉換之核心介面。
+ */
 #pragma once
-
-// BigIntCore.hpp
-// Core arbitrary-precision integer algorithms and SBO storage layer for CPP-BigInt.
-// Zero external dependencies, downward compatible from C++23 to C++11.
-// Modularized into Intrinsics, Storage, Arithmetic, Bitwise, Multiplication, Division, and StringConversion.
 
 #include "../Config.hpp"
 #include "Intrinsics.hpp"
@@ -18,17 +20,14 @@ namespace numeric {
 namespace detail {
 
 /// <summary>
-/// BigInt 演算法核心類別，繼承自 BigIntStringConversion（具備完整算術、乘除、位元與字串轉換功能）。
-/// 提供 100% 向後相容之靜態方法與演算法入口。
+/// Unified BigInt algorithm core class inheriting BigIntStringConversion.
+/// Provides backward-compatible static entry points with zero runtime overhead.
+/// BigInt 演算法核心類別，繼承自 BigIntStringConversion，提供零開銷靜態演算法入口。
 /// </summary>
 class BigIntCore : public BigIntStringConversion {
 public:
-    // 所有演算法與常數（如 KARATSUBA_THRESHOLD, TOOM3_THRESHOLD, BZ_THRESHOLD,
-    // FROM_STRING_DC_THRESHOLD, adc64, sbb64, clz64, mul64_wide, div128_64,
-    // add_unsigned, sub_unsigned, mul_signed, div_qr_signed, bitwise_*, to_string, from_string 等）
-    // 均透過公開繼承自 BigIntStringConversion -> BigIntDivision -> BigIntMultiplication
-    // -> BigIntBitwise -> BigIntArithmetic -> BigIntIntrinsics 完整提供，
-    // 維持 100% 原始 API 相容性且零額外執行期或二進位開銷。
+    // Inherits full arithmetic, multiplication, division, bitwise, and string conversion operations.
+    // 透過公開繼承完整提供所有進階算術、乘除、位元與字串轉換演算法入口。
 };
 
 } // namespace detail
