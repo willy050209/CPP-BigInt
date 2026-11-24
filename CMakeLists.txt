@@ -21,7 +21,7 @@ if(MSVC)
         $<$<COMPILE_LANGUAGE:CXX>:/permissive->
         $<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>
         /utf-8
-        /sdl
+        $<$<CONFIG:Debug>:/sdl>
     )
 else()
     target_compile_options(bigint INTERFACE
@@ -54,7 +54,7 @@ if(BIGINT_BUILD_C_API)
     )
     target_compile_definitions(bigint_c PRIVATE BIGINT_C_BUILD_DLL)
     if(MSVC)
-        target_compile_options(bigint_c PRIVATE /W4 /WX /utf-8 /O2 /Oi /Ot /Gy /sdl)
+        target_compile_options(bigint_c PRIVATE /W4 /WX /utf-8 /O2 /Oi /Ot /Gy $<$<CONFIG:Debug>:/sdl>)
     else()
         target_compile_options(bigint_c PRIVATE -Wall -Wextra -Werror -O2)
     endif()

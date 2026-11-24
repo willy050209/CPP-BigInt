@@ -911,7 +911,7 @@ struct BigIntMultiplication : public BigIntBitwise {
         }
 
         if (scratch_size <= 1024U) {
-            std::array<std::uint64_t, 1024> stack_scratch{};
+            std::array<std::uint64_t, 1024> stack_scratch;
             mul_karatsuba_raw(res.as_span(), a.as_span(), b.as_span(), stack_scratch);
         } else {
             auto& arena{ScratchArena::instance()};
@@ -963,7 +963,7 @@ struct BigIntMultiplication : public BigIntBitwise {
         }
 
         if (scratch_size <= 2048U) {
-            std::array<std::uint64_t, 2048> stack_scratch{};
+            std::array<std::uint64_t, 2048> stack_scratch;
             mul_toom3_raw(res.as_span(), a.as_span(), b.as_span(), stack_scratch);
         } else {
             auto& arena{ScratchArena::instance()};

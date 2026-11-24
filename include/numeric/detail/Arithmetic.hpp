@@ -246,35 +246,156 @@ struct BigIntArithmetic : public BigIntIntrinsics {
         const std::size_t min_len{std::min(a_len, b_len)};
         const std::size_t max_len{std::max(a_len, b_len)};
 
-        std::array<std::uint64_t, 128> a_stack{};
-        std::array<std::uint64_t, 128> b_stack{};
-        std::vector<std::uint64_t> a_heap{};
-        std::vector<std::uint64_t> b_heap{};
-
         std::span<const std::uint64_t> a_span{a.as_span()};
         std::span<const std::uint64_t> b_span{b.as_span()};
 
-        if (&res == &a && a_len < b_len) {
-            if (a_len <= 128U) {
-                std::ranges::copy(a.as_span(), a_stack.begin());
-                a_span = std::span<const std::uint64_t>{a_stack.data(), a_len};
-            } else {
-                a_heap.assign(a.as_span().begin(), a.as_span().end());
-                a_span = std::span<const std::uint64_t>{a_heap};
+        // Alias backup is only needed when res aliases the shorter operand and may reallocate
+        // 僅於 res 別名較短運算元並可能重新配置時才需備份（避開常規熱路徑之堆疊歸零與 EH 開銷）
+        if ((&res == &a && a_len < b_len) || (&res == &b && b_len < a_len)) {
+            if (std::is_constant_evaluated()) {
+                std::array<std::uint64_t, 128> ce_stack{};
+                std::vector<std::uint64_t> ce_heap{};
+                if (&res == &a) {
+                    if (a_len <= 128U) {
+                        std::ranges::copy(a.as_span(), ce_stack.begin());
+                        a_span = std::span<const std::uint64_t>{ce_stack.data(), a_len};
+                    } else {
+                        ce_heap.assign(a.as_span().begin(), a.as_span().end());
+                        a_span = std::span<const std::uint64_t>{ce_heap};
+                    }
+                    res.resize(max_len + 1U, 0ULL);
+                } else {
+                    if (b_len <= 128U) {
+                        std::ranges::copy(b.as_span(), ce_stack.begin());
+                        b_span = std::span<const std::uint64_t>{ce_stack.data(), b_len};
+                    } else {
+                        ce_heap.assign(b.as_span().begin(), b.as_span().end());
+                        b_span = std::span<const std::uint64_t>{ce_heap};
+                    }
+                    res.resize(max_len + 1U, 0ULL);
+                }
+                const std::span<const std::uint64_t> ce_longer{(a_len >= b_len) ? a_span : b_span};
+                const std::span<std::uint64_t> ce_out{res.capacity_span()};
+                std::uint8_t c{0};
+                for (std::size_t i{0}; i < min_len; ++i) {
+                    c = adc64(c, a_span[i], b_span[i], ce_out[i]);
+                }
+                std::size_t idx{min_len};
+                for (; idx < max_len && c != 0U; ++idx) {
+                    c = adc64(c, ce_longer[idx], 0ULL, ce_out[idx]);
+                }
+                if (c == 0U) {
+                    if (res.data() != ce_longer.data() && idx < max_len) {
+                        BigIntStorage::copy_limbs(ce_out.subspan(idx), ce_longer.subspan(idx, max_len - idx));
+                    }
+                    res.m_size = static_cast<std::uint32_t>(max_len);
+                } else {
+                    if (res.m_size < max_len + 1U) {
+                        res.resize(max_len + 1U, 0ULL);
+                    }
+                    res[max_len] = 1ULL;
+                    res.m_size = static_cast<std::uint32_t>(max_len + 1U);
+                }
+                return;
             }
-        } else if (&res == &b && b_len < a_len) {
+
+            if (&res == &a) {
+                if (a_len <= 128U) {
+                    std::array<std::uint64_t, 128> a_stack;
+                    std::ranges::copy(a.as_span(), a_stack.begin());
+                    res.resize(max_len + 1U, 0ULL);
+                    const std::span<std::uint64_t> out_span{res.capacity_span()};
+                    std::uint8_t carry{0};
+                    for (std::size_t i{0}; i < min_len; ++i) {
+                        carry = adc64(carry, a_stack[i], b_span[i], out_span[i]);
+                    }
+                    std::size_t i{min_len};
+                    for (; i < max_len && carry != 0U; ++i) {
+                        carry = adc64(carry, b_span[i], 0ULL, out_span[i]);
+                    }
+                    if (carry == 0U) {
+                        if (i < max_len) {
+                            BigIntStorage::copy_limbs(out_span.subspan(i), b_span.subspan(i, max_len - i));
+                        }
+                        res.m_size = static_cast<std::uint32_t>(max_len);
+                    } else {
+                        res[max_len] = 1ULL;
+                        res.m_size = static_cast<std::uint32_t>(max_len + 1U);
+                    }
+                    return;
+                }
+                std::vector<std::uint64_t> a_heap(a.as_span().begin(), a.as_span().end());
+                res.resize(max_len + 1U, 0ULL);
+                const std::span<std::uint64_t> out_span{res.capacity_span()};
+                std::uint8_t carry{0};
+                for (std::size_t i{0}; i < min_len; ++i) {
+                    carry = adc64(carry, a_heap[i], b_span[i], out_span[i]);
+                }
+                std::size_t i{min_len};
+                for (; i < max_len && carry != 0U; ++i) {
+                    carry = adc64(carry, b_span[i], 0ULL, out_span[i]);
+                }
+                if (carry == 0U) {
+                    if (i < max_len) {
+                        BigIntStorage::copy_limbs(out_span.subspan(i), b_span.subspan(i, max_len - i));
+                    }
+                    res.m_size = static_cast<std::uint32_t>(max_len);
+                } else {
+                    res[max_len] = 1ULL;
+                    res.m_size = static_cast<std::uint32_t>(max_len + 1U);
+                }
+                return;
+            }
+
+            // &res == &b && b_len < a_len
             if (b_len <= 128U) {
+                std::array<std::uint64_t, 128> b_stack;
                 std::ranges::copy(b.as_span(), b_stack.begin());
-                b_span = std::span<const std::uint64_t>{b_stack.data(), b_len};
-            } else {
-                b_heap.assign(b.as_span().begin(), b.as_span().end());
-                b_span = std::span<const std::uint64_t>{b_heap};
+                res.resize(max_len + 1U, 0ULL);
+                const std::span<std::uint64_t> out_span{res.capacity_span()};
+                std::uint8_t carry{0};
+                for (std::size_t i{0}; i < min_len; ++i) {
+                    carry = adc64(carry, a_span[i], b_stack[i], out_span[i]);
+                }
+                std::size_t i{min_len};
+                for (; i < max_len && carry != 0U; ++i) {
+                    carry = adc64(carry, a_span[i], 0ULL, out_span[i]);
+                }
+                if (carry == 0U) {
+                    if (i < max_len) {
+                        BigIntStorage::copy_limbs(out_span.subspan(i), a_span.subspan(i, max_len - i));
+                    }
+                    res.m_size = static_cast<std::uint32_t>(max_len);
+                } else {
+                    res[max_len] = 1ULL;
+                    res.m_size = static_cast<std::uint32_t>(max_len + 1U);
+                }
+                return;
             }
+            std::vector<std::uint64_t> b_heap(b.as_span().begin(), b.as_span().end());
+            res.resize(max_len + 1U, 0ULL);
+            const std::span<std::uint64_t> out_span{res.capacity_span()};
+            std::uint8_t carry{0};
+            for (std::size_t i{0}; i < min_len; ++i) {
+                carry = adc64(carry, a_span[i], b_heap[i], out_span[i]);
+            }
+            std::size_t i{min_len};
+            for (; i < max_len && carry != 0U; ++i) {
+                carry = adc64(carry, a_span[i], 0ULL, out_span[i]);
+            }
+            if (carry == 0U) {
+                if (i < max_len) {
+                    BigIntStorage::copy_limbs(out_span.subspan(i), a_span.subspan(i, max_len - i));
+                }
+                res.m_size = static_cast<std::uint32_t>(max_len);
+            } else {
+                res[max_len] = 1ULL;
+                res.m_size = static_cast<std::uint32_t>(max_len + 1U);
+            }
+            return;
         }
 
         if (&res != &a && &res != &b) {
-            res.resize(max_len + 1U, 0ULL);
-        } else if ((&res == &a && a_len < b_len) || (&res == &b && b_len < a_len)) {
             res.resize(max_len + 1U, 0ULL);
         }
 
@@ -341,24 +462,76 @@ struct BigIntArithmetic : public BigIntIntrinsics {
             return;
         }
 
-        std::array<std::uint64_t, 128> b_stack{};
-        std::vector<std::uint64_t> b_heap{};
-        std::span<const std::uint64_t> b_span{b.as_span()};
-
         if (&res == &b) {
-            if (b_len <= 128U) {
-                std::ranges::copy(b.as_span(), b_stack.begin());
-                b_span = std::span<const std::uint64_t>{b_stack.data(), b_len};
-            } else {
-                b_heap.assign(b.as_span().begin(), b.as_span().end());
-                b_span = std::span<const std::uint64_t>{b_heap};
+            if (std::is_constant_evaluated()) {
+                std::array<std::uint64_t, 128> b_stack{};
+                std::vector<std::uint64_t> b_heap{};
+                std::span<const std::uint64_t> b_span{b.as_span()};
+                if (b_len <= 128U) {
+                    std::ranges::copy(b.as_span(), b_stack.begin());
+                    b_span = std::span<const std::uint64_t>{b_stack.data(), b_len};
+                } else {
+                    b_heap.assign(b.as_span().begin(), b.as_span().end());
+                    b_span = std::span<const std::uint64_t>{b_heap};
+                }
+                const std::span<const std::uint64_t> a_span{a.as_span()};
+                const std::span<std::uint64_t> out_span{res.as_span()};
+                std::uint8_t borrow{0};
+                for (std::size_t i{0}; i < b_len; ++i) {
+                    borrow = sbb64(borrow, a_span[i], b_span[i], out_span[i]);
+                }
+                std::size_t i{b_len};
+                for (; i < a_len && borrow != 0U; ++i) {
+                    borrow = sbb64(borrow, a_span[i], 0ULL, out_span[i]);
+                }
+                if (borrow == 0U && i < a_len) {
+                    BigIntStorage::copy_limbs(out_span.subspan(i), a_span.subspan(i, a_len - i));
+                }
+                res.m_size = static_cast<std::uint32_t>(a_len);
+                return;
             }
+            if (b_len <= 128U) {
+                std::array<std::uint64_t, 128> b_stack;
+                std::ranges::copy(b.as_span(), b_stack.begin());
+                const std::span<const std::uint64_t> a_span{a.as_span()};
+                const std::span<std::uint64_t> out_span{res.as_span()};
+                std::uint8_t borrow{0};
+                for (std::size_t i{0}; i < b_len; ++i) {
+                    borrow = sbb64(borrow, a_span[i], b_stack[i], out_span[i]);
+                }
+                std::size_t i{b_len};
+                for (; i < a_len && borrow != 0U; ++i) {
+                    borrow = sbb64(borrow, a_span[i], 0ULL, out_span[i]);
+                }
+                if (borrow == 0U && i < a_len) {
+                    BigIntStorage::copy_limbs(out_span.subspan(i), a_span.subspan(i, a_len - i));
+                }
+                res.m_size = static_cast<std::uint32_t>(a_len);
+                return;
+            }
+            std::vector<std::uint64_t> b_heap(b.as_span().begin(), b.as_span().end());
+            const std::span<const std::uint64_t> a_span{a.as_span()};
+            const std::span<std::uint64_t> out_span{res.as_span()};
+            std::uint8_t borrow{0};
+            for (std::size_t i{0}; i < b_len; ++i) {
+                borrow = sbb64(borrow, a_span[i], b_heap[i], out_span[i]);
+            }
+            std::size_t i{b_len};
+            for (; i < a_len && borrow != 0U; ++i) {
+                borrow = sbb64(borrow, a_span[i], 0ULL, out_span[i]);
+            }
+            if (borrow == 0U && i < a_len) {
+                BigIntStorage::copy_limbs(out_span.subspan(i), a_span.subspan(i, a_len - i));
+            }
+            res.m_size = static_cast<std::uint32_t>(a_len);
+            return;
         }
 
         if (&res != &a) {
             res.resize(a_len, 0ULL);
         }
 
+        const std::span<const std::uint64_t> b_span{b.as_span()};
         const std::span<const std::uint64_t> a_span{a.as_span()};
         const std::span<std::uint64_t> out_span{res.as_span()};
 

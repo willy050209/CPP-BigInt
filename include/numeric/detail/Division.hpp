@@ -272,21 +272,6 @@ struct BigIntDivision : public BigIntMultiplication {
         const std::size_t n{v.m_size};
         const std::size_t m{u.m_size - n};
         const std::size_t total_scratch{(n + 1U) + (u.m_size + 2U)};
-        std::array<std::uint64_t, 512> stack_scratch{};
-        std::span<std::uint64_t> scratch_span{stack_scratch};
-        std::vector<std::uint64_t> heap_scratch{};
-
-        if (std::is_constant_evaluated()) {
-            if (total_scratch > 512U) {
-                heap_scratch.resize(total_scratch);
-                scratch_span = std::span<std::uint64_t>{heap_scratch};
-            }
-        } else {
-            if (total_scratch > 512U) {
-                auto& arena{ScratchArena::instance()};
-                scratch_span = arena.allocate(total_scratch);
-            }
-        }
 
         if (q_out != nullptr && q_out != &u) {
             q_out->resize(m + 1U, 0ULL);
@@ -300,7 +285,23 @@ struct BigIntDivision : public BigIntMultiplication {
         const std::span<std::uint64_t> q_span{(q_out != nullptr) ? q_out->capacity_span() : std::span<std::uint64_t>{}};
         const std::span<std::uint64_t> r_span{(r_out != nullptr) ? r_out->capacity_span() : std::span<std::uint64_t>{}};
 
-        div_knuth_raw(q_span, &ql, r_span, &rl, u.as_span(), v.as_span(), scratch_span);
+        if (std::is_constant_evaluated()) {
+            if (total_scratch <= 512U) {
+                std::array<std::uint64_t, 512> stack_scratch{};
+                div_knuth_raw(q_span, &ql, r_span, &rl, u.as_span(), v.as_span(), stack_scratch);
+            } else {
+                std::vector<std::uint64_t> heap_scratch(total_scratch, 0ULL);
+                div_knuth_raw(q_span, &ql, r_span, &rl, u.as_span(), v.as_span(), heap_scratch);
+            }
+        } else if (total_scratch <= 512U) {
+            std::array<std::uint64_t, 512> stack_scratch;
+            div_knuth_raw(q_span, &ql, r_span, &rl, u.as_span(), v.as_span(), stack_scratch);
+        } else {
+            auto& arena{ScratchArena::instance()};
+            const ScratchArena::Scope scope{arena};
+            const std::span<std::uint64_t> scratch_span{arena.allocate(total_scratch)};
+            div_knuth_raw(q_span, &ql, r_span, &rl, u.as_span(), v.as_span(), scratch_span);
+        }
 
         if (q_out != nullptr) {
             q_out->m_size = static_cast<std::uint32_t>(ql);
@@ -835,14 +836,16 @@ inline auto BigIntDivision::bz_div2by1_raw(
 
     if (n < BZ_THRESHOLD || (n % 2U != 0U)) {
         const std::size_t total_scratch{(n + 1U) + (a.size() + 2U)};
-        std::array<std::uint64_t, 512> stack_scratch{};
-        std::span<std::uint64_t> scratch_span{stack_scratch};
-        if (total_scratch > 512U) {
-            scratch_span = arena.allocate(total_scratch);
-        }
         if (!q.empty()) BigIntStorage::zero_limbs(q.subspan(0U, n));
         if (!r.empty()) BigIntStorage::zero_limbs(r.subspan(0U, n));
-        div_knuth_raw(q, q_len, r, r_len, a, b.subspan(0U, n), scratch_span);
+        if (total_scratch <= 512U) {
+            std::array<std::uint64_t, 512> stack_scratch;
+            div_knuth_raw(q, q_len, r, r_len, a, b.subspan(0U, n), stack_scratch);
+        } else {
+            const ScratchArena::Scope scope{arena};
+            const std::span<std::uint64_t> scratch_span{arena.allocate(total_scratch)};
+            div_knuth_raw(q, q_len, r, r_len, a, b.subspan(0U, n), scratch_span);
+        }
         return;
     }
 
