@@ -4,6 +4,7 @@
 #include <vector>
 #include <random>
 #include <iomanip>
+#include <span>
 
 using namespace numeric::detail;
 
@@ -68,8 +69,8 @@ void mul_toom3_raw(uint64_t* NUMERIC_RESTRICT out,
     uint64_t* v2 = v_m1 + pr_sz;
     uint64_t* next_scratch = v2 + pr_sz;
 
-    BigIntStorage::zero_limbs(scratch, (v2 + pr_sz) - scratch);
-    BigIntStorage::zero_limbs(out, a_len + b_len);
+    BigIntStorage::zero_limbs(std::span<uint64_t>{scratch, static_cast<size_t>((v2 + pr_sz) - scratch)});
+    BigIntStorage::zero_limbs(std::span<uint64_t>{out, a_len + b_len});
 
     if (a0_len > 0 && b0_len > 0) {
         mul_dispatch_test(out, a0, a0_len, b0, b0_len, next_scratch);
@@ -80,75 +81,75 @@ void mul_toom3_raw(uint64_t* NUMERIC_RESTRICT out,
         mul_dispatch_test(v_inf, a2, a2_len, b2, b2_len, next_scratch);
     }
 
-    BigIntStorage::copy_limbs(p1, a0, a0_len);
-    if (a2_len > 0) BigIntCore::add_to_raw(p1, ev_sz, a2, a2_len);
-    BigIntStorage::copy_limbs(p_m1, p1, ev_sz);
-    if (a1_len > 0) BigIntCore::add_to_raw(p1, ev_sz, a1, a1_len);
+    BigIntStorage::copy_limbs(std::span<uint64_t>{p1, a0_len}, std::span<const uint64_t>{a0, a0_len});
+    if (a2_len > 0) (void)BigIntCore::add_to_raw(std::span<uint64_t>{p1, ev_sz}, std::span<const uint64_t>{a2, a2_len});
+    BigIntStorage::copy_limbs(std::span<uint64_t>{p_m1, ev_sz}, std::span<const uint64_t>{p1, ev_sz});
+    if (a1_len > 0) (void)BigIntCore::add_to_raw(std::span<uint64_t>{p1, ev_sz}, std::span<const uint64_t>{a1, a1_len});
 
     int8_t s_a = 1;
     size_t a0_a2_len = ev_sz;
     while (a0_a2_len > 0 && p_m1[a0_a2_len - 1] == 0) --a0_a2_len;
-    int cmp_a = BigIntCore::compare_unsigned(p_m1, a0_a2_len, a1, a1_len);
+    int cmp_a = BigIntCore::compare_unsigned(std::span<const uint64_t>{p_m1, a0_a2_len}, std::span<const uint64_t>{a1, a1_len});
     if (cmp_a >= 0) {
-        if (a1_len > 0) BigIntCore::sub_from_raw(p_m1, ev_sz, a1, a1_len);
+        if (a1_len > 0) (void)BigIntCore::sub_from_raw(std::span<uint64_t>{p_m1, ev_sz}, std::span<const uint64_t>{a1, a1_len});
         s_a = 1;
     } else {
         uint64_t tmp[256];
         uint64_t* t_ptr = (ev_sz <= 256) ? tmp : next_scratch;
-        BigIntStorage::copy_limbs(t_ptr, a1, a1_len);
-        BigIntStorage::zero_limbs(t_ptr + a1_len, ev_sz - a1_len);
-        BigIntCore::sub_from_raw(t_ptr, ev_sz, p_m1, a0_a2_len);
-        BigIntStorage::copy_limbs(p_m1, t_ptr, ev_sz);
+        BigIntStorage::copy_limbs(std::span<uint64_t>{t_ptr, a1_len}, std::span<const uint64_t>{a1, a1_len});
+        BigIntStorage::zero_limbs(std::span<uint64_t>{t_ptr + a1_len, ev_sz - a1_len});
+        (void)BigIntCore::sub_from_raw(std::span<uint64_t>{t_ptr, ev_sz}, std::span<const uint64_t>{p_m1, a0_a2_len});
+        BigIntStorage::copy_limbs(std::span<uint64_t>{p_m1, ev_sz}, std::span<const uint64_t>{t_ptr, ev_sz});
         s_a = -1;
     }
 
     if (a2_len > 0) {
-        BigIntCore::add_to_raw(p2, ev_sz, a2, a2_len);
-        BigIntCore::add_to_raw(p2, ev_sz, a2, a2_len);
+        (void)BigIntCore::add_to_raw(std::span<uint64_t>{p2, ev_sz}, std::span<const uint64_t>{a2, a2_len});
+        (void)BigIntCore::add_to_raw(std::span<uint64_t>{p2, ev_sz}, std::span<const uint64_t>{a2, a2_len});
     }
-    if (a1_len > 0) BigIntCore::add_to_raw(p2, ev_sz, a1, a1_len);
+    if (a1_len > 0) (void)BigIntCore::add_to_raw(std::span<uint64_t>{p2, ev_sz}, std::span<const uint64_t>{a1, a1_len});
     uint64_t carry = 0;
     for (size_t i = 0; i < ev_sz; ++i) {
         uint64_t cur = p2[i];
         p2[i] = (cur << 1) | carry;
         carry = cur >> 63;
     }
-    if (a0_len > 0) BigIntCore::add_to_raw(p2, ev_sz, a0, a0_len);
+    if (a0_len > 0) (void)BigIntCore::add_to_raw(std::span<uint64_t>{p2, ev_sz}, std::span<const uint64_t>{a0, a0_len});
 
-    BigIntStorage::copy_limbs(q1, b0, b0_len);
-    if (b2_len > 0) BigIntCore::add_to_raw(q1, ev_sz, b2, b2_len);
-    BigIntStorage::copy_limbs(q_m1, q1, ev_sz);
-    if (b1_len > 0) BigIntCore::add_to_raw(q1, ev_sz, b1, b1_len);
+    BigIntStorage::copy_limbs(std::span<uint64_t>{q1, b0_len}, std::span<const uint64_t>{b0, b0_len});
+    if (b2_len > 0) (void)BigIntCore::add_to_raw(std::span<uint64_t>{q1, ev_sz}, std::span<const uint64_t>{b2, b2_len});
+    BigIntStorage::copy_limbs(std::span<uint64_t>{q_m1, ev_sz}, std::span<const uint64_t>{q1, ev_sz});
+    if (b1_len > 0) (void)BigIntCore::add_to_raw(std::span<uint64_t>{q1, ev_sz}, std::span<const uint64_t>{b1, b1_len});
 
     int8_t s_b = 1;
     size_t b0_b2_len = ev_sz;
     while (b0_b2_len > 0 && q_m1[b0_b2_len - 1] == 0) --b0_b2_len;
-    int cmp_b = BigIntCore::compare_unsigned(q_m1, b0_b2_len, b1, b1_len);
+    int cmp_b = BigIntCore::compare_unsigned(std::span<const uint64_t>{q_m1, b0_b2_len}, std::span<const uint64_t>{b1, b1_len});
     if (cmp_b >= 0) {
-        if (b1_len > 0) BigIntCore::sub_from_raw(q_m1, ev_sz, b1, b1_len);
+        if (b1_len > 0) (void)BigIntCore::sub_from_raw(std::span<uint64_t>{q_m1, ev_sz}, std::span<const uint64_t>{b1, b1_len});
         s_b = 1;
     } else {
         uint64_t tmp[256];
         uint64_t* t_ptr = (ev_sz <= 256) ? tmp : next_scratch;
-        BigIntStorage::copy_limbs(t_ptr, b1, b1_len);
-        BigIntStorage::zero_limbs(t_ptr + b1_len, ev_sz - b1_len);
-        BigIntCore::sub_from_raw(t_ptr, ev_sz, q_m1, b0_b2_len);
-        BigIntStorage::copy_limbs(q_m1, t_ptr, ev_sz);
+        BigIntStorage::copy_limbs(std::span<uint64_t>{t_ptr, b1_len}, std::span<const uint64_t>{b1, b1_len});
+        BigIntStorage::zero_limbs(std::span<uint64_t>{t_ptr + b1_len, ev_sz - b1_len});
+        (void)BigIntCore::sub_from_raw(std::span<uint64_t>{t_ptr, ev_sz}, std::span<const uint64_t>{q_m1, b0_b2_len});
+        BigIntStorage::copy_limbs(std::span<uint64_t>{q_m1, ev_sz}, std::span<const uint64_t>{t_ptr, ev_sz});
         s_b = -1;
     }
 
     if (b2_len > 0) {
-        BigIntCore::add_to_raw(q2, ev_sz, b2, b2_len);
-        BigIntCore::add_to_raw(q2, ev_sz, b2, b2_len);
+        (void)BigIntCore::add_to_raw(std::span<uint64_t>{q2, ev_sz}, std::span<const uint64_t>{b2, b2_len});
+        (void)BigIntCore::add_to_raw(std::span<uint64_t>{q2, ev_sz}, std::span<const uint64_t>{b2, b2_len});
     }
-    if (b1_len > 0) BigIntCore::add_to_raw(q2, ev_sz, b1, b1_len);
+    if (b1_len > 0) (void)BigIntCore::add_to_raw(std::span<uint64_t>{q2, ev_sz}, std::span<const uint64_t>{b1, b1_len});
     carry = 0;
     for (size_t i = 0; i < ev_sz; ++i) {
         uint64_t cur = q2[i];
         q2[i] = (cur << 1) | carry;
         carry = cur >> 63;
     }
-    if (b0_len > 0) BigIntCore::add_to_raw(q2, ev_sz, b0, b0_len);
+    if (b0_len > 0) (void)BigIntCore::add_to_raw(std::span<uint64_t>{q2, ev_sz}, std::span<const uint64_t>{b0, b0_len});
 
     size_t p1_len = ev_sz; while (p1_len > 0 && p1[p1_len - 1] == 0) --p1_len;
     size_t q1_len = ev_sz; while (q1_len > 0 && q1[q1_len - 1] == 0) --q1_len;
@@ -213,9 +214,9 @@ void mul_toom3_raw(uint64_t* NUMERIC_RESTRICT out,
     st_v0.m_heap = nullptr; st_vinf.m_heap = nullptr;
     st_v1.m_heap = nullptr; st_vm1.m_heap = nullptr; st_v2.m_heap = nullptr;
 
-    if (c1.m_size > 0) BigIntCore::add_to_raw(out + m, (a_len + b_len) - m, c1.data(), c1.m_size);
-    if (c2.m_size > 0) BigIntCore::add_to_raw(out + 2 * m, (a_len + b_len) - 2 * m, c2.data(), c2.m_size);
-    if (c3.m_size > 0) BigIntCore::add_to_raw(out + 3 * m, (a_len + b_len) - 3 * m, c3.data(), c3.m_size);
+    if (c1.m_size > 0) (void)BigIntCore::add_to_raw(std::span<uint64_t>{out + m, (a_len + b_len) - m}, c1.as_span());
+    if (c2.m_size > 0) (void)BigIntCore::add_to_raw(std::span<uint64_t>{out + 2 * m, (a_len + b_len) - 2 * m}, c2.as_span());
+    if (c3.m_size > 0) (void)BigIntCore::add_to_raw(std::span<uint64_t>{out + 3 * m, (a_len + b_len) - 3 * m}, c3.as_span());
 }
 
 void mul_dispatch_test(uint64_t* NUMERIC_RESTRICT out,
@@ -227,7 +228,11 @@ void mul_dispatch_test(uint64_t* NUMERIC_RESTRICT out,
     if (n >= 400) {
         mul_toom3_raw(out, a, a_len, b, b_len, scratch);
     } else {
-        BigIntCore::mul_karatsuba_raw(out, a, a_len, b, b_len, scratch);
+        BigIntCore::mul_karatsuba_raw(
+            std::span<uint64_t>{out, a_len + b_len},
+            std::span<const uint64_t>{a, a_len},
+            std::span<const uint64_t>{b, b_len},
+            std::span<uint64_t>{scratch, n * 8U + 256U});
     }
 }
 
@@ -257,7 +262,7 @@ int main() {
         std::vector<uint64_t> scratch_toom(64 * limbs + 1024);
 
         double time_kara = bench::measure_time_ns([&]() {
-            BigIntCore::mul_karatsuba_raw(res_kara.data(), a.data(), a.m_size, b.data(), b.m_size, scratch_kara.data());
+            BigIntCore::mul_karatsuba_raw(res_kara.as_span(), a.as_span(), b.as_span(), scratch_kara);
             bench::do_not_optimize(res_kara.data());
         }, iters) / iters;
 

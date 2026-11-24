@@ -237,7 +237,7 @@ void run_test_bigint() {
     // 9. 大數階乘（例如 100! 檢驗高精度連續乘法精確度）
     {
         bigint fact = 1;
-        for (int i = 2; i <= 100; ++i) {
+        for (std::int32_t i = 2; i <= 100; ++i) {
             fact *= i;
         }
         std::string expected_fact100 =
@@ -404,7 +404,7 @@ void run_test_bigint() {
 
         // 16.4 8192-bit 內超大數 Roundtrip 測試 (約 450 位十進位數字)
         std::string long_str = "12345678901234567890123456789012345678901234567890";
-        for (int i = 0; i < 10; ++i) {
+        for (std::int32_t i = 0; i < 10; ++i) {
             long_str += "9876543210987654321098765432109876543210";
         }
         numeric::bigint big_val(long_str);
@@ -499,37 +499,96 @@ void run_test_bigint() {
         TEST_ASSERT((-numeric::BasicBigInt<4>(100)) == -100);
     }
 
-    // 18. 原語測試：addmul_1_raw 與 submul_1_raw
+    // 18. Primitives test: addmul_1_raw and submul_1_raw / 原語測試
     {
         using numeric::detail::BigIntIntrinsics;
-        uint64_t dummy = 123;
-        TEST_ASSERT(BigIntIntrinsics::addmul_1_raw(&dummy, &dummy, 0, 999) == 0);
-        TEST_ASSERT(BigIntIntrinsics::submul_1_raw(&dummy, &dummy, 0, 999) == 0);
-        TEST_ASSERT(dummy == 123);
+        std::uint64_t dummy = 123ULL;
+        TEST_ASSERT(BigIntIntrinsics::addmul_1_raw(
+                        std::span<std::uint64_t>{&dummy, 0U},
+                        std::span<const std::uint64_t>{&dummy, 0U}, 999ULL) == 0ULL);
+        TEST_ASSERT(BigIntIntrinsics::submul_1_raw(
+                        std::span<std::uint64_t>{&dummy, 0U},
+                        std::span<const std::uint64_t>{&dummy, 0U}, 999ULL) == 0ULL);
+        TEST_ASSERT(dummy == 123ULL);
 
-        uint64_t d2[3] = { 10, 20, 30 };
-        const uint64_t s2[3] = { 100, 200, 300 };
-        TEST_ASSERT(BigIntIntrinsics::addmul_1_raw(d2, s2, 3, 0) == 0);
-        TEST_ASSERT(d2[0] == 10 && d2[1] == 20 && d2[2] == 30);
-        TEST_ASSERT(BigIntIntrinsics::submul_1_raw(d2, s2, 3, 0) == 0);
-        TEST_ASSERT(d2[0] == 10 && d2[1] == 20 && d2[2] == 30);
+        std::array<std::uint64_t, 3> d2{10ULL, 20ULL, 30ULL};
+        const std::array<std::uint64_t, 3> s2{100ULL, 200ULL, 300ULL};
+        TEST_ASSERT(BigIntIntrinsics::addmul_1_raw(d2, s2, 0ULL) == 0ULL);
+        TEST_ASSERT(d2[0] == 10ULL && d2[1] == 20ULL && d2[2] == 30ULL);
+        TEST_ASSERT(BigIntIntrinsics::submul_1_raw(d2, s2, 0ULL) == 0ULL);
+        TEST_ASSERT(d2[0] == 10ULL && d2[1] == 20ULL && d2[2] == 30ULL);
 
-        uint64_t dst[4] = { 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL };
-        const uint64_t src[4] = { 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL };
-        uint64_t mult = 0xFFFFFFFFFFFFFFFFULL;
-        uint64_t carry = BigIntIntrinsics::addmul_1_raw(dst, src, 4, mult);
-        TEST_ASSERT(dst[0] == 0);
+        std::array<std::uint64_t, 4> dst{
+            0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL,
+            0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL};
+        const std::array<std::uint64_t, 4> src{
+            0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL,
+            0xFFFFFFFFFFFFFFFFULL, 0xFFFFFFFFFFFFFFFFULL};
+        const std::uint64_t mult{0xFFFFFFFFFFFFFFFFULL};
+        const std::uint64_t carry{BigIntIntrinsics::addmul_1_raw(dst, src, mult)};
+        TEST_ASSERT(dst[0] == 0ULL);
         TEST_ASSERT(dst[1] == 0xFFFFFFFFFFFFFFFFULL);
         TEST_ASSERT(dst[2] == 0xFFFFFFFFFFFFFFFFULL);
         TEST_ASSERT(dst[3] == 0xFFFFFFFFFFFFFFFFULL);
         TEST_ASSERT(carry == 0xFFFFFFFFFFFFFFFFULL);
 
-        uint64_t borrow = BigIntIntrinsics::submul_1_raw(dst, src, 4, mult);
+        const std::uint64_t borrow{BigIntIntrinsics::submul_1_raw(dst, src, mult)};
         TEST_ASSERT(dst[0] == 0xFFFFFFFFFFFFFFFFULL);
         TEST_ASSERT(dst[1] == 0xFFFFFFFFFFFFFFFFULL);
         TEST_ASSERT(dst[2] == 0xFFFFFFFFFFFFFFFFULL);
         TEST_ASSERT(dst[3] == 0xFFFFFFFFFFFFFFFFULL);
         TEST_ASSERT(borrow == 0xFFFFFFFFFFFFFFFFULL);
+    }
+
+    // 19. std::expected monadic error-handling APIs / std::expected 安全轉換與數學介面測試
+    {
+        const auto ok_dec = bigint::try_from_string("-123456789012345678901234567890");
+        TEST_ASSERT(ok_dec.has_value());
+        TEST_ASSERT(*ok_dec == bigint("-123456789012345678901234567890"));
+
+        const auto empty_dec = bigint::try_from_string("");
+        TEST_ASSERT(!empty_dec.has_value());
+        TEST_ASSERT(empty_dec.error() == numeric::BigIntError::EmptyInput);
+
+        const auto bad_dec = bigint::try_from_string("12x34");
+        TEST_ASSERT(!bad_dec.has_value());
+        TEST_ASSERT(bad_dec.error() == numeric::BigIntError::InvalidFormat);
+
+        const auto ok_bin = bigint::try_from_binary_string("-0b101010");
+        TEST_ASSERT(ok_bin.has_value());
+        TEST_ASSERT(*ok_bin == -42);
+
+        const auto bad_bin = bigint::try_from_binary_string("0b102");
+        TEST_ASSERT(!bad_bin.has_value());
+        TEST_ASSERT(bad_bin.error() == numeric::BigIntError::InvalidFormat);
+
+        const auto i64_ok = bigint(-9223372036854775807LL - 1LL).try_to_int64();
+        TEST_ASSERT(i64_ok.has_value());
+        TEST_ASSERT(*i64_ok == (-9223372036854775807LL - 1LL));
+
+        const auto i64_ov = (bigint(1) << 70).try_to_int64();
+        TEST_ASSERT(!i64_ov.has_value());
+        TEST_ASSERT(i64_ov.error() == numeric::BigIntError::Overflow);
+
+        const auto u64_neg = bigint(-1).try_to_uint64();
+        TEST_ASSERT(!u64_neg.has_value());
+        TEST_ASSERT(u64_neg.error() == numeric::BigIntError::NegativeInput);
+
+        const auto u64_ov = (bigint(1) << 64).try_to_uint64();
+        TEST_ASSERT(!u64_ov.has_value());
+        TEST_ASSERT(u64_ov.error() == numeric::BigIntError::Overflow);
+
+        const auto u64_ok = bigint("18446744073709551615").try_to_uint64();
+        TEST_ASSERT(u64_ok.has_value());
+        TEST_ASSERT(*u64_ok == 0xFFFFFFFFFFFFFFFFULL);
+
+        const auto sqrt_ok = numeric::try_isqrt(bigint(144));
+        TEST_ASSERT(sqrt_ok.has_value());
+        TEST_ASSERT(*sqrt_ok == 12);
+
+        const auto sqrt_neg = numeric::try_isqrt(bigint(-4));
+        TEST_ASSERT(!sqrt_neg.has_value());
+        TEST_ASSERT(sqrt_neg.error() == numeric::BigIntError::NegativeInput);
     }
 
     std::cout << "--- BigInt Tests Completed Successfully ---" << std::endl;

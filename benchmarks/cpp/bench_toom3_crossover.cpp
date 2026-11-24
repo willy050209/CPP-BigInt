@@ -24,43 +24,49 @@ void mul_toom3_test(BigIntStorage& res, const BigIntStorage& a, const BigIntStor
     size_t m = (n + 2) / 3;
 
     BigIntStorage a0, a1, a2;
-    if (a.m_size > 0) {
-        size_t l0 = (a.m_size < m) ? a.m_size : m;
-        a0.resize(l0, 0);
-        BigIntStorage::copy_limbs(a0.data(), a.data(), l0);
-        a0.m_sign = 1; a0.normalize();
+    if (a.m_size > 0U) {
+        const std::size_t l0{(a.m_size < m) ? a.m_size : m};
+        a0.resize(l0, 0ULL);
+        BigIntStorage::copy_limbs(a0.as_span(), a.as_span().subspan(0U, l0));
+        a0.m_sign = 1;
+        a0.normalize();
     }
     if (a.m_size > m) {
-        size_t l1 = (a.m_size < 2 * m) ? (a.m_size - m) : m;
-        a1.resize(l1, 0);
-        BigIntStorage::copy_limbs(a1.data(), a.data() + m, l1);
-        a1.m_sign = 1; a1.normalize();
+        const std::size_t l1{(a.m_size < 2U * m) ? (a.m_size - m) : m};
+        a1.resize(l1, 0ULL);
+        BigIntStorage::copy_limbs(a1.as_span(), a.as_span().subspan(m, l1));
+        a1.m_sign = 1;
+        a1.normalize();
     }
-    if (a.m_size > 2 * m) {
-        size_t l2 = a.m_size - 2 * m;
-        a2.resize(l2, 0);
-        BigIntStorage::copy_limbs(a2.data(), a.data() + 2 * m, l2);
-        a2.m_sign = 1; a2.normalize();
+    if (a.m_size > 2U * m) {
+        const std::size_t l2{a.m_size - (2U * m)};
+        a2.resize(l2, 0ULL);
+        BigIntStorage::copy_limbs(a2.as_span(), a.as_span().subspan(2U * m, l2));
+        a2.m_sign = 1;
+        a2.normalize();
     }
 
     BigIntStorage b0, b1, b2;
-    if (b.m_size > 0) {
-        size_t l0 = (b.m_size < m) ? b.m_size : m;
-        b0.resize(l0, 0);
-        BigIntStorage::copy_limbs(b0.data(), b.data(), l0);
-        b0.m_sign = 1; b0.normalize();
+    if (b.m_size > 0U) {
+        const std::size_t l0{(b.m_size < m) ? b.m_size : m};
+        b0.resize(l0, 0ULL);
+        BigIntStorage::copy_limbs(b0.as_span(), b.as_span().subspan(0U, l0));
+        b0.m_sign = 1;
+        b0.normalize();
     }
     if (b.m_size > m) {
-        size_t l1 = (b.m_size < 2 * m) ? (b.m_size - m) : m;
-        b1.resize(l1, 0);
-        BigIntStorage::copy_limbs(b1.data(), b.data() + m, l1);
-        b1.m_sign = 1; b1.normalize();
+        const std::size_t l1{(b.m_size < 2U * m) ? (b.m_size - m) : m};
+        b1.resize(l1, 0ULL);
+        BigIntStorage::copy_limbs(b1.as_span(), b.as_span().subspan(m, l1));
+        b1.m_sign = 1;
+        b1.normalize();
     }
-    if (b.m_size > 2 * m) {
-        size_t l2 = b.m_size - 2 * m;
-        b2.resize(l2, 0);
-        BigIntStorage::copy_limbs(b2.data(), b.data() + 2 * m, l2);
-        b2.m_sign = 1; b2.normalize();
+    if (b.m_size > 2U * m) {
+        const std::size_t l2{b.m_size - (2U * m)};
+        b2.resize(l2, 0ULL);
+        BigIntStorage::copy_limbs(b2.as_span(), b.as_span().subspan(2U * m, l2));
+        b2.m_sign = 1;
+        b2.normalize();
     }
 
     BigIntStorage a0_a2;
